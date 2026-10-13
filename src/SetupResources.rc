@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include <windows.h>
+#include "SetupResources.h"
+IDI_CHATGPT ICON "../assets/ChatGPT.ico"
+IDR_LAUNCHER RCDATA "../outputs/ChatGPTProxyLauncher.exe"
+1 RT_MANIFEST "Setup.manifest"
+1 VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904B0"
+  BEGIN
+   VALUE "FileDescription", "ChatGPT Launcher Setup\0"
+   VALUE "ProductName", "ChatGPT Launcher Setup\0"
+   VALUE "OriginalFilename", "ChatGPTLauncherSetup.exe\0"
+   VALUE "LegalCopyright", "GPL-3.0-only; unofficial local launcher\0"
+   VALUE "FileVersion", "1.0.0\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x0409, 1200
+ END
+END

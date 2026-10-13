@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include <windows.h>
+#include "AppIcon.h"
+IDI_CHATGPT ICON "../assets/ChatGPT.ico"

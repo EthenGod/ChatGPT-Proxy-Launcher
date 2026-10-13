@@ -1,0 +1,87 @@
+# Local build output and machine-specific verification records
+/outputs/
+# Generated GitHub Release uploads; recreate with release.cmd, do not commit binaries.
+/Releases/
+
+# Keep reproducible test sources; ignore local test output and backups
+/work/*
+!/work/launcher-tests.cpp
+!/work/test-build.cmd
+
+# Native build artifacts
+*.obj
+*.res
+*.aps
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.pch
+*.ipch
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+
+# Local IDE / agent state (shared AGENTS.md and skills remain eligible)
+.vs/
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+*.VC.db-shm
+*.VC.db-wal
+*.sdf
+*.opensdf
+/.vscode/
+/.codex/
+/.claude/settings.local.json
+/.claude/history.jsonl
+
+# Credentials and private local configuration; examples must contain placeholders
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local.json
+*.local.toml
+*.local.yaml
+*.local.yml
+/secrets/
+/.aws/
+/.ssh/
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Local logs, databases, diagnostics, shortcuts and backups
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.dmp
+*.reg
+*.etl
+*.wer
+*.stackdump
+*.lnk
+*.bak
+*.tmp
+*.temp
+*.swp
+*~
+/check.txt
+Thumbs.db
+Desktop.ini
+.DS_Store
