@@ -87,11 +87,11 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 -
 
 命令行和工作目录按实际长度分配内存，缓冲区直接由 API 或复制操作填充，避免重复清零。检查模式只校验命令行长度，不构造未使用的命令行；启动成功直接返回，不生成错误提示。退出后不保留进程。
 
-`work\test-build.cmd` 可编译并运行隔离测试，覆盖数字版本排序、资源包和其他身份排除、有限重查、内存分配失败、错误返回、工作目录、命令行长度边界以及实际子进程参数传递。测试用替换接口只存在于测试程序中，不编入正式 EXE，不启动 ChatGPT。复查方案与验证范围见 [docs/launcher-review.md](docs/launcher-review.md)。
+`tests\test-build.cmd` 可编译并运行隔离测试，覆盖数字版本排序、资源包和其他身份排除、有限重查、内存分配失败、错误返回、工作目录、命令行长度边界以及实际子进程参数传递。测试用替换接口只存在于测试程序中，不编入正式 EXE，不启动 ChatGPT。复查方案与验证范围见 [docs/launcher-review.md](docs/launcher-review.md)。
 
-`work\test-build.cmd` 会先重新构建正式程序，再运行六组测试，避免误测旧产物。其中 `tests\setup-tests.cpp` 在 `work\setup-tests-*` 的隔离目录验证部署、自启快捷方式读写、目录迁移、未知文件保护、失败回滚、参数往返及内嵌资源一致性。`tests\startup-tests.cpp` 使用模拟注册表验证目标筛选与失败返回；`tests\proxy-tests.cpp` 使用合成配置和进程信息检查代理端口识别；`tests\setup-ui-tests.cpp` 使用独立测试窗口，验证默认选项、页面切换、实时预览、滚动和保存流程，并在 `work/` 生成控件渲染图。测试替换了修改自启、打开系统设置和提醒窗口的接口，不写真实自启项。测试产生的本机文件会保留，需清理时请手动处理。配置工具方案及验证边界见 [docs/setup-design.md](docs/setup-design.md)。
+`tests\test-build.cmd` 会先重新构建正式程序，再运行六组测试，避免误测旧产物。其中 `tests\setup-tests.cpp` 在 `work\setup-tests-*` 的隔离目录验证部署、自启快捷方式读写、目录迁移、未知文件保护、失败回滚、参数往返及内嵌资源一致性。`tests\startup-tests.cpp` 使用模拟注册表验证目标筛选与失败返回；`tests\proxy-tests.cpp` 使用合成配置和进程信息检查代理端口识别；`tests\setup-ui-tests.cpp` 使用独立测试窗口，验证默认选项、页面切换、实时预览、滚动和保存流程，并在 `work/` 生成控件渲染图。测试替换了修改自启、打开系统设置和提醒窗口的接口，不写真实自启项。测试产生的本机文件会保留，需清理时请手动处理。配置工具方案及验证边界见 [docs/setup-design.md](docs/setup-design.md)。
 
-在项目根目录运行 `release.cmd`，会先重新构建并跑完六组测试，再按部署器 EXE 的 `FileVersion` 创建版本目录，例如 `Releases/v1.0.0/`。版本信息维护在 `src/SetupResources.rc` 中，更新时保持数字版本和字符串版本一致。准备上传的文件为：
+在项目根目录运行 `release.cmd`，会先重新构建并跑完六组测试，再按部署器 EXE 的 `FileVersion` 创建版本目录，例如 `Releases/v1.0.1/`。版本信息维护在 `src/SetupResources.rc` 中，更新时保持数字版本、字符串版本及 `src/Setup.manifest` 的应用版本一致。准备上传的文件为：
 
 | 文件 | 用途 |
 | --- | --- |
@@ -118,7 +118,19 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 -
 
 ## 开发与提交
 
-协作规则见 [AGENTS.md](AGENTS.md)。源码、资源、构建脚本、`tests/` 和两个 `work/` 测试文件纳入版本管理；构建产物、备份与本机记录由 `.gitignore` 排除。
+协作规则见 [AGENTS.md](AGENTS.md)。源码、资源、构建脚本和 `tests/` 纳入版本管理；构建产物、备份与本机记录由 `.gitignore` 排除。
+
+| 目录 | 内容 |
+| --- | --- |
+| `src/` | 正式源码、资源定义和应用清单 |
+| `tests/` | 六组测试源码及 `test-build.cmd` 测试入口 |
+| `assets/` | 构建所需图标及权利说明 |
+| `docs/` | 设计、验证范围和发布说明 |
+| `work/` | 可重新生成的编译/测试文件，以及需自行决定是否保留的本机备份 |
+| `outputs/` | 当前构建的两个 EXE 和本机检查记录 |
+| `Releases/` | 按版本分开的发布附件 |
+
+清理前先保留仍需用于回退的备份。`work/` 已不含正式源码，清空后构建会重新创建所需目录；旧发布版本也可按需要手动清理。清理应由用户手动执行，不提供批量删除脚本。
 
 `--launcher-check` 输出包含实际安装路径和完整参数；分享前应去掉用户名、私人地址和凭据。示例中的 `127.0.0.1` 是本机回环地址，包名称和发布者 ID 是应用标识，不是账号凭据。
 

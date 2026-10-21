@@ -3,10 +3,8 @@
 # Generated GitHub Release uploads; recreate with release.cmd, do not commit binaries.
 /Releases/
 
-# Keep reproducible test sources; ignore local test output and backups
-/work/*
-!/work/launcher-tests.cpp
-!/work/test-build.cmd
+# All test sources live in tests/; work contains only local output and backups
+/work/
 
 # Native build artifacts
 *.obj

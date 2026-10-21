@@ -46,7 +46,7 @@ $sourceNames = @(
     'src/SetupResources.h', 'src/SetupResources.rc', 'src/StartupIntegration.cpp', 'src/StartupIntegration.h',
     'tests/proxy-tests.cpp', 'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
     'tests/taskbar-tests.cpp',
-    'work/launcher-tests.cpp', 'work/test-build.cmd'
+    'tests/launcher-tests.cpp', 'tests/test-build.cmd'
 )
 $sources = [ordered]@{}
 $sourceHashes = @{}
@@ -59,7 +59,7 @@ foreach ($name in $sourceNames) {
 
 Push-Location $projectRoot
 try {
-    & $env:ComSpec /d /c work\test-build.cmd
+    & $env:ComSpec /d /c tests\test-build.cmd
     if ($LASTEXITCODE -ne 0) { throw ('Build/tests failed with exit code ' + $LASTEXITCODE + '. No release files updated.') }
     foreach ($name in $sourceNames) {
         if ((Get-Sha256 (Join-Path $projectRoot $name)) -ne $sourceHashes[$name]) {

@@ -5,9 +5,9 @@
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法。
 - 图形配置工具入口为 `src/ChatGPTLauncherSetup.cpp`，部署与参数逻辑在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
 - 构建：根目录运行 `cmd /c build.cmd`，需要 VS 2022 Build Tools 的 C++ 工具；产物在 `outputs/`。
-- 测试：根目录运行 `cmd /c work\test-build.cmd`；只启动隔离测试子进程，不启动 ChatGPT。
+- 测试：根目录运行 `cmd /c tests\test-build.cmd`；只启动隔离测试子进程，不启动 ChatGPT。
 - 发布文件：根目录运行 `cmd /c release.cmd`，重新构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。版本维护在 `src/SetupResources.rc`。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
-- `work/launcher-tests.cpp`、`work/test-build.cmd` 需要提交；`work/` 其余内容和 `outputs/` 都是本机文件。
+- 全部测试源码及入口在 `tests/`，需要提交；`work/` 只放本机产物和备份，不放正式源码。
 - `tests/setup-tests.cpp` 需要提交；测试脚本先构建正式程序，部署测试仅使用 `work/` 下的隔离目录，不修改真实自启项。
 - `tests/startup-tests.cpp`、`tests/setup-ui-tests.cpp` 也需要提交；系统自启和 Windows 设置调用必须在测试中替换，不能用真实用户配置测试。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
