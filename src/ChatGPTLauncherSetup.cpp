@@ -199,7 +199,7 @@ void App::CreateControls() {
     add(State, L"STATIC", L"尚未部署 · 仅对当前 Windows 用户生效", label, 3);
     add(StartTitle, L"STATIC", L"启动设置", label, 1);
     add(Startup, L"BUTTON", L"登录 Windows 后自动启动", WS_TABSTOP | BS_AUTOCHECKBOX);
-    add(Silent, L"BUTTON", L"启动时不显示主窗口", WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(Silent, L"BUTTON", L"启动时不显示主窗口（暂不可用）", WS_DISABLED | WS_TABSTOP | BS_AUTOCHECKBOX);
     add(SilentHint, L"STATIC", L"保存后尝试关闭应用自带自启，并打开 Windows 设置供你确认。", label, 3);
     add(ProxyTitle, L"STATIC", L"代理连接", label, 1);
     add(Proxy, L"BUTTON", L"使用指定代理", WS_TABSTOP | BS_AUTOCHECKBOX);
@@ -340,6 +340,8 @@ void App::Refresh(bool edited) {
     if (loading) return;
     if (edited) { dirty = true; ++editRevision; }
     const setup::Options options = Options();
+    // Temporarily unavailable; preserve the saved value but keep the switch locked after saving.
+    EnableWindow(Get(Silent), FALSE);
     EnableWindow(Get(Protocol), options.proxy && !busy);
     EnableWindow(Get(ProtocolHttps), options.proxy && !busy);
     EnableWindow(Get(ProtocolSocks), options.proxy && !busy);

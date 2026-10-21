@@ -136,6 +136,8 @@ static int RunTests(PCWSTR folder) {
     UpdateWindow(app.window);
     REQUIRE(app.Checked(Startup) && app.Checked(Silent) && app.savedTarget.empty());
     REQUIRE(app.Text(Preview) == L"--no-startup-window");
+    REQUIRE(!IsWindowEnabled(app.Get(Silent)));
+    REQUIRE(app.Text(Silent).find(L"暂不可用") != std::wstring::npos);
     REQUIRE(!(GetWindowLongPtrW(app.Get(Directory), GWL_STYLE) & WS_VISIBLE));
     REQUIRE(GetParent(app.Get(Advanced)) == app.window);
     REQUIRE(FooterAligned(app));
@@ -210,12 +212,12 @@ static int RunTests(PCWSTR folder) {
     const unsigned captions = probe.captions;
     // Rapid edits used to send WM_SETTEXT even when the button caption was unchanged.
     for (int i = 0; i < 40; ++i) {
-        SendMessageW(app.Get(Silent), BM_CLICK, 0, 0);
         SendMessageW(app.Get(Startup), BM_CLICK, 0, 0);
         SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0); // Empty port makes Save unavailable.
         REQUIRE(!IsWindowEnabled(apply) && ButtonFillMatches(app));
         SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
         REQUIRE(IsWindowEnabled(apply) && ButtonFillMatches(app));
+        REQUIRE(!IsWindowEnabled(app.Get(Silent)) && app.Checked(Silent));
         UpdateWindow(apply);
     }
     REQUIRE(probe.captions == captions);
@@ -257,6 +259,7 @@ static int RunTests(PCWSTR folder) {
     for (int i = 0; i < 18; ++i) {
         key.hwnd = GetFocus(); key.wParam = VK_TAB;
         REQUIRE(IsDialogMessageW(app.window, &key));
+        REQUIRE(GetFocus() != app.Get(Silent));
         for (const auto& control : app.controls) if (IsActionButton(control.id))
             REQUIRE((GetWindowLongPtrW(control.window, GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW);
     }
@@ -307,6 +310,7 @@ static int RunTests(PCWSTR folder) {
     saved.options.startup = false; saved.options.silent = false;
     app.RestoreOptions(saved);
     REQUIRE(!app.Checked(Startup) && !app.Checked(Silent) && app.Text(Preview).empty());
+    REQUIRE(!IsWindowEnabled(app.Get(Silent)));
     REQUIRE(!disableCalls && !settingsCalls && !reminderCalls); // UI edits alone do not change the OS.
     // Exercise the actual worker and file commit; only registry/Settings/reminder endpoints are replaced.
     HANDLE payloadFile = CreateFileW(setup::Join(folder, L"..\\outputs\\ChatGPTProxyLauncher.exe").c_str(), GENERIC_READ,
@@ -320,12 +324,13 @@ static int RunTests(PCWSTR folder) {
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
     REQUIRE(settingsAfterReminder && !app.busy && !app.dirty && app.savedThisSession);
+    REQUIRE(!IsWindowEnabled(app.Get(Silent)) && !app.Checked(Silent));
     REQUIRE(!IsWindowEnabled(app.Get(ApplyButton)) && app.Text(ApplyButton) == L"已保存");
     REQUIRE(IsWindowEnabled(app.Get(CloseButton)) && app.Text(CloseButton) == L"完成");
     app.Command(ApplyButton, BN_CLICKED);
     REQUIRE(!app.busy && disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
     // Manual startup review is advisory, and edits after it do not repeat the reminder.
-    app.Check(Silent, true); app.Refresh(true);
+    app.Set(Extra, L"--test-option"); app.Refresh(true);
     REQUIRE(IsWindowEnabled(app.Get(ApplyButton)));
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1 && !app.dirty);
@@ -336,6 +341,7 @@ static int RunTests(PCWSTR folder) {
     app.Check(Startup, true); app.Refresh(true); app.payload = {};
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 2);
+    REQUIRE(!IsWindowEnabled(app.Get(Silent)) && !app.Checked(Silent));
     REQUIRE(folderCalls == 0); // Neither success nor unrelated errors open Explorer.
     // Actual EXE ownership failure propagates its directory through the worker to the UI.
     const std::wstring conflictDirectory = setup::Join(root, L"冲突 目录");
@@ -376,7 +382,8 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(!app.busy && reminderCalls == finalReminders && settingsCalls == finalSettings);
     app.Command(CloseButton, BN_CLICKED);
     REQUIRE(!IsWindow(app.window) && reminderCalls == finalReminders);
-    printf("PASS UI defaults, button repaint after captions/styles/state and 160 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
+    printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
+    puts("PASS unavailable silent switch stays disabled across edits, restore and save success/failure; Tab skips it and saved values are retained");
     printf("PASS conflict folder handoff, Unicode/spaces, unrelated errors and Explorer failure fallback (mocked)\n");
     printf("PASS saved state, one startup reminder per session, repeat-save no-op, later edits, Settings-after-reminder and failure recovery\n");
     printf("PASS owner-draw synchronous dispatch, preserved style through Tab/default-button changes, Enter/Space, balanced footer at 100/150 percent and short windows\n");
