@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <appmodel.h>
 #include <wchar.h>
+#include "TaskbarShortcut.h"
 
 // Local tool, not an OpenAI product. No proxy settings are compiled in.
 static const wchar_t Family[] = L"OpenAI.Codex_2p2nqsd0c76g0";
@@ -185,5 +186,8 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _I
         WriteText(STD_OUTPUT_HANDLE, L"\r\n");
         return 0;
     }
+    if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), arguments))
+        return ReportError(ERROR_FILENAME_EXCED_RANGE);
+    RepairTaskbarShortcut(static_cast<PCWSTR>(executable.get()));
     return ReportError(StartApplication(static_cast<PCWSTR>(executable.get()), arguments));
 }

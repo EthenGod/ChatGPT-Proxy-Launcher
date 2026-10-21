@@ -13,7 +13,7 @@ if errorlevel 1 (
     exit /b 1
 )
 popd
-cl /nologo /W4 /WX /O1 /GL /MT /utf-8 /DUNICODE /D_UNICODE /Fo:work\ChatGPTProxyLauncher.obj /Fe:outputs\ChatGPTProxyLauncher.exe src\ChatGPTProxyLauncher.cpp work\LauncherResources.res /link /LTCG /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT kernel32.lib
+cl /nologo /std:c++17 /EHsc /W4 /WX /O1 /GL /MT /utf-8 /DUNICODE /D_UNICODE /Fo:work\ /Fe:outputs\ChatGPTProxyLauncher.exe src\ChatGPTProxyLauncher.cpp src\TaskbarShortcut.cpp work\LauncherResources.res /link /LTCG /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT kernel32.lib shell32.lib ole32.lib uuid.lib
 if errorlevel 1 exit /b %errorlevel%
 pushd src
 rc /nologo /fo ..\work\SetupResources.res SetupResources.rc

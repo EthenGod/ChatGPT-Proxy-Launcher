@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <string>
 #include <vector>
+#include "../src/TaskbarShortcut.h"
+static unsigned repairCalls = 0;
+void RepairTaskbarShortcut(PCWSTR) noexcept { ++repairCalls; }
 
 // Compile-time substitutions live only in this test translation unit.
 static LONG WINAPI TestPackages(PCWSTR, UINT32*, PWSTR*, UINT32*, PWSTR);
@@ -195,9 +198,10 @@ static int CheckEntryAndLifetime() {
     };
     for (const auto& item : cases) {
         std::wstring tail = item.tail;
-        createCalls = 0; messageCalls = 0;
+        createCalls = 0; messageCalls = 0; repairCalls = 0;
         REQUIRE(wWinMain(nullptr, nullptr, &tail[0], 0) == 0);
         REQUIRE(createCalls == (item.check ? 0u : 1u));
+        REQUIRE(repairCalls == (item.check ? 0u : 1u));
         REQUIRE(messageCalls == 0 && liveAllocations == 0);
         if (!item.check) {
             REQUIRE(forwarded == std::wstring(L"\"C:\\Launcher Test\\Package\\app\\ChatGPT.exe\"")

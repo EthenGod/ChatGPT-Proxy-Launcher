@@ -10,6 +10,10 @@ cl /nologo /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-t
 if errorlevel 1 exit /b %errorlevel%
 work\launcher-tests.exe "%CD%\work\capture with spaces.txt"
 if errorlevel 1 exit /b %errorlevel%
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\taskbar-tests.obj /Fe:work\taskbar-tests.exe tests\taskbar-tests.cpp /link /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib
+if errorlevel 1 exit /b %errorlevel%
+work\taskbar-tests.exe "%CD%\work" "%CD%\outputs\ChatGPTProxyLauncher.exe"
+if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\setup-tests.obj /Fe:work\setup-tests.exe tests\setup-tests.cpp /link /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib shlwapi.lib
 if errorlevel 1 exit /b %errorlevel%
 work\setup-tests.exe "%CD%\work" "%CD%\outputs\ChatGPTProxyLauncher.exe" "%CD%\outputs\ChatGPTLauncherSetup.exe"

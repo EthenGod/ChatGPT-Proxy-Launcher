@@ -1,6 +1,6 @@
 # ChatGPT 轻量启动器
 
-本地制作的 Windows x64 原生程序，并非 OpenAI 官方产品。只负责查询当前用户注册的 ChatGPT 安装路径、传递命令行参数并启动，然后立即退出。无需加载 .NET，不等待 Clash，不常驻，不显示检查窗口，不写日志，不改变系统代理。
+本地制作的 Windows x64 原生程序，并非 OpenAI 官方产品。查询当前用户注册的 ChatGPT 安装路径，检查已知的任务栏快捷方式关联，传递命令行参数并启动，然后立即退出。无需加载 .NET，不等待 Clash，不常驻，不显示检查窗口，不写日志，不改变系统代理。
 
 ## 许可证
 
@@ -69,21 +69,29 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 -
 
 使用 Windows 包接口查询 `OpenAI.Codex_2p2nqsd0c76g0`，按实际版本号选最高的主应用包，拼接 `app\ChatGPT.exe`。不固定版本目录，也不扫描整个磁盘。查询期间包列表变化或安装路径消失时，最多尝试 3 次，不等待；权限等其他错误立即返回。最高版本程序仍缺失时停止，不会回退到旧版本。未来若包身份或内部目录改变，仍需调整源码。
 
+### 更新后运行中的任务栏图标空白
+
+启动器会在正常启动前检查当前用户开始菜单中的 `ChatGPT.lnk`。只有应用标识为 `com.openai.codex`，且目标属于同一安装根目录下的正式 ChatGPT 应用包或当前启动器时，才将目标、图标和工作目录固定到当前启动器。这样应用更新时，快捷方式不再依赖版本目录；官方若重新生成符合上述条件的链接，下次通过启动器启动时会再次修复。
+
+原有应用标识和快捷方式参数保留，不会把本次调用的临时参数写进去。因此从开始菜单启动时是否走代理，仍取决于该快捷方式自身的参数；通过代理自启快捷方式启动时继续原样传递其参数。首次修改前的原件保存到 `%LOCALAPPDATA%\ChatGPTProxyLauncher\TaskbarShortcut.original.lnk`，以后不覆盖。保存采用临时文件回读校验和原子替换，只通知 Windows 刷新这一个快捷方式。
+
+已正确关联时只读检查、不重复保存；缺失、身份不符、自定义目标、超长或网络路径会跳过。文件占用、备份或保存失败不阻止正常启动，不弹窗、不清缓存、不重启资源管理器。`--launcher-check` 完全不执行修复。启动器迁移到其他位置、官方改变链接名称或应用标识，以及独立的失效任务栏固定项，仍可能需要手工处理。方案和验证范围见 [任务栏修复说明](docs/taskbar-repair.md)。
+
 ## 编译与体积
 
 启动器源码为 `src\ChatGPTProxyLauncher.cpp`；配置界面为 `src\ChatGPTLauncherSetup.cpp`，部署和参数处理为 `src\SetupCore.cpp`，自启尝试与 Windows 设置入口在 `src\StartupIntegration.cpp`。在项目根目录运行 `build.cmd`，需要 Visual Studio 2022 Build Tools 的 C++ 工具和 Windows SDK。
 
 构建顺序为：编译启动器 → 把该 EXE 编入配置工具资源 → 编译配置工具。产物是 `outputs\ChatGPTProxyLauncher.exe` 和 `outputs\ChatGPTLauncherSetup.exe`。配置工具采用 Win32 / GDI+，统一绘制开关、协议分段选择、按钮、圆角输入框和滚动条，保留系统文本输入与键盘行为。它支持系统浅深色、高对比度及 DPI 缩放；较小的窗口可滚动，支持滚轮、拖动滚动条和 Page Up / Page Down。它也静态链接运行库，不需要额外安装 .NET 或 WebView2。
 
-两个程序均静态链接运行库，保留编译器默认安全检查和 ASLR/DEP，且内嵌多尺寸 ChatGPT 图标；体积以实际构建文件为准。原启动器只导入系统 `KERNEL32.dll`；配置工具另使用 Windows 的界面、文件选择、JSON 解析和快捷方式等系统组件，不需要另装运行库。
+两个程序均静态链接运行库，保留编译器默认安全检查和 ASLR/DEP，且内嵌多尺寸 ChatGPT 图标；体积以实际构建文件为准。启动器使用系统 `KERNEL32.dll`、`SHELL32.dll` 和 `ole32.dll`，后两者用于系统快捷方式接口；配置工具另使用 Windows 的界面、文件选择、JSON 解析等系统组件，不需要另装运行库。
 
 命令行和工作目录按实际长度分配内存，缓冲区直接由 API 或复制操作填充，避免重复清零。检查模式只校验命令行长度，不构造未使用的命令行；启动成功直接返回，不生成错误提示。退出后不保留进程。
 
 `work\test-build.cmd` 可编译并运行隔离测试，覆盖数字版本排序、资源包和其他身份排除、有限重查、内存分配失败、错误返回、工作目录、命令行长度边界以及实际子进程参数传递。测试用替换接口只存在于测试程序中，不编入正式 EXE，不启动 ChatGPT。复查方案与验证范围见 [docs/launcher-review.md](docs/launcher-review.md)。
 
-`work\test-build.cmd` 会先重新构建正式程序，再运行五组测试，避免误测旧产物。其中 `tests\setup-tests.cpp` 在 `work\setup-tests-*` 的隔离目录验证部署、自启快捷方式读写、目录迁移、未知文件保护、失败回滚、参数往返及内嵌资源一致性。`tests\startup-tests.cpp` 使用模拟注册表验证目标筛选与失败返回；`tests\proxy-tests.cpp` 使用合成配置和进程信息检查代理端口识别；`tests\setup-ui-tests.cpp` 使用独立测试窗口，验证默认选项、页面切换、实时预览、滚动和保存流程，并在 `work/` 生成控件渲染图。测试替换了修改自启、打开系统设置和提醒窗口的接口，不写真实自启项。测试产生的本机文件会保留，需清理时请手动处理。配置工具方案及验证边界见 [docs/setup-design.md](docs/setup-design.md)。
+`work\test-build.cmd` 会先重新构建正式程序，再运行六组测试，避免误测旧产物。其中 `tests\setup-tests.cpp` 在 `work\setup-tests-*` 的隔离目录验证部署、自启快捷方式读写、目录迁移、未知文件保护、失败回滚、参数往返及内嵌资源一致性。`tests\startup-tests.cpp` 使用模拟注册表验证目标筛选与失败返回；`tests\proxy-tests.cpp` 使用合成配置和进程信息检查代理端口识别；`tests\setup-ui-tests.cpp` 使用独立测试窗口，验证默认选项、页面切换、实时预览、滚动和保存流程，并在 `work/` 生成控件渲染图。测试替换了修改自启、打开系统设置和提醒窗口的接口，不写真实自启项。测试产生的本机文件会保留，需清理时请手动处理。配置工具方案及验证边界见 [docs/setup-design.md](docs/setup-design.md)。
 
-在项目根目录运行 `release.cmd`，会先重新构建并跑完五组测试，再按部署器 EXE 的 `FileVersion` 创建版本目录，例如 `Releases/v1.0.0/`。版本信息维护在 `src/SetupResources.rc` 中，更新时保持数字版本和字符串版本一致。准备上传的文件为：
+在项目根目录运行 `release.cmd`，会先重新构建并跑完六组测试，再按部署器 EXE 的 `FileVersion` 创建版本目录，例如 `Releases/v1.0.0/`。版本信息维护在 `src/SetupResources.rc` 中，更新时保持数字版本和字符串版本一致。准备上传的文件为：
 
 | 文件 | 用途 |
 | --- | --- |
