@@ -47,18 +47,18 @@ v2rayN 有独立 HTTP 入站时优先使用它；Xray 的 SOCKS 入站按其现�
 
 ## 手动传入参数
 
-代理和静默启动都通过参数设置，EXE 内没有预设的代理地址：
+代理通过参数设置，EXE 内没有预设的代理地址：
 
 ```cmd
-ChatGPTProxyLauncher.exe --proxy-server=http://127.0.0.1:7897 --no-startup-window
+ChatGPTProxyLauncher.exe --proxy-server=http://127.0.0.1:7897
 ```
 
-正常显示窗口时去掉 `--no-startup-window`。双击没有参数的 EXE，只会按 ChatGPT 自身的默认行为启动。其他参数（如 `--proxy-bypass-list="localhost;*.example.com"`）也会原样传给 ChatGPT，是否生效由 ChatGPT 决定。空格、引号、中文及参数顺序均保留，不经过命令解释器。
+`--no-startup-window` 仅为保留兼容的参数，目前不能实现静默启动，不建议依赖它隐藏窗口。双击没有参数的 EXE，只会按 ChatGPT 自身的默认行为启动。其他参数（如 `--proxy-bypass-list="localhost;*.example.com"`）也会原样传给 ChatGPT，是否生效由 ChatGPT 决定。空格、引号、中文及参数顺序均保留，不经过命令解释器。
 
 唯一保留给启动器的选项是放在最前面的 `--launcher-check`：只向标准输出打印查到的路径和待传参数，不启动 ChatGPT。例如在命令提示符中：
 
 ```cmd
-ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 --no-startup-window > check.txt
+ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 > check.txt
 ```
 
 失败时返回 Windows 错误码，错误信息写到标准错误输出，不弹窗或生成日志。退出码 0 表示已提交启动请求（检查模式则表示检查通过），不代表 ChatGPT 初始化或联网成功。
@@ -91,7 +91,7 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 -
 
 `tests\test-build.cmd` 会先重新构建正式程序，再运行六组测试，避免误测旧产物。其中 `tests\setup-tests.cpp` 在 `work\setup-tests-*` 的隔离目录验证部署、自启快捷方式读写、目录迁移、未知文件保护、失败回滚、参数往返及内嵌资源一致性。`tests\startup-tests.cpp` 使用模拟注册表验证目标筛选与失败返回；`tests\proxy-tests.cpp` 使用合成配置和进程信息检查代理端口识别；`tests\setup-ui-tests.cpp` 使用独立测试窗口，验证默认选项、页面切换、实时预览、滚动和保存流程，并在 `work/` 生成控件渲染图。测试替换了修改自启、打开系统设置和提醒窗口的接口，不写真实自启项。测试产生的本机文件会保留，需清理时请手动处理。配置工具方案及验证边界见 [docs/setup-design.md](docs/setup-design.md)。
 
-在项目根目录运行 `release.cmd`，会先重新构建并跑完六组测试，再按部署器 EXE 的 `FileVersion` 创建版本目录，例如 `Releases/v1.0.1/`。版本信息维护在 `src/SetupResources.rc` 中，更新时保持数字版本、字符串版本及 `src/Setup.manifest` 的应用版本一致。准备上传的文件为：
+在项目根目录运行 `release.cmd`，会先重新构建并跑完六组测试，再按部署器 EXE 的 `FileVersion` 创建版本目录，例如 `Releases/v1.0.2/`。版本信息维护在 `src/SetupResources.rc` 中，更新时保持数字版本、字符串版本及 `src/Setup.manifest` 的应用版本一致。准备上传的文件为：
 
 | 文件 | 用途 |
 | --- | --- |
@@ -109,7 +109,7 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 -
 在启动文件夹创建 `ChatGPT Proxy Launcher.lnk`，直接指向这个 EXE。以下是参数示例，端口请按自己的代理软件设置：
 
 ```text
---proxy-server=http://127.0.0.1:7897 --no-startup-window
+--proxy-server=http://127.0.0.1:7897
 ```
 
 以后更换代理端口，只需在快捷方式属性的“目标”末尾修改参数，不用重新编译。使用此方式时，建议关闭 ChatGPT 官方自启，避免另一个入口抢先启动。停止自启可在 `Win+R` 输入 `shell:startup`，删除这个快捷方式。
