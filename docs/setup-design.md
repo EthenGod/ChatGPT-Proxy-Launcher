@@ -37,6 +37,15 @@
 - Run 禁用标记参考 [Electron 的实现](https://github.com/electron/electron/blob/main/shell/browser/browser_win.cc)。商店 [StartupTask API](https://learn.microsoft.com/en-us/uwp/api/windows.applicationmodel.startuptask) 限于应用自身包；[Windows 设置 URI](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings) 用于引导核对。这些状态可能随 Windows 或应用更新改变，界面不承诺关闭所有机制。
 - MSIX 状态路径及 0–4 的含义参考 [微软 Teams MSIX 自启文档](https://learn.microsoft.com/en-us/microsoftteams/teams-client-vdi-requirements-deploy#teams-autostart)。将这一状态模型用于清单验证后的 ChatGPT 任务属于兼容推断，不代表微软提供跨应用 StartupTask 管理 API。保留只操作已有 DWORD、策略保护及人工核对入口。
 
+## 桌面快捷方式
+
+- 在主界面的启动设置中提供开关，默认关闭。用户在保存前选择，不额外弹窗。
+- 用 `FOLDERID_Desktop` 获取当前桌面，支持系统重定向的桌面位置。快捷方式使用当前参数、工作目录和启动器图标。
+- 以桌面快捷方式的实际状态恢复开关。只管理标记和目标均匹配的文件。关闭后保存会移除此文件。
+- 桌面文件与程序、配置、自启文件一起保存。操作失败时撤销本次文件更改。同名文件冲突时保留原文件，并沿用打开目录的提示。
+- 不增加常驻进程或后台扫描。保存时只额外处理一个指定文件。
+- 隔离测试覆盖默认关闭、创建、参数与目录同步、移除、冲突保护及保存失败回滚。界面测试检查开关保存和恢复。实际桌面双击启动与重定向桌面的端到端行为仍需用户验证。
+
 ## 验证计划
 
 - 构建原启动器和配置工具，验证嵌入资源与启动器产物一致。

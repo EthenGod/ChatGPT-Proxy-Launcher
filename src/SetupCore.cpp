@@ -198,6 +198,11 @@ Result GetPaths(Paths& paths) {
     if (FAILED(hr)) return Hr(hr, L"无法获取当前用户的启动文件夹。");
     paths.startupLink = Join(startup, LinkName);
     CoTaskMemFree(startup);
+    PWSTR desktop = nullptr;
+    hr = SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop);
+    // The optional desktop entry must not prevent deployment when the desktop is unavailable.
+    paths.desktopLink = SUCCEEDED(hr) ? Join(desktop, LinkName) : L"";
+    CoTaskMemFree(desktop);
     return {};
 }
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
@@ -366,6 +371,11 @@ Result Load(const Paths& paths, Loaded& loaded) {
             loaded.notice = L"启动文件夹中有同名快捷方式。保存前请手动移走或重命名，工具不会覆盖它。";
         }
     }
+    // Presence of our link records the choice; do not import desktop arguments over saved settings.
+    Link desktop;
+    if (Exists(paths.desktopLink) && ReadLink(paths.desktopLink, desktop)
+        && Owned(desktop) && Same(desktop.target, loaded.managedTarget))
+        loaded.options.desktop = true;
     if (loaded.hasSettings) {
         Result parsed = ParseArguments(saved.arguments, loaded.options);
         if (!parsed) loaded.notice = parsed.message;
@@ -401,10 +411,21 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     result = Load(paths, previous);
     if (!result) return result;
     const std::wstring target = Join(directory, LauncherName);
-    Snapshot oldExe, oldSettings, oldStartup;
+    Snapshot oldExe, oldSettings, oldStartup, oldDesktop;
     result = ReadFileBytes(target, oldExe); if (!result) return result;
     result = ReadFileBytes(paths.settingsLink, oldSettings); if (!result) return result;
     result = ReadFileBytes(paths.startupLink, oldStartup); if (!result) return result;
+    const bool touchDesktop = options.desktop || previous.options.desktop;
+    if (touchDesktop) {
+        if (paths.desktopLink.empty()) return Fail(ERROR_PATH_NOT_FOUND, L"无法获取桌面快捷方式的位置。");
+        result = ReadFileBytes(paths.desktopLink, oldDesktop); if (!result) return result;
+        if (oldDesktop.exists) {
+            Link existing;
+            if (!ReadLink(paths.desktopLink, existing) || !Owned(existing)
+                || !Same(existing.target, previous.managedTarget))
+                return Conflict(L"桌面已有未由本工具管理的同名快捷方式。请先手动移走或重命名，原文件未修改。", Parent(paths.desktopLink));
+        }
+    }
     const std::vector<BYTE> bytes(payload.data, payload.data + payload.size);
     if (oldExe.exists && !Same(target, previous.managedTarget) && oldExe.data != bytes)
         return Conflict(L"目标目录已有未由本工具管理的同名程序。请换一个目录，原文件未修改。", directory);
@@ -417,10 +438,12 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     result = EnsureDirectory(directory); if (!result) return result;
     result = EnsureDirectory(Parent(paths.settingsLink)); if (!result) return result;
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
-    bool exeChanged = false, settingsChanged = false, startupChanged = false;
+    if (options.desktop) { result = EnsureDirectory(Parent(paths.desktopLink)); if (!result) return result; }
+    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false;
     auto rollback = [&](Result failure) {
         std::wstring restoreErrors;
         auto note = [&](const Result& restored) { if (!restored) restoreErrors += L"\n" + restored.message; };
+        if (desktopChanged) note(Restore(paths.desktopLink, oldDesktop));
         if (startupChanged) note(Restore(paths.startupLink, oldStartup));
         if (settingsChanged) note(Restore(paths.settingsLink, oldSettings));
         if (exeChanged) note(Restore(target, oldExe));
@@ -445,10 +468,18 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
         if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), L"无法关闭登录自启。"));
         startupChanged = true;
     }
+    if (options.desktop) {
+        result = WriteLink(paths.desktopLink, value); if (!result) return rollback(result);
+        desktopChanged = true;
+    } else if (previous.options.desktop && oldDesktop.exists) {
+        if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), L"无法移除桌面快捷方式。"));
+        desktopChanged = true;
+    }
     Loaded verify;
     result = Load(paths, verify);
     if (!result) return rollback(result);
-    if (!verify.deployed || verify.options.startup != options.startup || !Same(verify.managedTarget, target))
+    if (!verify.deployed || verify.options.startup != options.startup || verify.options.desktop != options.desktop
+        || !Same(verify.managedTarget, target))
         return rollback(Fail(ERROR_INVALID_DATA, L"保存后的配置校验失败。"));
     deployedTarget = target;
     return {};

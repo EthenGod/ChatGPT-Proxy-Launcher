@@ -21,7 +21,7 @@ constexpr UINT DetectPortMessage = WM_APP + 2;
 constexpr UINT PortDetectedMessage = WM_APP + 3;
 constexpr int FooterHeight = 112;
 enum ControlId {
-    Title = 1000, Subtitle, State, StartTitle, Startup, Silent, SilentHint,
+    Title = 1000, Subtitle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, ProtocolLabel, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, Host, PortLabel, Port,
     PreviewTitle, Preview, PreviewHint, Advanced, DirectoryLabel, Directory, Browse, Reset,
     DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, Error, Footer, ApplyButton, CloseButton
@@ -36,7 +36,7 @@ struct Completion {
     bool checkStartup = false;
     setup::StartupReport startupReport;
 };
-bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy; }
+bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop; }
 bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == ProtocolSocks; }
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
 bool IsButton(int id) {
@@ -196,9 +196,10 @@ void App::CreateControls() {
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
     add(Title, L"STATIC", L"设置你的启动方式", label, 2);
     add(Subtitle, L"STATIC", L"ChatGPT 轻量启动器  /  部署与配置", label, 0);
-    add(State, L"STATIC", L"尚未部署 · 仅对当前 Windows 用户生效", label, 3);
+    add(State, L"STATIC", L"尚未部署，仅对当前 Windows 用户生效", label, 3);
     add(StartTitle, L"STATIC", L"启动设置", label, 1);
     add(Startup, L"BUTTON", L"登录 Windows 后自动启动", WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(Desktop, L"BUTTON", L"创建桌面快捷方式", WS_TABSTOP | BS_AUTOCHECKBOX);
     add(Silent, L"BUTTON", L"启动时不显示主窗口（暂不可用）", WS_DISABLED | WS_TABSTOP | BS_AUTOCHECKBOX);
     add(SilentHint, L"STATIC", L"保存后尝试关闭应用自带自启，并打开 Windows 设置供你确认。", label, 3);
     add(ProxyTitle, L"STATIC", L"代理连接", label, 1);
@@ -243,12 +244,14 @@ void App::Layout() {
     const int footerHeight = S(FooterHeight);
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
-    contentHeight = S(674);
+    const int desktopRow = advanced ? 0 : 42;
+    contentHeight = S(674 + desktopRow);
     scroll = std::clamp(scroll, 0, std::max(0, contentHeight - static_cast<int>(area.bottom)));
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
     HDWP batch = BeginDeferWindowPos(static_cast<int>(controls.size()));
     auto place = [&](int id, int x, int y, int w, int h, bool visible = true) {
+        if (id >= ProxyTitle && id <= PreviewHint) y += desktopRow;
         HWND control = Get(id);
         const UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
         if (batch) batch = DeferWindowPos(batch, control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
@@ -260,7 +263,8 @@ void App::Layout() {
     place(StartTitle, 48, 154, inner, 24, !advanced);
     place(Startup, 48, 184, inner, 34, !advanced);
     place(SilentHint, 48, 224, inner, 22, !advanced);
-    place(Silent, 48, 254, inner, 34, !advanced);
+    place(Desktop, 48, 254, inner, 34, !advanced);
+    place(Silent, 48, 296, inner, 34, !advanced);
     place(ProxyTitle, 48, 338, inner, 24, !advanced);
     place(Proxy, 48, 367, inner, 34, !advanced);
     place(ProtocolLabel, 48, 414, 208, 20, !advanced);
@@ -331,6 +335,7 @@ RECT App::ScrollThumb() const {
 setup::Options App::Options() const {
     setup::Options options;
     options.startup = Checked(Startup); options.silent = Checked(Silent); options.proxy = Checked(Proxy);
+    options.desktop = Checked(Desktop);
     options.protocol = Checked(ProtocolSocks) ? L"socks5" : Checked(ProtocolHttps) ? L"https" : L"http";
     options.host = Text(Host); options.port = Text(Port); options.directory = Text(Directory);
     options.bypass = Text(Bypass); options.extra = Text(Extra);
@@ -395,13 +400,14 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
     ++editRevision;
     savedTarget = loaded.managedTarget;
     Check(Startup, loaded.options.startup); Check(Silent, loaded.options.silent); Check(Proxy, loaded.options.proxy);
+    Check(Desktop, loaded.options.desktop);
     Check(Protocol, loaded.options.protocol == L"http");
     Check(ProtocolHttps, loaded.options.protocol == L"https");
     Check(ProtocolSocks, loaded.options.protocol == L"socks5");
     Set(Host, loaded.options.host); Set(Port, loaded.options.port);
     Set(Directory, loaded.options.directory); Set(Bypass, loaded.options.bypass); Set(Extra, loaded.options.extra);
-    Set(State, (loaded.deployed ? L"已部署" : loaded.hasSettings ? L"启动器缺失 · 保存可重新部署" : L"尚未部署")
-        + std::wstring(!loaded.hasSettings ? L"  ·  选项将在保存后生效" : loaded.options.startup ? L"  ·  登录自启已配置" : L"  ·  登录自启未配置"));
+    Set(State, (loaded.deployed ? L"已部署" : loaded.hasSettings ? L"启动器缺失，保存可重新部署" : L"尚未部署")
+        + std::wstring(!loaded.hasSettings ? L"，选项将在保存后生效" : loaded.options.startup ? L"，登录自启已配置" : L"，登录自启未配置"));
     if (!loaded.notice.empty()) {
         Set(State, loaded.notice);
     }
@@ -493,7 +499,7 @@ void App::DrawSurface(HWND target, HDC dc) {
             Rounded(dc, r, S(16), colors.surface, colors.border);
         };
         if (advanced) card(138, 494);
-        else { card(138, 304); card(322, 504); }
+        else { card(138, 346); card(364, 546); }
         for (const auto& item : controls) {
             if (!IsField(item.id) || !(GetWindowLongPtrW(item.window, GWL_STYLE) & WS_VISIBLE)) continue;
             RECT r{}; GetWindowRect(item.window, &r); MapWindowPoints(nullptr, body, reinterpret_cast<POINT*>(&r), 2);
@@ -795,7 +801,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             app->Refresh(false);
             const bool moved = !done->previous.empty() && _wcsicmp(done->previous.c_str(), done->target.c_str()) != 0;
             app->Set(Footer, moved ? L"已保存。旧目录中的文件已保留。" : L"已保存。下次启动时使用这些选项。");
-            app->Set(State, app->Checked(Startup) ? L"已部署  ·  登录自启已配置  ·  参数已保存" : L"已部署  ·  登录自启未配置  ·  参数已保存");
+            app->Set(State, app->Checked(Startup) ? L"已部署，登录自启已配置" : L"已部署，登录自启未配置");
             if (done->checkStartup) {
                 app->startupReminderShown = true;
                 const std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
@@ -866,7 +872,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
             const UINT dpi = GetDpiForSystem();
             RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
             const int width = MulDiv(700, static_cast<int>(dpi), 96);
-            const int height = std::min(MulDiv(840, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
+            const int height = std::min(MulDiv(882, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
             HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", L"ChatGPT 启动器设置",
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left + (work.right - work.left - width) / 2,
                 work.top + (work.bottom - work.top - height) / 2, width, height, nullptr, nullptr, instance, &app);

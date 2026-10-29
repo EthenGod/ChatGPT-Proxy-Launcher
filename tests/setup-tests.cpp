@@ -108,11 +108,14 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
-    const Paths paths{ Join(root, L"settings"), Join(root, L"startup\\Managed.lnk"), Join(root, L"settings\\State.lnk") };
+    const Paths paths{ Join(root, L"settings"), Join(root, L"startup\\Managed.lnk"), Join(root, L"settings\\State.lnk"),
+        Join(root, L"桌面 Desktop\\ChatGPT Proxy Launcher.lnk") };
     Loaded state;
     REQUIRE(Load(paths, state) && !state.hasSettings && state.options.startup && state.options.silent);
+    REQUIRE(!state.options.desktop);
     Options options; options.directory = Join(root, L"部署 目录");
     options.startup = true; options.silent = true; options.proxy = true; options.port = L"7897";
+    options.desktop = true;
     options.extra = L"--title=\"中文 空格\" \"\"";
     std::wstring target, arguments;
     REQUIRE(Apply(paths, options, payload, target));
@@ -121,17 +124,29 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     REQUIRE(BuildArguments(options, arguments));
     Link link;
     REQUIRE(ReadLink(paths.startupLink, link) && link.arguments == arguments && link.target == target && link.directory == options.directory);
+    REQUIRE(state.options.desktop);
+    REQUIRE(ReadLink(paths.desktopLink, link) && link.arguments == arguments && link.target == target && link.directory == options.directory);
+    {
+        Com<IShellLinkW> shell; Com<IPersistFile> persist;
+        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell.p))));
+        REQUIRE(SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist.p))));
+        REQUIRE(SUCCEEDED(persist->Load(paths.desktopLink.c_str(), STGM_READ)));
+        wchar_t icon[MAX_PATH]{}; int index = -1;
+        REQUIRE(SUCCEEDED(shell->GetIconLocation(icon, MAX_PATH, &index)) && target == icon && index == 0);
+    }
     Snapshot disk;
     REQUIRE(ReadFileBytes(target, disk) && disk.data == payloadBytes.data);
     options.startup = false;
     REQUIRE(Apply(paths, options, payload, target));
     REQUIRE(!Exists(paths.startupLink));
+    REQUIRE(ReadLink(paths.desktopLink, link) && link.target == target);
     REQUIRE(Load(paths, state) && state.deployed && !state.options.startup && state.options.extra == options.extra);
     options.startup = true; options.directory = Join(root, L"新目录 new");
     const std::wstring oldTarget = state.managedTarget;
     REQUIRE(Apply(paths, options, payload, target));
     REQUIRE(Exists(oldTarget)); // Never sweep or remove an old deployment directory.
     REQUIRE(ReadLink(paths.startupLink, link) && link.target == target);
+    REQUIRE(ReadLink(paths.desktopLink, link) && link.target == target && link.directory == options.directory);
     // Import manually appended unknown options from the actual managed startup link.
     link.arguments += L" --manual=\"保留 此项\"";
     REQUIRE(WriteLink(paths.startupLink, link));
@@ -162,6 +177,51 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     REQUIRE(ReadFileBytes(paths.settingsLink, disk) && disk.data == settingsBefore.data);
     REQUIRE(ReadFileBytes(paths.startupLink, disk) && disk.data == startupBefore.data);
     // Unknown executable and unrelated shortcut must remain byte-for-byte unchanged.
+    options = state.options;
+    Snapshot desktopBefore;
+    REQUIRE(ReadFileBytes(paths.desktopLink, desktopBefore));
+    options.extra += L" --desktop-test";
+    moveCalls = 0; failMoveAt = 3; // Settings and startup succeeded; desktop commit fails.
+    REQUIRE(!Apply(paths, options, payload, target)); failMoveAt = 0;
+    REQUIRE(ReadFileBytes(paths.settingsLink, disk) && disk.data == settingsBefore.data);
+    REQUIRE(ReadFileBytes(paths.startupLink, disk) && disk.data == startupBefore.data);
+    REQUIRE(ReadFileBytes(paths.desktopLink, disk) && disk.data == desktopBefore.data);
+    options.directory = Join(root, L"desktop-rollback-new");
+    moveCalls = 0; failMoveAt = 4; // A new EXE was written before the three link commits.
+    REQUIRE(!Apply(paths, options, payload, target)); failMoveAt = 0;
+    REQUIRE(!Exists(Join(options.directory, LauncherName)));
+    REQUIRE(ReadFileBytes(paths.settingsLink, disk) && disk.data == settingsBefore.data);
+    REQUIRE(ReadFileBytes(paths.startupLink, disk) && disk.data == startupBefore.data);
+    REQUIRE(ReadFileBytes(paths.desktopLink, disk) && disk.data == desktopBefore.data);
+    options = state.options; options.desktop = false;
+    lock = CreateFileW(paths.desktopLink.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    REQUIRE(lock != INVALID_HANDLE_VALUE);
+    REQUIRE(!Apply(paths, options, payload, target)); CloseHandle(lock);
+    REQUIRE(ReadFileBytes(paths.settingsLink, disk) && disk.data == settingsBefore.data);
+    REQUIRE(ReadFileBytes(paths.startupLink, disk) && disk.data == startupBefore.data);
+    REQUIRE(ReadFileBytes(paths.desktopLink, disk) && disk.data == desktopBefore.data);
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(!Exists(paths.desktopLink) && Exists(paths.startupLink));
+    REQUIRE(Load(paths, state) && !state.options.desktop);
+    options.desktop = true;
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(Load(paths, state) && state.options.desktop);
+    REQUIRE(ReadLink(paths.desktopLink, link));
+    link.description = L"Another tool";
+    REQUIRE(WriteLink(paths.desktopLink, link));
+    REQUIRE(ReadFileBytes(paths.desktopLink, desktopBefore));
+    Result desktopConflict = Apply(paths, options, payload, target);
+    REQUIRE(!desktopConflict && desktopConflict.conflictDirectory == Parent(paths.desktopLink));
+    options.desktop = false; // An unrelated desktop link must not block opting out.
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(ReadFileBytes(paths.desktopLink, disk) && disk.data == desktopBefore.data);
+    REQUIRE(Load(paths, state) && !state.options.desktop);
+    Paths unavailableDesktop = paths; unavailableDesktop.desktopLink.clear();
+    REQUIRE(Apply(unavailableDesktop, options, payload, target));
+    options.desktop = true;
+    REQUIRE(!Apply(unavailableDesktop, options, payload, target));
+    options.desktop = false;
+    printf("PASS desktop shortcut opt-in, icon, argument sync, migration, opt-out, ownership and rollback (isolated folders)\n");
     options.directory = Join(root, L"foreign"); REQUIRE(EnsureDirectory(options.directory));
     const std::wstring foreign = Join(options.directory, LauncherName);
     const std::vector<BYTE> unrelated{ 1, 3, 5, 7 };

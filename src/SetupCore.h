@@ -16,11 +16,11 @@ inline constexpr wchar_t LinkName[] = L"ChatGPT Proxy Launcher.lnk";
 inline constexpr wchar_t Marker[] = L"ChatGPT Launcher Setup / v1";
 inline constexpr size_t MaxArguments = 8191; // Conservative, verified by Shell round trip.
 struct Options {
-    bool startup = false, silent = false, proxy = false;
+    bool startup = false, silent = false, proxy = false, desktop = false;
     std::wstring protocol = L"http", host = L"127.0.0.1", port;
     std::wstring bypass, extra, directory;
 };
-struct Paths { std::wstring defaultDirectory, startupLink, settingsLink; };
+struct Paths { std::wstring defaultDirectory, startupLink, settingsLink, desktopLink; };
 struct Link { std::wstring target, arguments, directory, description; };
 struct Result {
     DWORD code = 0;
