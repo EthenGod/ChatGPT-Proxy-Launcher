@@ -5,8 +5,8 @@ IDI_CHATGPT ICON "../assets/ChatGPT.ico"
 IDR_LAUNCHER RCDATA "../outputs/ChatGPTProxyLauncher.exe"
 1 RT_MANIFEST "Setup.manifest"
 1 VERSIONINFO
- FILEVERSION 1,0,2,0
- PRODUCTVERSION 1,0,2,0
+ FILEVERSION 1,0,3,0
+ PRODUCTVERSION 1,0,3,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -18,8 +18,8 @@ BEGIN
    VALUE "ProductName", "ChatGPT Launcher Setup\0"
    VALUE "OriginalFilename", "ChatGPTLauncherSetup.exe\0"
    VALUE "LegalCopyright", "GPL-3.0-only; unofficial local launcher\0"
-   VALUE "FileVersion", "1.0.2\0"
-   VALUE "ProductVersion", "1.0.2\0"
+   VALUE "FileVersion", "1.0.3\0"
+   VALUE "ProductVersion", "1.0.3\0"
   END
  END
  BLOCK "VarFileInfo"

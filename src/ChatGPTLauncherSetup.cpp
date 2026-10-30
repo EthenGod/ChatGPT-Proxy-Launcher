@@ -19,17 +19,38 @@ namespace {
 constexpr UINT SavedMessage = WM_APP + 1;
 constexpr UINT DetectPortMessage = WM_APP + 2;
 constexpr UINT PortDetectedMessage = WM_APP + 3;
-constexpr int FooterHeight = 112;
+constexpr int FooterHeight = 96;
+constexpr UINT_PTR MotionTimer = 1;
 enum ControlId {
-    Title = 1000, Subtitle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
+    Title = 1000, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, ProtocolLabel, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, Host, PortLabel, Port,
-    PreviewTitle, Preview, PreviewHint, Advanced, DirectoryLabel, Directory, Browse, Reset,
+    PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
     DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, Error, Footer, ApplyButton, CloseButton
 };
 struct Palette {
     COLORREF background, surface, text, secondary, border, accent, error;
+    COLORREF field, hover, selected, selectedText, divider, primary, primaryHover, primaryText;
 };
-struct Control { int id; HWND window; int font; };
+struct Motion {
+    float from = 0, to = 0;
+    ULONGLONG started = 0;
+    float Value(ULONGLONG now) const {
+        const float t = std::min(1.0f, static_cast<float>(now - started) / 150.0f);
+        const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+        return from + (to - from) * eased;
+    }
+    bool Active(ULONGLONG now) const { return from != to && now - started < 150; }
+    void Set(float value, bool animate, ULONGLONG now) {
+        if (!animate) { from = to = value; return; }
+        if (to == value) return;
+        from = Value(now); to = value; started = now;
+    }
+};
+struct Control { int id; HWND window; int font; Motion hover{}, toggle{}; };
+COLORREF Blend(COLORREF a, COLORREF b, float t) {
+    auto channel = [t](int x, int y) { return static_cast<BYTE>(x + (y - x) * t + 0.5f); };
+    return RGB(channel(GetRValue(a), GetRValue(b)), channel(GetGValue(a), GetGValue(b)), channel(GetBValue(a), GetBValue(b)));
+}
 struct Completion {
     setup::Result result;
     std::wstring target, previous;
@@ -40,9 +61,21 @@ bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || i
 bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == ProtocolSocks; }
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
 bool IsButton(int id) {
-    return IsSwitch(id) || IsSegment(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton;
+    return IsSwitch(id) || IsSegment(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle;
 }
 bool IsActionButton(int id) { return IsButton(id) && !IsSwitch(id) && !IsSegment(id); }
+bool IsOwnerDrawButton(int id) { return IsActionButton(id) || IsSegment(id); }
+constexpr wchar_t AppearanceKey[] = L"Software\\Community\\ChatGPTLauncherSetup";
+bool ReadDarkPreference() {
+    DWORD light = 0, size = sizeof(light);
+    return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", RRF_RT_REG_DWORD,
+        nullptr, &light, &size) != ERROR_SUCCESS || light != 1;
+}
+bool SaveDarkPreference(bool dark) {
+    const DWORD light = dark ? 0 : 1;
+    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", REG_DWORD,
+        &light, sizeof(light)) == ERROR_SUCCESS;
+}
 void Rounded(HDC dc, const RECT& rect, int radius, COLORREF fill, COLORREF border, float thickness = 1.0f) {
     if (rect.right <= rect.left || rect.bottom <= rect.top) return;
     Gdiplus::Graphics g(dc);
@@ -70,6 +103,9 @@ struct App {
     bool advanced = false, loading = true, dirty = false, busy = false, fatal = false;
     bool savedThisSession = false, startupReminderShown = false;
     bool dark = false, contrast = false, draggingScroll = false;
+    bool preferredDark = true;
+    int selectedProtocol = Protocol;
+    bool motionEnabled = false;
     int scrollGrab = 0, wheelRemainder = 0;
     unsigned layoutPasses = 0, paintPasses = 0;
     int scroll = 0, contentHeight = 0;
@@ -111,6 +147,7 @@ struct App {
     bool Checked(int id) const { return SendMessageW(Get(id), BM_GETCHECK, 0, 0) == BST_CHECKED; }
     void Check(int id, bool value) { SendMessageW(Get(id), BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0); }
     void Theme(int mode = -1);
+    void SelectProtocol(int id);
     void CreateControls();
     void Layout();
     void Refresh(bool edited);
@@ -122,9 +159,11 @@ struct App {
     void DrawSurface(HWND target, HDC dc);
     void DrawControl(HWND control, HDC dc);
     void PaintControl(HWND control, HDC output);
+    void UpdateMotion(HWND control);
+    bool TickMotion();
     void ScrollTo(int position);
     RECT ScrollThumb() const;
-    COLORREF FieldColor() const { return contrast ? colors.surface : dark ? RGB(28,30,36) : RGB(247,248,251); }
+    COLORREF FieldColor() const { return colors.field; }
     setup::Options Options() const;
 };
 App* StateOf(HWND window) { return reinterpret_cast<App*>(GetWindowLongPtrW(window, GWLP_USERDATA)); }
@@ -149,23 +188,29 @@ void App::Theme(int mode) {
     HIGHCONTRASTW hc{ sizeof(hc), 0, nullptr };
     SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0);
     contrast = (hc.dwFlags & HCF_HIGHCONTRASTON) != 0;
-    DWORD light = 1, bytes = sizeof(light);
-    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-        L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &bytes);
-    dark = !light && !contrast;
+    dark = preferredDark && !contrast;
     if (mode >= 0) { dark = mode == 1; contrast = mode == 2; }
+    // Radix Gray: 1/2 surfaces, 3 fields, 4 hover, 6/7 borders, 11/12 text.
+    // Blue 3/11 identify selection. The light primary uses Blue 11 for readable white text.
     if (contrast) colors = { GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_WINDOWTEXT),
-        GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_WINDOWTEXT) };
-    else if (dark) colors = { RGB(24,25,29), RGB(35,37,43), RGB(244,245,248), RGB(171,178,192),
-        RGB(63,67,77), RGB(77,146,255), RGB(255,155,149) };
-    else colors = { RGB(245,246,249), RGB(255,255,255), RGB(30,37,49), RGB(94,106,124),
-        RGB(222,227,235), RGB(0,99,225), RGB(172,40,37) };
+        GetSysColor(COLOR_GRAYTEXT), GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_WINDOWTEXT),
+        GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_HIGHLIGHTTEXT),
+        GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_HIGHLIGHTTEXT) };
+    else if (dark) colors = { RGB(17,17,17), RGB(25,25,25), RGB(238,238,238), RGB(180,180,180),
+        RGB(72,72,72), RGB(0,144,255), RGB(255,155,149), RGB(34,34,34), RGB(42,42,42),
+        RGB(13,40,71), RGB(112,184,255), RGB(58,58,58), RGB(0,144,255), RGB(59,158,255), RGB(13,21,32) };
+    else colors = { RGB(249,249,249), RGB(255,255,255), RGB(32,32,32), RGB(100,100,100),
+        RGB(206,206,206), RGB(0,144,255), RGB(172,40,37), RGB(240,240,240), RGB(232,232,232),
+        RGB(230,244,254), RGB(13,116,206), RGB(217,217,217), RGB(13,116,206), RGB(17,50,100), RGB(255,255,255) };
+    BOOL clientAnimation = FALSE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &clientAnimation, 0);
+    motionEnabled = clientAnimation && !contrast;
     if (background) DeleteObject(background);
     if (surface) DeleteObject(surface);
     if (field) DeleteObject(field);
     background = CreateSolidBrush(colors.background); surface = CreateSolidBrush(colors.surface);
     field = CreateSolidBrush(FieldColor());
-    const int sizes[] = { 15, 15, 28, 12, 13 };
+    const int sizes[] = { 14, 14, 24, 12, 12 };
     for (int i = 0; i < 5; ++i) {
         if (fonts[i]) DeleteObject(fonts[i]);
         fonts[i] = CreateFontW(-S(sizes[i]), 0, 0, 0, i == 1 || i == 2 ? FW_SEMIBOLD : FW_NORMAL,
@@ -176,6 +221,13 @@ void App::Theme(int mode) {
         SendMessageW(item.window, WM_SETFONT, reinterpret_cast<WPARAM>(fonts[item.font]), TRUE);
         SetWindowTheme(item.window, L"", L"");
     }
+    for (auto& item : controls) {
+        item.hover = {};
+        item.toggle.from = item.toggle.to = Checked(item.id) ? 1.0f : 0.0f;
+    }
+    KillTimer(window, MotionTimer);
+    Set(ThemeToggle, dark ? L"切换为浅色" : L"切换为深色");
+    EnableWindow(Get(ThemeToggle), !contrast && !busy);
     const BOOL useDark = dark;
     DwmSetWindowAttribute(window, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &useDark, sizeof(useDark));
     if (body) InvalidateRect(body, nullptr, TRUE);
@@ -184,7 +236,7 @@ void App::Theme(int mode) {
 
 void App::CreateControls() {
     auto add = [&](int id, PCWSTR type, PCWSTR text, DWORD style, int font = 0, bool footer = false) {
-        if (IsActionButton(id)) style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
+        if (IsOwnerDrawButton(id)) style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
         HWND h = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0,
             footer ? window : body, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
         controls.push_back({ id, h, font });
@@ -194,14 +246,14 @@ void App::CreateControls() {
     };
     const DWORD label = SS_LEFT | SS_NOPREFIX;
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
-    add(Title, L"STATIC", L"设置你的启动方式", label, 2);
-    add(Subtitle, L"STATIC", L"ChatGPT 轻量启动器  /  部署与配置", label, 0);
+    add(Title, L"STATIC", L"ChatGPT 启动器", label, 2);
+    add(ThemeToggle, L"BUTTON", L"切换为浅色", WS_TABSTOP | BS_OWNERDRAW);
     add(State, L"STATIC", L"尚未部署，仅对当前 Windows 用户生效", label, 3);
     add(StartTitle, L"STATIC", L"启动设置", label, 1);
     add(Startup, L"BUTTON", L"登录 Windows 后自动启动", WS_TABSTOP | BS_AUTOCHECKBOX);
     add(Desktop, L"BUTTON", L"创建桌面快捷方式", WS_TABSTOP | BS_AUTOCHECKBOX);
     add(Silent, L"BUTTON", L"启动时不显示主窗口（暂不可用）", WS_DISABLED | WS_TABSTOP | BS_AUTOCHECKBOX);
-    add(SilentHint, L"STATIC", L"保存后尝试关闭应用自带自启，并打开 Windows 设置供你确认。", label, 3);
+    add(SilentHint, L"STATIC", L"保存时尝试关闭 ChatGPT 自带自启。", label, 3);
     add(ProxyTitle, L"STATIC", L"代理连接", label, 1);
     add(Proxy, L"BUTTON", L"使用指定代理", WS_TABSTOP | BS_AUTOCHECKBOX);
     add(ProtocolLabel, L"STATIC", L"协议", label, 3);
@@ -218,17 +270,16 @@ void App::CreateControls() {
     add(PreviewTitle, L"STATIC", L"启动参数预览", label, 1);
     add(Preview, L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
     SendMessageW(Get(Preview), EM_SETLIMITTEXT, 32767, 0);
-    add(PreviewHint, L"STATIC", L"实时显示将写入快捷方式的参数，可选中复制。空白表示不附加参数。", label, 3);
     add(Advanced, L"BUTTON", L"高级", WS_TABSTOP | BS_OWNERDRAW, 4, true);
     add(DirectoryLabel, L"STATIC", L"部署目录", label, 1);
     add(Directory, L"EDIT", L"", edit);
     add(Browse, L"BUTTON", L"浏览…", WS_TABSTOP | BS_PUSHBUTTON);
     add(Reset, L"BUTTON", L"恢复默认", WS_TABSTOP | BS_PUSHBUTTON);
-    add(DirectoryHint, L"STATIC", L"更改目录后会重新部署，并更新快捷方式；旧目录中的文件会保留。", label, 3);
-    add(BypassLabel, L"STATIC", L"不走代理的地址（选填，用分号分隔）", label, 0);
+    add(DirectoryHint, L"STATIC", L"更改位置会更新快捷方式，旧文件保留。", label, 3);
+    add(BypassLabel, L"STATIC", L"不走代理的地址（选填）", label, 1);
     add(Bypass, L"EDIT", L"", edit);
-    SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"例如 localhost;*.example.com"));
-    add(ExtraLabel, L"STATIC", L"额外启动参数（选填）", label, 0);
+    SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"用分号分隔，例如 localhost;*.example.com"));
+    add(ExtraLabel, L"STATIC", L"额外启动参数（选填）", label, 1);
     add(Extra, L"EDIT", L"", edit);
     SendMessageW(Get(Extra), EM_SETLIMITTEXT, static_cast<WPARAM>(setup::MaxArguments), 0);
     add(Error, L"STATIC", L"", label, 3);
@@ -244,49 +295,46 @@ void App::Layout() {
     const int footerHeight = S(FooterHeight);
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
-    const int desktopRow = advanced ? 0 : 42;
-    contentHeight = S(674 + desktopRow);
+    contentHeight = S(advanced ? 610 : 666);
     scroll = std::clamp(scroll, 0, std::max(0, contentHeight - static_cast<int>(area.bottom)));
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
     HDWP batch = BeginDeferWindowPos(static_cast<int>(controls.size()));
     auto place = [&](int id, int x, int y, int w, int h, bool visible = true) {
-        if (id >= ProxyTitle && id <= PreviewHint) y += desktopRow;
         HWND control = Get(id);
         const UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
         if (batch) batch = DeferWindowPos(batch, control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
         else SetWindowPos(control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
     };
-    place(Title, 32, 26, width - 64, 42);
-    place(Subtitle, 34, 76, width - 68, 24);
-    place(State, 34, 108, width - 68, 20);
-    place(StartTitle, 48, 154, inner, 24, !advanced);
-    place(Startup, 48, 184, inner, 34, !advanced);
-    place(SilentHint, 48, 224, inner, 22, !advanced);
-    place(Desktop, 48, 254, inner, 34, !advanced);
-    place(Silent, 48, 296, inner, 34, !advanced);
-    place(ProxyTitle, 48, 338, inner, 24, !advanced);
-    place(Proxy, 48, 367, inner, 34, !advanced);
-    place(ProtocolLabel, 48, 414, 208, 20, !advanced);
-    place(Protocol, 48, 440, 66, 40, !advanced);
-    place(ProtocolHttps, 119, 440, 66, 40, !advanced);
-    place(ProtocolSocks, 190, 440, 66, 40, !advanced);
-    place(HostLabel, 272, 414, inner - 344, 20, !advanced);
-    place(Host, 284, 450, inner - 368, 22, !advanced);
-    place(PortLabel, width - 152, 414, 104, 20, !advanced);
-    place(Port, width - 140, 450, 80, 22, !advanced);
-    place(PreviewTitle, 34, 526, width - 68, 24);
-    place(Preview, 46, 569, width - 92, 50);
-    place(PreviewHint, 34, 639, width - 68, 30);
-    place(DirectoryLabel, 48, 157, inner, 24, advanced);
-    place(Directory, 60, 202, inner - 208, 22, advanced);
-    place(Browse, width - 216, 192, 72, 42, advanced);
-    place(Reset, width - 136, 192, 88, 42, advanced);
-    place(DirectoryHint, 48, 247, inner, 40, advanced);
-    place(BypassLabel, 48, 301, inner, 24, advanced);
-    place(Bypass, 60, 341, inner - 24, 22, advanced);
-    place(ExtraLabel, 48, 400, inner, 24, advanced);
-    place(Extra, 60, 440, inner - 24, 22, advanced);
+    place(Title, 32, 24, width - 120, 34);
+    place(ThemeToggle, width - 68, 24, 36, 36);
+    place(State, 32, 66, width - 64, 20);
+    place(StartTitle, 32, 108, width - 64, 20, !advanced);
+    place(Startup, 48, 152, inner, 36, !advanced);
+    place(SilentHint, 48, 190, inner, 18, !advanced);
+    place(Desktop, 48, 220, inner, 36, !advanced);
+    place(Silent, 48, 268, inner, 32, !advanced);
+    place(ProxyTitle, 32, 340, width - 64, 20, !advanced);
+    place(Proxy, 48, 384, inner, 36, !advanced);
+    place(ProtocolLabel, 48, 432, 208, 18, !advanced);
+    place(Protocol, 52, 462, 64, 28, !advanced);
+    place(ProtocolHttps, 120, 462, 64, 28, !advanced);
+    place(ProtocolSocks, 188, 462, 64, 28, !advanced);
+    place(HostLabel, 272, 432, inner - 344, 18, !advanced);
+    place(Host, 284, 466, inner - 368, 20, !advanced);
+    place(PortLabel, width - 152, 432, 104, 18, !advanced);
+    place(Port, width - 140, 466, 80, 20, !advanced);
+    place(PreviewTitle, 32, advanced ? 488 : 542, width - 64, 20);
+    place(Preview, 44, advanced ? 532 : 586, width - 88, 44);
+    place(DirectoryLabel, 32, 108, width - 64, 20, advanced);
+    place(Directory, 60, 166, inner - 208, 20, advanced);
+    place(Browse, width - 216, 156, 72, 40, advanced);
+    place(Reset, width - 136, 156, 88, 40, advanced);
+    place(DirectoryHint, 48, 216, inner, 20, advanced);
+    place(BypassLabel, 32, 280, width - 64, 20, advanced);
+    place(Bypass, 44, 322, width - 88, 20, advanced);
+    place(ExtraLabel, 32, 380, width - 64, 20, advanced);
+    place(Extra, 44, 422, width - 88, 20, advanced);
     if (batch) EndDeferWindowPos(batch);
     const int footerTop = root.bottom - footerHeight;
     HDWP footerBatch = BeginDeferWindowPos(4);
@@ -295,10 +343,10 @@ void App::Layout() {
         if (footerBatch) footerBatch = DeferWindowPos(footerBatch, Get(id), nullptr, x, y, w, h, flags);
         else SetWindowPos(Get(id), nullptr, x, y, w, h, flags);
     };
-    footer(Footer, S(32), footerTop + S(8), root.right - S(64), S(40));
-    footer(Advanced, S(32), footerTop + S(56), S(92), S(40));
-    footer(CloseButton, root.right - S(240), footerTop + S(56), S(80), S(40));
-    footer(ApplyButton, root.right - S(148), footerTop + S(56), S(116), S(40));
+    footer(Footer, S(32), footerTop + S(4), root.right - S(64), S(32));
+    footer(Advanced, S(32), footerTop + S(40), S(92), S(40));
+    footer(CloseButton, root.right - S(240), footerTop + S(40), S(80), S(40));
+    footer(ApplyButton, root.right - S(148), footerTop + S(40), S(116), S(40));
     if (footerBatch) EndDeferWindowPos(footerBatch);
     ShowWindow(Get(Error), SW_HIDE);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -347,6 +395,7 @@ void App::Refresh(bool edited) {
     const setup::Options options = Options();
     // Temporarily unavailable; preserve the saved value but keep the switch locked after saving.
     EnableWindow(Get(Silent), FALSE);
+    EnableWindow(Get(ThemeToggle), !contrast && !busy);
     EnableWindow(Get(Protocol), options.proxy && !busy);
     EnableWindow(Get(ProtocolHttps), options.proxy && !busy);
     EnableWindow(Get(ProtocolSocks), options.proxy && !busy);
@@ -416,12 +465,22 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
 }
 void App::Command(int id, int notification) {
     if (loading || busy) return;
+    if (id == ThemeToggle && notification == BN_CLICKED) {
+        if (contrast) return;
+        preferredDark = !dark;
+        Theme(); Layout();
+        if (!SaveDarkPreference(preferredDark)) Set(Footer, L"外观已切换，但未能记住选择。");
+        return;
+    }
+    if (IsSegment(id) && notification == BN_CLICKED) {
+        if (!IsWindowEnabled(Get(id))) return;
+        SelectProtocol(id); Refresh(true); return;
+    }
     if (id == Port && notification == EN_SETFOCUS) { DetectPort(); return; }
     if (id == Advanced && notification == BN_CLICKED) {
         advanced = !advanced; scroll = 0;
         Set(Advanced, advanced ? L"返回" : L"高级");
-        Set(Title, advanced ? L"高级设置" : L"设置你的启动方式");
-        Set(Subtitle, advanced ? L"部署位置与额外参数  /  返回后继续设置启动方式" : L"ChatGPT 轻量启动器  /  部署与配置");
+        Set(Title, advanced ? L"高级设置" : L"ChatGPT 启动器");
         Layout(); SetFocus(Get(Advanced)); return;
     }
     if (id == Reset && notification == BN_CLICKED) { Set(Directory, paths.defaultDirectory); return; }
@@ -496,14 +555,18 @@ void App::DrawSurface(HWND target, HDC dc) {
     if (target == body) {
         auto card = [&](int top, int bottom) {
             const RECT r{ S(32), S(top) - scroll, rect.right - S(32), S(bottom) - scroll };
-            Rounded(dc, r, S(16), colors.surface, colors.border);
+            Rounded(dc, r, S(16), colors.surface, colors.divider);
         };
-        if (advanced) card(138, 494);
-        else { card(138, 346); card(364, 546); }
+        if (advanced) card(140, 256);
+        else {
+            card(140, 316); card(372, 518);
+            RECT segments{S(48), S(458) - scroll, S(256), S(494) - scroll};
+            Rounded(dc, segments, S(10), colors.field, colors.border);
+        }
         for (const auto& item : controls) {
             if (!IsField(item.id) || !(GetWindowLongPtrW(item.window, GWL_STYLE) & WS_VISIBLE)) continue;
             RECT r{}; GetWindowRect(item.window, &r); MapWindowPoints(nullptr, body, reinterpret_cast<POINT*>(&r), 2);
-            InflateRect(&r, S(12), S(10));
+            InflateRect(&r, S(12), S(item.id == Host || item.id == Port ? 8 : 10));
             const bool focused = GetFocus() == item.window;
             Rounded(dc, r, S(10), FieldColor(), focused ? colors.accent : colors.border, focused ? 2.0f : 1.0f);
         }
@@ -535,16 +598,53 @@ void App::PaintControl(HWND control, HDC output) {
     if (buffer) EndBufferedPaint(buffer, TRUE);
     RestoreDC(output, state);
 }
+void App::SelectProtocol(int id) {
+    selectedProtocol = id;
+    for (int segment : {Protocol, ProtocolHttps, ProtocolSocks}) {
+        HWND control = Get(segment);
+        const LONG_PTR style = GetWindowLongPtrW(control, GWL_STYLE);
+        SetWindowLongPtrW(control, GWL_STYLE, segment == id ? style | WS_TABSTOP : style & ~WS_TABSTOP);
+        InvalidateRect(control, nullptr, FALSE);
+    }
+}
+void App::UpdateMotion(HWND control) {
+    if (!IsButton(GetDlgCtrlID(control))) return;
+    const ULONGLONG now = GetTickCount64();
+    for (auto& item : controls) if (item.window == control) {
+        const bool enabled = IsWindowEnabled(control) != FALSE;
+        const bool animate = motionEnabled && !loading && enabled && IsWindowVisible(control);
+        item.hover.Set(enabled && GetPropW(control, L"setup.hover") ? 1.0f : 0.0f, animate, now);
+        item.toggle.Set(Checked(item.id) ? 1.0f : 0.0f, animate, now);
+        if (item.hover.Active(now) || item.toggle.Active(now)) SetTimer(window, MotionTimer, 16, nullptr);
+        break;
+    }
+}
+bool App::TickMotion() {
+    bool active = false;
+    const ULONGLONG now = GetTickCount64();
+    for (auto& item : controls) {
+        if (item.hover.from == item.hover.to && item.toggle.from == item.toggle.to) continue;
+        InvalidateRect(item.window, nullptr, FALSE);
+        if (item.hover.Active(now) || item.toggle.Active(now)) active = true;
+        else { item.hover.from = item.hover.to; item.toggle.from = item.toggle.to; }
+    }
+    if (!active) KillTimer(window, MotionTimer);
+    return active;
+}
 void App::DrawControl(HWND control, HDC dc) {
     RECT rect{}; GetClientRect(control, &rect);
     const int id = GetDlgCtrlID(control);
     const bool enabled = IsWindowEnabled(control) != FALSE;
-    const bool hover = GetPropW(control, L"setup.hover") != nullptr;
     const bool focus = GetFocus() == control;
     const bool focusVisible = focus && (SendMessageW(control, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) == 0;
     const bool pressed = (SendMessageW(control, BM_GETSTATE, 0, 0) & BST_PUSHED) != 0;
     const bool checked = Checked(id);
-    FillRect(dc, &rect, surface);
+    float hover = 0, toggle = checked ? 1.0f : 0.0f;
+    const ULONGLONG now = GetTickCount64();
+    for (const auto& item : controls) if (item.window == control) {
+        hover = item.hover.Value(now); toggle = item.toggle.Value(now); break;
+    }
+    FillRect(dc, &rect, id == ThemeToggle ? background : IsSegment(id) ? field : surface);
     SetBkMode(dc, TRANSPARENT);
     COLORREF textColor = enabled ? colors.text : colors.secondary;
     RECT text = rect;
@@ -558,36 +658,71 @@ void App::DrawControl(HWND control, HDC dc) {
         text.top += std::max(0L, (rect.bottom - measure.bottom) / 2);
         DrawTextW(dc, caption.c_str(), -1, &text, DT_WORDBREAK | DT_NOPREFIX);
         SelectObject(dc, old); return;
+    } else if (id == ThemeToggle) {
+        const COLORREF fill = enabled ? Blend(colors.surface, colors.hover, pressed ? 1.0f : hover) : colors.surface;
+        Rounded(dc, rect, S(10), fill, focusVisible ? colors.accent : colors.divider, focusVisible ? 2.0f : 1.0f);
+        Gdiplus::Graphics graphics(dc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        const float scale = static_cast<float>(dpi) / 96.0f;
+        const float x = rect.right / 2.0f, y = rect.bottom / 2.0f + (pressed ? scale : 0.0f);
+        Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(textColor), GetGValue(textColor), GetBValue(textColor)), 1.6f * scale);
+        pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound);
+        if (dark) {
+            // Sun: switching from dark to light. Vector strokes stay crisp at every DPI.
+            graphics.DrawEllipse(&pen, x - 3.5f * scale, y - 3.5f * scale, 7.0f * scale, 7.0f * scale);
+            const float directions[][2] = {{1,0},{0,1},{-1,0},{0,-1},
+                {0.7071f,0.7071f},{-0.7071f,0.7071f},{-0.7071f,-0.7071f},{0.7071f,-0.7071f}};
+            for (const auto& direction : directions)
+                graphics.DrawLine(&pen, x + direction[0] * 6.5f * scale, y + direction[1] * 6.5f * scale,
+                    x + direction[0] * 9.0f * scale, y + direction[1] * 9.0f * scale);
+        } else {
+            // Crescent: switching from light to dark. No font or bitmap dependency.
+            Gdiplus::GraphicsPath moon;
+            moon.AddBezier(x + 4 * scale, y - 8 * scale, x - 4 * scale, y - 10 * scale,
+                x - 10 * scale, y - 3 * scale, x - 7 * scale, y + 4 * scale);
+            moon.AddBezier(x - 7 * scale, y + 4 * scale, x - 4 * scale, y + 10 * scale,
+                x + 5 * scale, y + 10 * scale, x + 8 * scale, y + 3 * scale);
+            moon.AddBezier(x + 8 * scale, y + 3 * scale, x + 1 * scale, y + 6 * scale,
+                x - 4 * scale, y - 2 * scale, x + 4 * scale, y - 8 * scale);
+            moon.CloseFigure(); graphics.DrawPath(&pen, &moon);
+        }
+        return; // The window caption remains available to accessibility tools, but is not painted.
     } else if (IsSwitch(id)) {
         RECT track{ rect.right - S(46), (rect.bottom - S(26)) / 2, rect.right - S(2), (rect.bottom + S(26)) / 2 };
-        const COLORREF trackColor = checked && enabled ? colors.accent : contrast ? colors.surface : colors.border;
-        Rounded(dc, track, S(13), trackColor, focus ? colors.accent : contrast ? colors.text : trackColor, focus ? 2.0f : 1.0f);
-        const int left = checked ? track.right - S(23) : track.left + S(3);
+        const COLORREF trackColor = contrast ? (checked && enabled ? colors.accent : colors.surface)
+            : enabled ? Blend(colors.border, colors.accent, toggle) : colors.divider;
+        Rounded(dc, track, S(13), trackColor, focus ? colors.accent : contrast ? (enabled ? colors.text : colors.secondary) : trackColor, focus ? 2.0f : 1.0f);
+        const int left = track.left + S(3) + static_cast<int>(S(18) * toggle + 0.5f);
         RECT knob{ left, track.top + S(3), left + S(20), track.bottom - S(3) };
-        Rounded(dc, knob, S(10), contrast ? (checked ? GetSysColor(COLOR_HIGHLIGHTTEXT) : colors.text) : RGB(255,255,255), trackColor, 0.5f);
+        Rounded(dc, knob, S(10), contrast ? (!enabled ? colors.secondary : checked ? GetSysColor(COLOR_HIGHLIGHTTEXT) : colors.text)
+            : RGB(255,255,255), trackColor, 0.5f);
         text.right = track.left - S(16); textFlags |= DT_LEFT;
     } else {
         const bool primary = id == ApplyButton;
         const bool quiet = id == Advanced;
         const bool segment = IsSegment(id);
-        COLORREF fill = FieldColor();
+        COLORREF fill = quiet ? colors.surface : FieldColor();
         COLORREF edge = quiet ? fill : colors.border;
         if (enabled && ((primary) || (segment && checked))) {
-            fill = primary || contrast ? colors.accent : dark ? RGB(38,65,98) : RGB(229,240,255);
-            edge = primary ? colors.accent : colors.accent;
-            textColor = contrast ? GetSysColor(COLOR_HIGHLIGHTTEXT) : primary ? RGB(255,255,255) : colors.accent;
+            fill = primary ? Blend(colors.primary, colors.primaryHover, hover)
+                : contrast ? colors.selected : dark ? colors.hover : colors.surface;
+            edge = primary ? fill : contrast ? colors.text : colors.divider;
+            textColor = primary ? colors.primaryText : colors.selectedText;
         } else if (quiet) textColor = colors.secondary;
-        if (enabled && (hover || pressed) && !primary && !contrast) fill = dark ? RGB(52,58,69) : RGB(236,240,246);
-        if (enabled && pressed && primary && !contrast) fill = dark ? RGB(59,126,234) : RGB(0,82,190);
+        if (enabled && !primary && !(segment && checked) && !contrast)
+            fill = Blend(fill, colors.hover, pressed ? 1.0f : hover);
+        if (enabled && pressed && primary) fill = colors.primaryHover;
+        if (primary && enabled) edge = fill;
         if (quiet) edge = contrast ? colors.border : fill;
-        const bool ring = IsActionButton(id) ? focusVisible : focus;
-        Rounded(dc, rect, S(10), fill, ring ? colors.accent : edge, ring ? 2.0f : 1.0f);
+        const bool ring = focusVisible;
+        if (segment && !checked && !ring) edge = fill;
+        Rounded(dc, rect, S(segment ? 6 : 10), fill, ring ? colors.accent : edge, ring ? 2.0f : 1.0f);
         if (primary && focusVisible) {
             RECT inset = rect; InflateRect(&inset, -S(3), -S(3));
             Rounded(dc, inset, S(7), fill, textColor, 1.0f);
         }
         textFlags |= DT_CENTER;
-        if (pressed) OffsetRect(&text, 0, S(1));
+        if (pressed && !segment) OffsetRect(&text, 0, S(1));
         if (quiet) {
             text.left += S(advanced ? 26 : 10); text.right -= S(advanced ? 10 : 26);
             const float x = static_cast<float>(advanced ? S(17) : rect.right - S(17));
@@ -605,7 +740,7 @@ void App::DrawControl(HWND control, HDC dc) {
     const std::wstring caption = Text(id);
     DrawTextW(dc, caption.c_str(), -1, &text, textFlags);
     SelectObject(dc, old);
-    if (focusVisible && !IsActionButton(id)) {
+    if (focusVisible && !IsOwnerDrawButton(id)) {
         RECT frame = rect; InflateRect(&frame, -S(3), -S(3)); DrawFocusRect(dc, &frame);
     }
 }
@@ -615,9 +750,9 @@ LRESULT ColorControl(App& app, HDC dc, HWND control) {
         SetTextColor(dc, IsWindowEnabled(control) ? app.colors.text : app.colors.secondary);
         SetBkColor(dc, app.FieldColor()); return reinterpret_cast<LRESULT>(app.field);
     }
-    const bool surface = (id >= StartTitle && id <= Port) || (id >= DirectoryLabel && id <= Extra)
+    const bool surface = id == SilentHint || id == ProtocolLabel || id == HostLabel || id == PortLabel || id == DirectoryHint
         || id == Footer || id == CloseButton || id == ApplyButton || id == Advanced;
-    const bool secondary = id == Subtitle || id == State || id == SilentHint || id == PreviewHint
+    const bool secondary = id == State || id == SilentHint
         || id == DirectoryHint || id == ProtocolLabel || id == HostLabel || id == PortLabel || id == Footer;
     SetTextColor(dc, secondary ? app.colors.secondary : app.colors.text);
     SetBkColor(dc, surface ? app.colors.surface : app.colors.background);
@@ -626,12 +761,27 @@ LRESULT ColorControl(App& app, HDC dc, HWND control) {
 LRESULT CALLBACK StyledControl(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
     App& app = *reinterpret_cast<App*>(reference);
     const int id = GetDlgCtrlID(window);
+    if (IsSegment(id)) {
+        if (message == BM_GETCHECK) return app.selectedProtocol == id ? BST_CHECKED : BST_UNCHECKED;
+        if (message == BM_SETCHECK) {
+            if (wparam == BST_CHECKED) app.SelectProtocol(id);
+            else if (app.selectedProtocol == id) app.SelectProtocol(0);
+            return 0;
+        }
+        if (message == WM_GETDLGCODE) return DLGC_BUTTON | DLGC_RADIOBUTTON | DLGC_WANTARROWS;
+        if (message == WM_KEYDOWN && (wparam == VK_LEFT || wparam == VK_RIGHT || wparam == VK_UP || wparam == VK_DOWN)) {
+            if (!IsWindowEnabled(window)) return 0;
+            const int direction = wparam == VK_LEFT || wparam == VK_UP ? -1 : 1;
+            const int next = Protocol + (id - Protocol + direction + 3) % 3;
+            SetFocus(app.Get(next)); app.Command(next, BN_CLICKED); return 0;
+        }
+    }
     // Also allow retry by clicking an empty field that already has focus.
     if (id == Port && message == WM_LBUTTONDOWN && GetFocus() == window)
         PostMessageW(app.window, DetectPortMessage, 0, 0);
     if (IsActionButton(id) && message == WM_GETDLGCODE)
         return DLGC_BUTTON | (GetFocus() == window || GetPropW(window, L"setup.default") ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON);
-    if (IsActionButton(id) && message == BM_SETSTYLE) {
+    if (IsOwnerDrawButton(id) && message == BM_SETSTYLE) {
         if ((wparam & BS_TYPEMASK) == BS_DEFPUSHBUTTON) SetPropW(window, L"setup.default", reinterpret_cast<HANDLE>(1));
         else RemovePropW(window, L"setup.default");
         // Dialog navigation may request a default push button; never restore native painting.
@@ -647,10 +797,13 @@ LRESULT CALLBACK StyledControl(HWND window, UINT message, WPARAM wparam, LPARAM 
     if ((IsButton(id) || id == Footer) && message == WM_ERASEBKGND) return 1;
     if (message == WM_MOUSEMOVE && IsButton(id) && !GetPropW(window, L"setup.hover")) {
         SetPropW(window, L"setup.hover", reinterpret_cast<HANDLE>(1));
+        app.UpdateMotion(window);
         TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 }; TrackMouseEvent(&track);
         InvalidateRect(window, nullptr, FALSE);
     }
-    if (message == WM_MOUSELEAVE) { RemovePropW(window, L"setup.hover"); InvalidateRect(window, nullptr, FALSE); }
+    if (message == WM_MOUSELEAVE) {
+        RemovePropW(window, L"setup.hover"); app.UpdateMotion(window); InvalidateRect(window, nullptr, FALSE);
+    }
     if (message == WM_MOUSEWHEEL) {
         if (id != Preview) return SendMessageW(app.body, message, wparam, lparam);
         RECT bounds{}; GetWindowRect(window, &bounds);
@@ -669,6 +822,8 @@ LRESULT CALLBACK StyledControl(HWND window, UINT message, WPARAM wparam, LPARAM 
         app.ScrollTo(app.scroll + (wparam == VK_NEXT ? 1 : -1) * static_cast<int>(rect.bottom - app.S(36))); return 0;
     }
     const LRESULT result = DefSubclassProc(window, message, wparam, lparam);
+    if (message == BM_SETCHECK || message == BM_CLICK || message == WM_LBUTTONUP || message == WM_KEYUP || message == WM_ENABLE)
+        app.UpdateMotion(window);
     // Owner-drawn actions route synchronous drawing through WM_DRAWITEM as well.
     // Keep deferred invalidation for theme changes and the native checkbox/radio state model.
     if ((IsButton(id) || id == Footer) && (message == WM_SETTEXT || message == WM_UPDATEUISTATE || message == WM_THEMECHANGED
@@ -696,7 +851,7 @@ LRESULT CALLBACK BodyProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
     case WM_COMMAND: app->Command(LOWORD(wparam), HIWORD(wparam)); return 0;
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
-        if (item && IsActionButton(static_cast<int>(item->CtlID))) { app->PaintControl(item->hwndItem, item->hDC); return TRUE; }
+        if (item && IsOwnerDrawButton(static_cast<int>(item->CtlID))) { app->PaintControl(item->hwndItem, item->hDC); return TRUE; }
         break;
     }
     case WM_PAINT: app->Paint(window); return 0;
@@ -741,6 +896,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     if (!app) return DefWindowProcW(window, message, wparam, lparam);
     switch (message) {
     case WM_CREATE: {
+        app->preferredDark = ReadDarkPreference();
         app->dpi = GetDpiForWindow(window); app->Theme();
         app->body = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, L"ChatGPTSetupBody", L"启动配置",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, window, nullptr, app->instance, app);
@@ -771,9 +927,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         app->Layout(); return 0;
     }
     case WM_SETTINGCHANGE: case WM_THEMECHANGED: app->Theme(); app->Layout(); return 0;
+    case WM_TIMER:
+        if (wparam == MotionTimer) { app->TickMotion(); return 0; }
+        break;
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
-        if (item && (IsActionButton(static_cast<int>(item->CtlID)) || item->CtlID == Footer)) {
+        if (item && (IsOwnerDrawButton(static_cast<int>(item->CtlID)) || item->CtlID == Footer)) {
             app->PaintControl(item->hwndItem, item->hDC); return TRUE;
         }
         break;
@@ -872,7 +1031,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
             const UINT dpi = GetDpiForSystem();
             RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
             const int width = MulDiv(700, static_cast<int>(dpi), 96);
-            const int height = std::min(MulDiv(882, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
+            const int height = std::min(MulDiv(812, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
             HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", L"ChatGPT 启动器设置",
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left + (work.right - work.left - width) / 2,
                 work.top + (work.bottom - work.top - height) / 2, width, height, nullptr, nullptr, instance, &app);

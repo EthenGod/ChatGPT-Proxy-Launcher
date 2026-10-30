@@ -12,6 +12,24 @@ static bool settingsAfterReminder = false;
 static DWORD settingsError = 0;
 static setup::ProxyDetection proxyResult;
 static unsigned proxyCalls = 0;
+static DWORD storedLightTheme = 0;
+static LSTATUS themeReadResult = ERROR_FILE_NOT_FOUND, themeWriteResult = ERROR_SUCCESS;
+static unsigned themeWrites = 0;
+static bool themePathValid = true;
+static LSTATUS WINAPI TestThemeRead(HKEY key, LPCWSTR path, LPCWSTR name, DWORD, LPDWORD, PVOID data, LPDWORD size) {
+    themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && name
+        && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup") && !wcscmp(name, L"LightTheme");
+    if (themeReadResult != ERROR_SUCCESS) return themeReadResult;
+    if (*size < sizeof(DWORD)) return ERROR_MORE_DATA;
+    *static_cast<DWORD*>(data) = storedLightTheme; *size = sizeof(DWORD); return ERROR_SUCCESS;
+}
+static LSTATUS WINAPI TestThemeWrite(HKEY key, LPCWSTR path, LPCWSTR name, DWORD type, LPCVOID data, DWORD size) {
+    ++themeWrites;
+    themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && name && type == REG_DWORD && size == sizeof(DWORD)
+        && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup") && !wcscmp(name, L"LightTheme");
+    if (themeWriteResult != ERROR_SUCCESS) return themeWriteResult;
+    storedLightTheme = *static_cast<const DWORD*>(data); themeReadResult = ERROR_SUCCESS; return ERROR_SUCCESS;
+}
 namespace setup {
 ProxyDetection DetectProxyPort(const std::wstring&, const std::wstring&) {
     ++proxyCalls; Sleep(20); return proxyResult;
@@ -35,11 +53,15 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 }
 #define MessageBoxW TestMessageBox
 #define ShellExecuteExW TestShellExecute
+#define RegGetValueW TestThemeRead
+#define RegSetKeyValueW TestThemeWrite
 #define wWinMain SetupEntryForTest
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
 #undef MessageBoxW
 #undef ShellExecuteExW
+#undef RegGetValueW
+#undef RegSetKeyValueW
 
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
 struct ButtonPaintProbe { unsigned paints = 0, captions = 0; };
@@ -62,10 +84,24 @@ static bool ButtonFillMatches(App& app) {
     SendMessageW(button, WM_PRINT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT | PRF_ERASEBKGND);
     const COLORREF actual = GetPixel(dc, app.S(10), rect.bottom / 2);
     const bool pressed = (SendMessageW(button, BM_GETSTATE, 0, 0) & BST_PUSHED) != 0;
-    const COLORREF expected = !IsWindowEnabled(button) ? app.FieldColor() : pressed && !app.contrast
-        ? app.dark ? RGB(59,126,234) : RGB(0,82,190) : app.colors.accent;
+    const COLORREF expected = !IsWindowEnabled(button) ? app.FieldColor()
+        : pressed ? app.colors.primaryHover : app.colors.primary;
     SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(button, screen);
     return actual == expected;
+}
+static bool SegmentFillMatches(App& app, int id) {
+    HWND control = app.Get(id);
+    RECT rect{}; GetClientRect(control, &rect);
+    HDC screen = GetDC(control), dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, rect.right, rect.bottom);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    SendMessageW(control, WM_PRINT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT | PRF_ERASEBKGND);
+    const COLORREF fill = GetPixel(dc, app.S(8), rect.bottom / 2);
+    const COLORREF corner = GetPixel(dc, 0, 0);
+    const COLORREF expected = app.Checked(id) && IsWindowEnabled(control)
+        ? app.contrast ? app.colors.selected : app.dark ? app.colors.hover : app.colors.surface : app.FieldColor();
+    SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(control, screen);
+    return fill == expected && corner == app.FieldColor();
 }
 static LRESULT CALLBACK ProbeOwnerDraw(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
     if (message == WM_DRAWITEM) ++*reinterpret_cast<unsigned*>(reference);
@@ -113,6 +149,21 @@ static bool Capture(App& app, PCWSTR filename) {
     DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(app.window, screen);
     return saved;
 }
+static bool LabelsFit(App& app) {
+    for (const auto& item : app.controls) {
+        if (!IsWindowVisible(item.window) || IsField(item.id) || item.id == Footer || item.id == ThemeToggle) continue;
+        RECT bounds{}; GetClientRect(item.window, &bounds);
+        HDC dc = GetDC(item.window);
+        HGDIOBJ old = SelectObject(dc, app.fonts[item.font]);
+        const auto caption = app.Text(item.id);
+        SIZE measured{};
+        GetTextExtentPoint32W(dc, caption.c_str(), static_cast<int>(caption.size()), &measured);
+        SelectObject(dc, old); ReleaseDC(item.window, dc);
+        const int allowance = IsSwitch(item.id) ? app.S(64) : item.id == Advanced ? app.S(36) : 0;
+        if (measured.cx > bounds.right - allowance || measured.cy > bounds.bottom) return false;
+    }
+    return true;
+}
 static bool WaitForSave(App& app) {
     const ULONGLONG until = GetTickCount64() + 10000;
     while (app.busy && GetTickCount64() < until) {
@@ -123,6 +174,21 @@ static bool WaitForSave(App& app) {
     return !app.busy;
 }
 static int RunTests(PCWSTR folder) {
+    REQUIRE(ReadDarkPreference()); // Missing or malformed preference defaults to dark.
+    themeReadResult = ERROR_SUCCESS; storedLightTheme = 9;
+    REQUIRE(ReadDarkPreference());
+    storedLightTheme = 1; REQUIRE(!ReadDarkPreference());
+    themeReadResult = ERROR_FILE_NOT_FOUND;
+    // Animation can reverse from the current presentation value and has a bounded lifetime.
+    Motion motion;
+    motion.Set(1.0f, true, 1000);
+    REQUIRE(motion.Value(1000) == 0 && motion.Active(1075));
+    const float halfway = motion.Value(1075);
+    REQUIRE(halfway > 0 && halfway < 1);
+    motion.Set(0.0f, true, 1075);
+    REQUIRE(motion.Value(1075) == halfway && motion.Value(1225) == 0 && !motion.Active(1225));
+    motion.Set(1.0f, false, 1225);
+    REQUIRE(motion.Value(1225) == 1 && !motion.Active(1225));
     App app;
     app.instance = GetModuleHandleW(nullptr);
     const std::wstring root = setup::Join(folder, L"ui-isolated-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
@@ -131,9 +197,46 @@ static int RunTests(PCWSTR folder) {
     cls.lpfnWndProc = WindowProc; cls.lpszClassName = L"SetupTestWindow"; RegisterClassExW(&cls);
     cls.lpfnWndProc = BodyProc; cls.lpszClassName = L"ChatGPTSetupBody"; RegisterClassExW(&cls);
     REQUIRE(CreateWindowExW(WS_EX_CONTROLPARENT, L"SetupTestWindow", L"Isolated UI test", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        -20000, -20000, 720, 882, nullptr, nullptr, app.instance, &app));
+        -20000, -20000, 720, 812, nullptr, nullptr, app.instance, &app));
     ShowWindow(app.window, SW_SHOWNOACTIVATE);
     UpdateWindow(app.window);
+    REQUIRE(app.preferredDark && (app.contrast || app.dark));
+    const auto initialArguments = app.Text(Preview);
+    const bool initialDirty = app.dirty;
+    app.Theme(1);
+    SendMessageW(app.Get(ThemeToggle), BM_CLICK, 0, 0);
+    REQUIRE(!app.preferredDark && !ReadDarkPreference() && storedLightTheme == 1);
+    REQUIRE(app.Text(Preview) == initialArguments && app.dirty == initialDirty);
+    app.Theme(); REQUIRE(app.contrast || !app.dark); // Refresh retains explicit selection.
+    app.Theme(0);
+    SendMessageW(app.Get(ThemeToggle), BM_CLICK, 0, 0);
+    REQUIRE(app.preferredDark && ReadDarkPreference() && storedLightTheme == 0 && themeWrites == 2);
+    themeWriteResult = ERROR_ACCESS_DENIED;
+    app.Theme(1); SendMessageW(app.Get(ThemeToggle), BM_CLICK, 0, 0);
+    REQUIRE(!app.preferredDark && app.Text(Footer).find(L"未能记住") != std::wstring::npos);
+    themeWriteResult = ERROR_SUCCESS;
+    app.Theme(0); SendMessageW(app.Get(ThemeToggle), BM_CLICK, 0, 0);
+    REQUIRE(themePathValid);
+    REQUIRE(app.Text(ThemeToggle) == L"切换为浅色");
+    RECT themeBounds{}; GetClientRect(app.Get(ThemeToggle), &themeBounds);
+    REQUIRE(themeBounds.right == themeBounds.bottom && themeBounds.right == app.S(36));
+    SetFocus(app.Get(ThemeToggle));
+    SendMessageW(app.Get(ThemeToggle), WM_KEYDOWN, VK_SPACE, 0);
+    SendMessageW(app.Get(ThemeToggle), WM_KEYUP, VK_SPACE, 0);
+    REQUIRE(!app.preferredDark && app.Text(ThemeToggle) == L"切换为深色");
+    MSG themeKey{}; themeKey.hwnd = app.Get(ThemeToggle); themeKey.message = WM_KEYDOWN; themeKey.wParam = VK_RETURN;
+    REQUIRE(IsDialogMessageW(app.window, &themeKey));
+    REQUIRE(app.preferredDark && app.Text(ThemeToggle) == L"切换为浅色" && app.dirty == initialDirty);
+    SetFocus(app.body);
+    // Reduced-motion mode also makes subsequent rendering comparisons deterministic.
+    app.motionEnabled = false;
+    std::vector<int> fontSizes;
+    for (const auto font : app.fonts) {
+        LOGFONTW info{}; REQUIRE(GetObjectW(font, sizeof(info), &info));
+        REQUIRE(abs(info.lfHeight) >= app.S(12));
+        if (std::find(fontSizes.begin(), fontSizes.end(), info.lfHeight) == fontSizes.end()) fontSizes.push_back(info.lfHeight);
+    }
+    REQUIRE(fontSizes.size() == 3);
     REQUIRE(app.Checked(Startup) && app.Checked(Silent) && app.savedTarget.empty());
     REQUIRE(app.Text(Preview) == L"--no-startup-window");
     REQUIRE(!app.Checked(Desktop) && IsWindowEnabled(app.Get(Desktop)));
@@ -227,6 +330,7 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(probe.captions == captions);
     for (int mode : {0, 1, 2}) {
         app.Theme(mode);
+        app.motionEnabled = false;
         const struct { UINT message; WPARAM wparam; LPARAM lparam; } changes[] = {
             {WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L"部署并保存")},
             {BM_SETSTYLE, BS_DEFPUSHBUTTON, TRUE}, {BM_SETSTYLE, BS_PUSHBUTTON, TRUE},
@@ -251,7 +355,39 @@ static int RunTests(PCWSTR folder) {
         }
     }
     REQUIRE(ownerDraws > 0); // Synchronous native button updates now ask our renderer to draw.
-    app.Theme();
+    app.Check(Proxy, true); app.Set(Port, L"12345"); app.Refresh(false);
+    for (int mode : {0, 1, 2}) {
+        app.Theme(mode); app.motionEnabled = false;
+        if (mode == 2) REQUIRE(!IsWindowEnabled(app.Get(ThemeToggle)));
+        for (int i = 0; i < 12; ++i) {
+            const int selected = Protocol + i % 3;
+            SendMessageW(app.Get(selected), BM_CLICK, 0, 0);
+            for (int id : {Protocol, ProtocolHttps, ProtocolSocks}) {
+                REQUIRE(app.Checked(id) == (id == selected));
+                REQUIRE((GetWindowLongPtrW(app.Get(id), GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW);
+                REQUIRE(SegmentFillMatches(app, id));
+            }
+        }
+        SetFocus(app.Get(ProtocolSocks));
+        SendMessageW(app.Get(ProtocolSocks), WM_KEYDOWN, VK_RIGHT, 0);
+        REQUIRE(app.Checked(Protocol) && GetFocus() == app.Get(Protocol));
+        SendMessageW(app.Get(Protocol), WM_KEYDOWN, VK_LEFT, 0);
+        REQUIRE(app.Checked(ProtocolSocks));
+        SetFocus(app.Get(ProtocolHttps));
+        SendMessageW(app.Get(ProtocolHttps), WM_KEYDOWN, VK_SPACE, 0);
+        SendMessageW(app.Get(ProtocolHttps), WM_KEYUP, VK_SPACE, 0);
+        REQUIRE(app.Checked(ProtocolHttps));
+        for (int id : {Protocol, ProtocolHttps, ProtocolSocks}) {
+            REQUIRE(((GetWindowLongPtrW(app.Get(id), GWL_STYLE) & WS_TABSTOP) != 0) == (id == ProtocolHttps));
+            SendMessageW(app.Get(id), BM_SETSTYLE, BS_AUTORADIOBUTTON, TRUE);
+            REQUIRE((GetWindowLongPtrW(app.Get(id), GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW);
+        }
+        SetFocus(app.body);
+        REQUIRE(Capture(app, setup::Join(folder, mode == 0 ? L"setup-protocol-light.png"
+            : mode == 1 ? L"setup-protocol-dark.png" : L"setup-protocol-contrast.png").c_str()));
+    }
+    app.RestoreOptions(initial);
+    app.Theme(0); app.motionEnabled = false;
     // Exercise dialog navigation, not just BM_CLICK: Enter and Space retain button semantics.
     SetFocus(app.Get(Advanced));
     MSG key{}; key.hwnd = app.Get(Advanced); key.message = WM_KEYDOWN; key.wParam = VK_RETURN;
@@ -269,6 +405,23 @@ static int RunTests(PCWSTR folder) {
     }
     SetFocus(app.body);
     REQUIRE(Capture(app, setup::Join(folder, L"setup-main.png").c_str()));
+    app.Theme(1); app.motionEnabled = false;
+    REQUIRE(Capture(app, setup::Join(folder, L"setup-dark.png").c_str()));
+    app.Theme(2);
+    REQUIRE(!app.motionEnabled && Capture(app, setup::Join(folder, L"setup-contrast.png").c_str()));
+    app.Theme(0); app.motionEnabled = false;
+    // Native hover/toggle events start only local, short-lived timers; idle work stops.
+    app.motionEnabled = true;
+    SendMessageW(app.Get(Advanced), WM_MOUSEMOVE, 0, MAKELPARAM(5, 5));
+    REQUIRE(app.TickMotion());
+    SendMessageW(app.Get(Advanced), WM_MOUSELEAVE, 0, 0);
+    SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
+    REQUIRE(app.TickMotion());
+    for (auto& control : app.controls) { control.hover.started -= 150; control.toggle.started -= 150; }
+    REQUIRE(!app.TickMotion());
+    app.motionEnabled = false;
+    SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
+    REQUIRE(!app.TickMotion());
     SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
     app.Set(Port, L"7897");
     SendMessageW(app.Get(ProtocolSocks), BM_CLICK, 0, 0);
@@ -285,12 +438,22 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(Capture(app, setup::Join(folder, L"setup-advanced.png").c_str()));
     const UINT originalDpi = app.dpi;
     app.dpi = 144; app.Theme(1);
-    SetWindowPos(app.window, nullptr, 0, 0, 1080, 1323, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(app.window, nullptr, 0, 0, 1080, 1218, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     app.Layout();
     REQUIRE(FooterAligned(app));
     REQUIRE(Capture(app, setup::Join(folder, L"setup-dark-150.png").c_str()));
-    app.dpi = originalDpi; app.Theme();
-    SetWindowPos(app.window, nullptr, 0, 0, 720, 882, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    for (UINT scale : {96u, 120u, 144u, 192u}) {
+        app.dpi = scale; app.Theme(0); app.motionEnabled = false;
+        SetWindowPos(app.window, nullptr, 0, 0, app.S(620), app.S(812), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        app.Layout();
+        REQUIRE(LabelsFit(app) && FooterAligned(app));
+        app.Command(Advanced, BN_CLICKED);
+        REQUIRE(!app.advanced && LabelsFit(app));
+        if (scale == 192) REQUIRE(Capture(app, setup::Join(folder, L"setup-narrow-200.png").c_str()));
+        app.Command(Advanced, BN_CLICKED);
+    }
+    app.dpi = originalDpi; app.Theme(0); app.motionEnabled = false;
+    SetWindowPos(app.window, nullptr, 0, 0, 720, 812, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     app.Command(Advanced, BN_CLICKED);
     REQUIRE(!app.advanced && app.Options().directory == L"D:\\Applications\\ChatGPT Launcher");
     REQUIRE(app.Text(Preview).find(L"--label=\"中文 空格\"") != std::wstring::npos);
@@ -396,6 +559,8 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(!IsWindow(app.window) && reminderCalls == finalReminders);
     printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
     puts("PASS unavailable silent switch stays disabled across edits, restore and save success/failure; Tab skips it and saved values are retained");
+    puts("PASS three font sizes, interruptible 150 ms motion, stopped idle timer, reduced motion and high contrast");
+    puts("PASS dark default, independent theme preference and write failure (mock registry); owner-drawn protocol selection, arrows, Space, Tab stops and rendering");
     printf("PASS conflict folder handoff, Unicode/spaces, unrelated errors and Explorer failure fallback (mocked)\n");
     printf("PASS saved state, one startup reminder per session, repeat-save no-op, later edits, Settings-after-reminder and failure recovery\n");
     printf("PASS owner-draw synchronous dispatch, preserved style through Tab/default-button changes, Enter/Space, balanced footer at 100/150 percent and short windows\n");
