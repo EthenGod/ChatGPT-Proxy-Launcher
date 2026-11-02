@@ -6,9 +6,13 @@ call build.cmd
 if errorlevel 1 exit /b %errorlevel%
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
 if errorlevel 1 exit /b %errorlevel%
-cl /nologo /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-tests.obj /Fe:work\launcher-tests.exe tests\launcher-tests.cpp /link /SUBSYSTEM:CONSOLE kernel32.lib
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-tests.obj /Fe:work\launcher-tests.exe tests\launcher-tests.cpp /link /SUBSYSTEM:CONSOLE kernel32.lib
 if errorlevel 1 exit /b %errorlevel%
 work\launcher-tests.exe "%CD%\work\capture with spaces.txt"
+if errorlevel 1 exit /b %errorlevel%
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\companion-tests.obj /Fe:work\companion-tests.exe tests\companion-tests.cpp work\SetupCore.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib shlwapi.lib
+if errorlevel 1 exit /b %errorlevel%
+work\companion-tests.exe "%CD%\work"
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\taskbar-tests.obj /Fe:work\taskbar-tests.exe tests\taskbar-tests.cpp /link /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib
 if errorlevel 1 exit /b %errorlevel%

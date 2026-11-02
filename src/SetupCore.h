@@ -37,6 +37,8 @@ struct Payload { const BYTE* data; size_t size; };
 std::wstring ErrorText(DWORD error);
 std::wstring Join(const std::wstring& directory, const std::wstring& file);
 Result GetPaths(Paths& paths);
+Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder);
+Result AddCompanionProgram(const Paths& paths, const std::wstring& program);
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output);
 std::wstring QuoteArgument(const std::wstring& value);
 Result BuildArguments(const Options& options, std::wstring& arguments);

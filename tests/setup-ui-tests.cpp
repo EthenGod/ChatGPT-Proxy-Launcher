@@ -428,6 +428,14 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(app.Text(Preview).find(L"socks5://127.0.0.1:7897") != std::wstring::npos);
     app.Command(Advanced, BN_CLICKED);
     REQUIRE(app.advanced && app.Text(Advanced) == L"返回");
+    REQUIRE(IsWindowVisible(app.Get(AddProgram)) && IsWindowVisible(app.Get(OpenCompanions)));
+    const auto previewBeforeFolder = app.Text(Preview);
+    const auto revisionBeforeFolder = app.editRevision;
+    SendMessageW(app.Get(OpenCompanions), BM_CLICK, 0, 0);
+    REQUIRE(folderCalls == 1 && lastFolder == setup::Join(root, L"StartupApps"));
+    REQUIRE(GetFileAttributesW(lastFolder.c_str()) != INVALID_FILE_ATTRIBUTES);
+    REQUIRE(app.Text(Preview) == previewBeforeFolder && app.editRevision == revisionBeforeFolder);
+    folderCalls = 0; // Subsequent counts cover ownership-error handoffs only.
     REQUIRE((GetWindowLongPtrW(app.Get(Directory), GWL_STYLE) & WS_VISIBLE) != 0);
     REQUIRE(!(GetWindowLongPtrW(app.Get(Startup), GWL_STYLE) & WS_VISIBLE));
     REQUIRE(!(GetWindowLongPtrW(app.Get(Desktop), GWL_STYLE) & WS_VISIBLE));
@@ -456,6 +464,7 @@ static int RunTests(PCWSTR folder) {
     SetWindowPos(app.window, nullptr, 0, 0, 720, 812, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     app.Command(Advanced, BN_CLICKED);
     REQUIRE(!app.advanced && app.Options().directory == L"D:\\Applications\\ChatGPT Launcher");
+    REQUIRE(!IsWindowVisible(app.Get(AddProgram)) && !IsWindowVisible(app.Get(OpenCompanions)));
     REQUIRE(app.Text(Preview).find(L"--label=\"中文 空格\"") != std::wstring::npos);
     // Reproduce short-window scrolling and verify movement without rebuilding the layout.
     SetWindowPos(app.window, nullptr, 0, 0, 720, 510, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);

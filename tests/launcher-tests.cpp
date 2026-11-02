@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 #include "../src/TaskbarShortcut.h"
+#include "../src/StartupApps.h"
+static unsigned companionCalls = 0;
+void companions::Run(PCWSTR, Start) noexcept { ++companionCalls; }
 static unsigned repairCalls = 0;
 void RepairTaskbarShortcut(PCWSTR) noexcept { ++repairCalls; }
 
@@ -198,10 +201,11 @@ static int CheckEntryAndLifetime() {
     };
     for (const auto& item : cases) {
         std::wstring tail = item.tail;
-        createCalls = 0; messageCalls = 0; repairCalls = 0;
+        createCalls = 0; messageCalls = 0; repairCalls = 0; companionCalls = 0;
         REQUIRE(wWinMain(nullptr, nullptr, &tail[0], 0) == 0);
         REQUIRE(createCalls == (item.check ? 0u : 1u));
         REQUIRE(repairCalls == (item.check ? 0u : 1u));
+        REQUIRE(companionCalls == (item.check ? 0u : 1u));
         REQUIRE(messageCalls == 0 && liveAllocations == 0);
         if (!item.check) {
             REQUIRE(forwarded == std::wstring(L"\"C:\\Launcher Test\\Package\\app\\ChatGPT.exe\"")
@@ -211,9 +215,10 @@ static int CheckEntryAndLifetime() {
             REQUIRE(!GetHandleInformation(createdThread, &flags) && GetLastError() == ERROR_INVALID_HANDLE);
         }
     }
-    createSuccess = false; createCalls = 0;
+    createSuccess = false; createCalls = 0; companionCalls = 0;
     std::wstring launch = L"--test";
     REQUIRE(wWinMain(nullptr, nullptr, &launch[0], 0) == ERROR_ACCESS_DENIED);
+    REQUIRE(!companionCalls);
     REQUIRE(createCalls == 1 && liveAllocations == 0);
     createSuccess = true;
     std::wstring check = L"--launcher-check";

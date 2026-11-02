@@ -5,6 +5,7 @@
 #include <appmodel.h>
 #include <wchar.h>
 #include "TaskbarShortcut.h"
+#include "StartupApps.h"
 
 // Local tool, not an OpenAI product. No proxy settings are compiled in.
 static const wchar_t Family[] = L"OpenAI.Codex_2p2nqsd0c76g0";
@@ -106,7 +107,7 @@ static DWORD BuildCommand(PCWSTR executable, PCWSTR arguments, wchar_t* command,
     return ERROR_SUCCESS;
 }
 
-static DWORD StartApplication(PCWSTR executable, PCWSTR arguments) {
+static DWORD StartApplication(PCWSTR executable, PCWSTR arguments, PCWSTR cwd = nullptr, int show = -1) {
     const size_t required = CommandCapacity(executable, arguments);
     if (!required) return ERROR_FILENAME_EXCED_RANGE;
     const size_t length = wcslen(executable);
@@ -123,9 +124,10 @@ static DWORD StartApplication(PCWSTR executable, PCWSTR arguments) {
     *separator = L'\0';
     STARTUPINFOW startup = {};
     startup.cb = sizeof(startup);
+    if (show >= 0) { startup.dwFlags = STARTF_USESHOWWINDOW; startup.wShowWindow = static_cast<WORD>(show); }
     PROCESS_INFORMATION process = {};
     if (!CreateProcessW(executable, static_cast<PWSTR>(command.get()), nullptr, nullptr, FALSE,
-        0, nullptr, static_cast<PCWSTR>(directory.get()), &startup, &process)) return GetLastError();
+        0, nullptr, cwd ? cwd : static_cast<PCWSTR>(directory.get()), &startup, &process)) return GetLastError();
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     return ERROR_SUCCESS;
@@ -189,5 +191,8 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _I
     if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), arguments))
         return ReportError(ERROR_FILENAME_EXCED_RANGE);
     RepairTaskbarShortcut(static_cast<PCWSTR>(executable.get()));
-    return ReportError(StartApplication(static_cast<PCWSTR>(executable.get()), arguments));
+    const PCWSTR chat = static_cast<PCWSTR>(executable.get());
+    result = StartApplication(chat, arguments);
+    if (!result) companions::Run(chat, StartApplication);
+    return ReportError(result);
 }

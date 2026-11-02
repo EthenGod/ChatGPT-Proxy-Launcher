@@ -42,6 +42,7 @@ $sourceNames = @(
     'src/AppIcon.h', 'src/ChatGPTLauncherSetup.cpp', 'src/ChatGPTProxyLauncher.cpp',
     'src/LauncherResources.rc', 'src/ProxyDetection.cpp', 'src/ProxyDetection.h',
     'src/TaskbarShortcut.cpp', 'src/TaskbarShortcut.h',
+    'src/StartupApps.cpp', 'src/StartupApps.h', 'tests/companion-tests.cpp',
     'src/Setup.manifest', 'src/SetupCore.cpp', 'src/SetupCore.h',
     'src/SetupResources.h', 'src/SetupResources.rc', 'src/StartupIntegration.cpp', 'src/StartupIntegration.h',
     'tests/proxy-tests.cpp', 'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',

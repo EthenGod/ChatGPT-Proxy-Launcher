@@ -12,6 +12,7 @@
 - `tests/setup-tests.cpp` 需要提交；测试脚本先构建正式程序，部署测试仅使用 `work/` 下的隔离目录，不修改真实自启项。
 - `tests/startup-tests.cpp`、`tests/setup-ui-tests.cpp` 也需要提交；系统自启和 Windows 设置调用必须在测试中替换，不能用真实用户配置测试。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
+- `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。
 
 ## 工作方式
 - 尽量用中文大白话解释。先读相关源码和文档，明确目标、影响文件及验收方法，再做小范围修改。

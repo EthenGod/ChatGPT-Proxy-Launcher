@@ -37,6 +37,13 @@
 - Run 禁用标记参考 [Electron 的实现](https://github.com/electron/electron/blob/main/shell/browser/browser_win.cc)。商店 [StartupTask API](https://learn.microsoft.com/en-us/uwp/api/windows.applicationmodel.startuptask) 限于应用自身包；[Windows 设置 URI](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings) 用于引导核对。这些状态可能随 Windows 或应用更新改变，界面不承诺关闭所有机制。
 - MSIX 状态路径及 0–4 的含义参考 [微软 Teams MSIX 自启文档](https://learn.microsoft.com/en-us/microsoftteams/teams-client-vdi-requirements-deploy#teams-autostart)。将这一状态模型用于清单验证后的 ChatGPT 任务属于兼容推断，不代表微软提供跨应用 StartupTask 管理 API。保留只操作已有 DWORD、策略保护及人工核对入口。
 
+## 附加程序
+
+- 目标：用户通过本工具启动 ChatGPT 后，可以一起打开插件。高级页提供“添加程序”和“打开启动目录”。添加只写快捷方式，同名不同目标不会覆盖。
+- 方案：成功创建 ChatGPT 进程后只查看专用目录第一层。没有该目录就退出。按需初始化 COM，复用读取快捷方式的缓冲区。直接启动本机 EXE，保留快捷方式参数和工作目录。不监视进程，不等待窗口。
+- 边界：检查模式和 ChatGPT 启动失败时不运行。坏条目不影响其他程序。子进程继承防止再次派发的标记。目录不保证执行顺序；重复启动 ChatGPT 也会再次请求打开插件，不保证插件单实例或已与 ChatGPT 连接。
+- 验证：用隔离目录、真实 Shell 快捷方式及测试子进程验证参数、工作目录、同名保护、坏条目、非递归枚举和递归保护。计时区分目录检查与真实程序启动，未验证第三方插件兼容性。
+
 ## 桌面快捷方式
 
 - 在主界面的启动设置中提供开关，默认关闭。用户在保存前选择，不额外弹窗。

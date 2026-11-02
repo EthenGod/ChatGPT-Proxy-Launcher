@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "StartupApps.h"
 #include <shlobj.h>
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -81,8 +82,8 @@ Result NewTemp(const std::wstring& target, TempFile& temp) {
     temp.path = name;
     return {};
 }
-Result CommitTemp(TempFile& temp, const std::wstring& target) {
-    if (!MoveFileExW(temp.path.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+Result CommitTemp(TempFile& temp, const std::wstring& target, bool replace = true) {
+    if (!MoveFileExW(temp.path.c_str(), target.c_str(), (replace ? MOVEFILE_REPLACE_EXISTING : 0) | MOVEFILE_WRITE_THROUGH))
         return Fail(GetLastError(), L"无法保存文件，可能没有权限或文件正在使用：" + target);
     temp.path.clear();
     return {};
@@ -108,7 +109,7 @@ Result Restore(const std::wstring& path, const Snapshot& snapshot) {
     if (DeleteFileW(path.c_str()) || IsMissing(GetLastError())) return {};
     return Fail(GetLastError(), L"无法撤销新建文件：" + path);
 }
-Result WriteLink(const std::wstring& path, const Link& value) {
+Result WriteLink(const std::wstring& path, const Link& value, bool replace = true) {
     Com<IShellLinkW> link;
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
     if (FAILED(hr)) return Hr(hr, L"无法创建快捷方式对象。");
@@ -130,7 +131,7 @@ Result WriteLink(const std::wstring& path, const Link& value) {
     if (!Same(read.target, value.target) || read.arguments != value.arguments
         || !Same(read.directory, value.directory) || read.description != value.description)
         return Fail(ERROR_INVALID_DATA, L"快捷方式回读结果不一致，已停止保存。");
-    return CommitTemp(temp, path);
+    return CommitTemp(temp, path, replace);
 }
 struct Token { std::wstring value, raw; size_t start = 0, end = 0; };
 Result Tokens(const std::wstring& arguments, std::vector<Token>& tokens) {
@@ -191,7 +192,7 @@ Result GetPaths(Paths& paths) {
     PWSTR local = nullptr, startup = nullptr;
     HRESULT hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local);
     if (FAILED(hr)) return Hr(hr, L"无法获取用户程序目录。");
-    paths.defaultDirectory = Join(local, L"ChatGPTProxyLauncher");
+    paths.defaultDirectory = Join(local, companions::Root);
     CoTaskMemFree(local);
     paths.settingsLink = Join(paths.defaultDirectory, L"Launcher settings.lnk");
     hr = SHGetKnownFolderPath(FOLDERID_Startup, 0, nullptr, &startup);
@@ -204,6 +205,35 @@ Result GetPaths(Paths& paths) {
     paths.desktopLink = SUCCEEDED(hr) ? Join(desktop, LinkName) : L"";
     CoTaskMemFree(desktop);
     return {};
+}
+Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
+    if (paths.defaultDirectory.empty()) return Fail(ERROR_PATH_NOT_FOUND, L"无法获取附加程序目录。");
+    folder = Join(paths.defaultDirectory, companions::Folder);
+    Result result = EnsureDirectory(folder);
+    if (!result) return result;
+    if (GetFileAttributesW(folder.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT)
+        return Fail(ERROR_BAD_PATHNAME, L"启动目录不能是目录链接。");
+    return {};
+}
+Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
+    const std::wstring name = program.substr(program.find_last_of(L'\\') + 1);
+    if (program.size() < 3 || program[1] != L':' || program[2] != L'\\' || name.size() <= 4
+        || !Same(name.substr(name.size() - 4), L".exe") || Same(name, LauncherName) || Same(name, L"ChatGPTLauncherSetup.exe"))
+        return Fail(ERROR_BAD_PATHNAME, L"请选择本机的程序 EXE，不要选择启动器或配置器。");
+    DWORD attrs = GetFileAttributesW(program.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY))
+        return Fail(ERROR_FILE_NOT_FOUND, L"找不到所选程序。");
+    std::wstring folder;
+    Result result = EnsureCompanionFolder(paths, folder);
+    if (!result) return result;
+    if (Same(Parent(program), folder)) return {}; // A directly placed EXE is already an entry.
+    const std::wstring destination = Join(folder, name.substr(0, name.size() - 4) + L".lnk");
+    if (Exists(destination)) {
+        Link existing;
+        if (ReadLink(destination, existing) && Same(existing.target, program)) return {};
+        return Conflict(L"启动目录已有同名快捷方式。请先移走或重命名，原文件未修改。", folder);
+    }
+    return WriteLink(destination, {program, L"", Parent(program), L"ChatGPT 启动时打开"}, false);
 }
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
     if (input.size() < 3 || !((input[0] >= L'A' && input[0] <= L'Z') || (input[0] >= L'a' && input[0] <= L'z'))

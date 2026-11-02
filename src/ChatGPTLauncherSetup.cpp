@@ -25,7 +25,7 @@ enum ControlId {
     Title = 1000, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, ProtocolLabel, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, Host, PortLabel, Port,
     PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
-    DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, Error, Footer, ApplyButton, CloseButton
+    DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Error, Footer, ApplyButton, CloseButton
 };
 struct Palette {
     COLORREF background, surface, text, secondary, border, accent, error;
@@ -61,7 +61,7 @@ bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || i
 bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == ProtocolSocks; }
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
 bool IsButton(int id) {
-    return IsSwitch(id) || IsSegment(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle;
+    return IsSwitch(id) || IsSegment(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == AddProgram || id == OpenCompanions;
 }
 bool IsActionButton(int id) { return IsButton(id) && !IsSwitch(id) && !IsSegment(id); }
 bool IsOwnerDrawButton(int id) { return IsActionButton(id) || IsSegment(id); }
@@ -281,6 +281,9 @@ void App::CreateControls() {
     SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"用分号分隔，例如 localhost;*.example.com"));
     add(ExtraLabel, L"STATIC", L"额外启动参数（选填）", label, 1);
     add(Extra, L"EDIT", L"", edit);
+    add(CompanionLabel, L"STATIC", L"启动 ChatGPT 后打开", label, 1);
+    add(AddProgram, L"BUTTON", L"添加程序…", WS_TABSTOP | BS_PUSHBUTTON);
+    add(OpenCompanions, L"BUTTON", L"打开启动目录", WS_TABSTOP | BS_PUSHBUTTON);
     SendMessageW(Get(Extra), EM_SETLIMITTEXT, static_cast<WPARAM>(setup::MaxArguments), 0);
     add(Error, L"STATIC", L"", label, 3);
     add(Footer, L"STATIC", L"保存后即可使用", SS_OWNERDRAW, 4, true);
@@ -295,7 +298,7 @@ void App::Layout() {
     const int footerHeight = S(FooterHeight);
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
-    contentHeight = S(advanced ? 610 : 666);
+    contentHeight = S(advanced ? 710 : 666);
     scroll = std::clamp(scroll, 0, std::max(0, contentHeight - static_cast<int>(area.bottom)));
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
@@ -324,8 +327,8 @@ void App::Layout() {
     place(Host, 284, 466, inner - 368, 20, !advanced);
     place(PortLabel, width - 152, 432, 104, 18, !advanced);
     place(Port, width - 140, 466, 80, 20, !advanced);
-    place(PreviewTitle, 32, advanced ? 488 : 542, width - 64, 20);
-    place(Preview, 44, advanced ? 532 : 586, width - 88, 44);
+    place(PreviewTitle, 32, advanced ? 588 : 542, width - 64, 20);
+    place(Preview, 44, advanced ? 632 : 586, width - 88, 44);
     place(DirectoryLabel, 32, 108, width - 64, 20, advanced);
     place(Directory, 60, 166, inner - 208, 20, advanced);
     place(Browse, width - 216, 156, 72, 40, advanced);
@@ -335,6 +338,9 @@ void App::Layout() {
     place(Bypass, 44, 322, width - 88, 20, advanced);
     place(ExtraLabel, 32, 380, width - 64, 20, advanced);
     place(Extra, 44, 422, width - 88, 20, advanced);
+    place(CompanionLabel, 32, 480, width - 64, 20, advanced);
+    place(AddProgram, 32, 512, 112, 40, advanced);
+    place(OpenCompanions, 156, 512, 128, 40, advanced);
     if (batch) EndDeferWindowPos(batch);
     const int footerTop = root.bottom - footerHeight;
     HDWP footerBatch = BeginDeferWindowPos(4);
@@ -484,16 +490,31 @@ void App::Command(int id, int notification) {
         Layout(); SetFocus(Get(Advanced)); return;
     }
     if (id == Reset && notification == BN_CLICKED) { Set(Directory, paths.defaultDirectory); return; }
-    if (id == Browse && notification == BN_CLICKED) {
+    if (id == OpenCompanions && notification == BN_CLICKED) {
+        std::wstring folder;
+        auto result = setup::EnsureCompanionFolder(paths, folder);
+        if (result) {
+            SHELLEXECUTEINFOW info{sizeof(info)};
+            info.fMask = SEE_MASK_FLAG_NO_UI; info.hwnd = window; info.lpVerb = L"open";
+            info.lpFile = folder.c_str(); info.nShow = SW_SHOWNORMAL;
+            if (!ShellExecuteExW(&info)) { const DWORD error = GetLastError(); result = {error, setup::ErrorText(error)}; }
+        }
+        if (!result) ShowSetupError(window, result, L"无法打开启动目录");
+        return;
+    }
+    if ((id == Browse || id == AddProgram) && notification == BN_CLICKED) {
+        const bool selectProgram = id == AddProgram;
         IFileOpenDialog* dialog = nullptr;
         HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
         if (SUCCEEDED(hr)) {
             DWORD flags = 0;
             hr = dialog->GetOptions(&flags);
-            if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-            dialog->SetTitle(L"选择启动器部署目录");
+            if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | (selectProgram ? FOS_FILEMUSTEXIST : FOS_PICKFOLDERS) | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+            const COMDLG_FILTERSPEC filter{L"应用程序 (*.exe)", L"*.exe"};
+            if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(1, &filter);
+            dialog->SetTitle(selectProgram ? L"选择要随 ChatGPT 启动的程序" : L"选择启动器部署目录");
             IShellItem* initial = nullptr;
-            if (SUCCEEDED(SHCreateItemFromParsingName(Text(Directory).c_str(), nullptr, IID_PPV_ARGS(&initial)))) {
+            if (!selectProgram && SUCCEEDED(SHCreateItemFromParsingName(Text(Directory).c_str(), nullptr, IID_PPV_ARGS(&initial)))) {
                 dialog->SetFolder(initial); initial->Release();
             }
             if (SUCCEEDED(hr)) hr = dialog->Show(window);
@@ -502,14 +523,22 @@ void App::Command(int id, int notification) {
                 hr = dialog->GetResult(&item);
                 if (SUCCEEDED(hr)) {
                     PWSTR path = nullptr; hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
-                    if (SUCCEEDED(hr)) { Set(Directory, path); CoTaskMemFree(path); }
+                    if (SUCCEEDED(hr)) {
+                        if (selectProgram) {
+                            const auto added = setup::AddCompanionProgram(paths, path);
+                            if (!added) ShowSetupError(window, added, L"无法添加程序");
+                            else Set(Footer, savedThisSession ? L"已添加，下次通过启动器打开 ChatGPT 时生效。"
+                                : L"已添加。请部署并保存新版启动器。");
+                        } else Set(Directory, path);
+                        CoTaskMemFree(path);
+                    }
                     item->Release();
                 }
             }
             dialog->Release();
         }
         if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED))
-            MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), L"无法选择目录", MB_OK | MB_ICONERROR);
+            MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), selectProgram ? L"无法选择程序" : L"无法选择目录", MB_OK | MB_ICONERROR);
         return;
     }
     if (id == CloseButton && notification == BN_CLICKED) { SendMessageW(window, WM_CLOSE, 0, 0); return; }
@@ -644,7 +673,7 @@ void App::DrawControl(HWND control, HDC dc) {
     for (const auto& item : controls) if (item.window == control) {
         hover = item.hover.Value(now); toggle = item.toggle.Value(now); break;
     }
-    FillRect(dc, &rect, id == ThemeToggle ? background : IsSegment(id) ? field : surface);
+    FillRect(dc, &rect, id == ThemeToggle || id == AddProgram || id == OpenCompanions ? background : IsSegment(id) ? field : surface);
     SetBkMode(dc, TRANSPARENT);
     COLORREF textColor = enabled ? colors.text : colors.secondary;
     RECT text = rect;
