@@ -1,5 +1,10 @@
 # 项目交接
 
+## PowerShell 下载入口
+
+- README 的一行命令读取默认分支的 `setup.ps1`。脚本需先出现在远端该路径，命令才能使用。脚本保留 ASCII 编码，兼容 Windows PowerShell 直接读取。
+- 先取得最新正式版标签，再按该标签下载校验清单和配置器。不要分别下载两个 latest 附件，以免发布期间取到不同版本。
+
 ## 桌面快捷方式
 
 - `src/SetupCore.cpp` 用 Known Folder API 获取桌面位置。不要拼接用户目录，桌面可能已重定向。

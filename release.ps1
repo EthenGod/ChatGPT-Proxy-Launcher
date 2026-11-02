@@ -37,7 +37,7 @@ function Write-VerifiedZip([string]$Path, [System.Collections.IDictionary]$Files
 
 # Explicit list: never sweep the repository, work directory, Git data or private files.
 $sourceNames = @(
-    '.gitignore', 'AGENTS.md', 'HANDOFF.md', 'LICENSE', 'README.md', 'build.cmd', 'release.cmd', 'release.ps1',
+    '.gitignore', 'AGENTS.md', 'HANDOFF.md', 'LICENSE', 'README.md', 'build.cmd', 'release.cmd', 'release.ps1', 'setup.ps1',
     'assets/ChatGPT.ico', 'assets/README.md', 'docs/setup-design.md', 'docs/launcher-review.md', 'docs/release-upload.md', 'docs/taskbar-repair.md',
     'src/AppIcon.h', 'src/ChatGPTLauncherSetup.cpp', 'src/ChatGPTProxyLauncher.cpp',
     'src/LauncherResources.rc', 'src/ProxyDetection.cpp', 'src/ProxyDetection.h',
@@ -46,7 +46,7 @@ $sourceNames = @(
     'src/SetupResources.h', 'src/SetupResources.rc', 'src/StartupIntegration.cpp', 'src/StartupIntegration.h',
     'tests/proxy-tests.cpp', 'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
     'tests/taskbar-tests.cpp',
-    'tests/launcher-tests.cpp', 'tests/test-build.cmd'
+    'tests/launcher-tests.cpp', 'tests/test-build.cmd', 'tests/download-tests.ps1'
 )
 $sources = [ordered]@{}
 $sourceHashes = @{}

@@ -29,4 +29,6 @@ if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\setup-ui-tests.obj /Fe:work\setup-ui-tests.exe tests\setup-ui-tests.cpp work\SetupCore.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib user32.lib gdi32.lib gdiplus.lib shell32.lib ole32.lib uuid.lib shlwapi.lib comctl32.lib uxtheme.lib dwmapi.lib advapi32.lib xmllite.lib
 if errorlevel 1 exit /b %errorlevel%
 work\setup-ui-tests.exe "%CD%\work"
+if errorlevel 1 exit /b %errorlevel%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-tests.ps1"
 exit /b %errorlevel%

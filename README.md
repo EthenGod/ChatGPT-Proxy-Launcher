@@ -8,6 +8,14 @@
 
 ## 快速开始
 
+也可以在 Windows PowerShell 中粘贴以下一行，下载并打开最新版配置器：
+
+```powershell
+irm https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1 | iex
+```
+
+这行命令会执行仓库中的 [setup.ps1](setup.ps1)。脚本将配置器下载到新的临时目录，按同一版本的 `SHA256SUMS.txt` 核对文件后才打开界面。下载或校验失败时不会启动；只有点击“部署并保存”才会部署。
+
 1. 双击 `ChatGPTLauncherSetup.exe`。按需勾选“登录 Windows 后自动启动”或“创建桌面快捷方式”。
 2. 需要代理时，勾选“使用指定代理”，选择协议并填写地址。先运行代理软件，再点击空白的端口框，工具会尝试填入本机端口。未检测到时，请查看代理软件的端口设置并手动填写。
 3. 核对启动参数预览，点击“部署并保存”。如果出现自启提示，按提示到 Windows 的“设置 → 应用 → 启动”核对，避免 ChatGPT 自带自启和本工具同时启动。
