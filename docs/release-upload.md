@@ -1,44 +1,25 @@
-# v1.0.3 界面更新与桌面快捷方式
+# v1.0.4 启动 ChatGPT 时也能打开插件
 
-非官方 Windows x64 ChatGPT 启动器。使用前请先安装 ChatGPT Windows 应用。
+[![快速开始：查看分步教程](https://img.shields.io/badge/%E7%AC%AC%E4%B8%80%E6%AC%A1%E4%BD%BF%E7%94%A8-%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B-11775B?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher#%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B) [![下载 ChatGPTLauncherSetup.exe（Windows x64）](https://img.shields.io/badge/Windows%20x64-%E4%B8%8B%E8%BD%BD%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.0.4/ChatGPTLauncherSetup.exe)
 
-[![下载 ChatGPTLauncherSetup.exe（Windows x64，推荐）](https://img.shields.io/badge/Windows%20x64-%E4%B8%8B%E8%BD%BD%20ChatGPTLauncherSetup.exe-2563eb?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.0.3/ChatGPTLauncherSetup.exe)
+第一次使用？点 **快速开始**，跟着教程用一行 PowerShell 命令打开配置器，或手动下载。按钮不显示时，可点[文字版教程](https://github.com/EthenGod/ChatGPT-Proxy-Launcher#%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B)或[直接下载配置器](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.0.4/ChatGPTLauncherSetup.exe)。请先安装 ChatGPT Windows 应用；本工具不是 OpenAI 官方产品。
 
-[按钮无法显示？直接下载 ChatGPTLauncherSetup.exe](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.0.3/ChatGPTLauncherSetup.exe)
+**从旧版升级：** 打开新版配置器，点击 **保存更改**，即可更新已部署的启动器。
 
-**普通用户只需下载上面的部署器。** 它已包含启动器，无需额外安装 .NET 或 WebView2。
+## ✨ 更新内容
 
-## 更新内容
+- **启动 ChatGPT 时一起打开插件。** 在 **高级 → 添加程序…** 中选择插件入口，通过本工具启动 ChatGPT 时就会一并打开。要取消联动，点击 **打开启动目录**，移出对应入口即可。
+- **支持多种插件入口。** 可选择 EXE、快捷方式、批处理、PowerShell、VBS、JScript、WSF、Python、Node.js 模块和可执行 JAR。Python、Node.js 和 Java 插件需先安装对应的运行环境。
+- **一行命令打开配置器。** 复制“快速开始”中的 PowerShell 命令即可下载最新版。校验通过后自动打开，退出配置器后清理临时下载文件。
 
-- 新增“创建桌面快捷方式”选项，默认关闭。开启并保存后，可从桌面使用当前参数启动；以后修改参数或部署目录时，快捷方式会同步更新。
-- 界面默认深色。右上角太阳／月亮按钮切换浅深色，并记住选择。
-- 精简界面文字，统一分组、字号和间距，加入轻微的开关及悬停过渡。
-- 优化代理协议的选中高亮，减少重叠边框和原生控件闪现，保留键盘操作。
+## 🛠️ 修复内容
 
-## 使用提示
+- 修复部署时可能覆盖同名文件的问题。如果检查后、保存前出现了同名文件，配置器会保留原文件并提示冲突。
+- 修复插件脚本移走后，旧快捷方式仍会打开脚本运行程序的问题。现在会跳过失效入口，继续启动其他插件。
+- 修复无法开始保存时按钮可能无法再次点击的问题。设置会保留，可以直接重试。
 
-1. 打开部署器，按需要设置登录自启、桌面快捷方式和代理。
-2. 点击“部署并保存”。若出现自启核对提示，按提示检查 ChatGPT 自带自启是否已关闭。
-3. 完成后关闭部署器。保存不会立即启动 ChatGPT。
+## ⚠️ 已知问题
 
-**旧版本用户：**运行新版部署器并保存，即可更新启动器和快捷方式。
+- **静默启动暂不可用。** “启动时不显示主窗口”已置灰；即使旧配置保留了这个选项，ChatGPT 仍可能显示主窗口。
 
-**静默启动仍暂不可用，相关选项保持置灰。** 代理端口检测失败时，请到代理工具的端口设置中查看并手动填写。
-
-## 附件说明
-
-| 文件 | 用途 |
-| --- | --- |
-| **ChatGPTLauncherSetup.exe** | **推荐下载，图形化部署和配置** |
-| ChatGPTProxyLauncher.exe | 手动配置快捷方式参数的独立启动器 |
-| ChatGPTLauncher-source.zip | 本次版本的源码和构建脚本 |
-| SHA256SUMS.txt | 下载文件校验值 |
-
-GitHub 自动提供的 Source code 也是源码，不是安装程序。
-
-<!--
-维护者发布提示：
-标签使用 v1.0.3，上传 Releases/v1.0.3/ 中的四个附件。
-本文件可复制到 Release 正文，release.cmd 会同步到 Releases/README.md；该说明不作为附件上传。
-下载链接需在对应 Release 发布并上传附件后才生效。打包不会自动发布到 GitHub。
--->
+<!-- 发布标签：v1.0.4。上传 Releases/v1.0.4/ 中的四个附件。此说明复制到 Release 正文，不作为附件上传。 -->
