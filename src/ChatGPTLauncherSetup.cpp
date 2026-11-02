@@ -509,9 +509,13 @@ void App::Command(int id, int notification) {
         if (SUCCEEDED(hr)) {
             DWORD flags = 0;
             hr = dialog->GetOptions(&flags);
-            if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | (selectProgram ? FOS_FILEMUSTEXIST : FOS_PICKFOLDERS) | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-            const COMDLG_FILTERSPEC filter{L"应用程序 (*.exe)", L"*.exe"};
-            if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(1, &filter);
+            if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | (selectProgram ? FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS : FOS_PICKFOLDERS) | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+            const COMDLG_FILTERSPEC filters[] = {
+                {L"程序、快捷方式和脚本", L"*.exe;*.lnk;*.bat;*.cmd;*.ps1"},
+                {L"快捷方式", L"*.lnk"}, {L"批处理脚本", L"*.bat;*.cmd"},
+                {L"PowerShell 脚本", L"*.ps1"}, {L"应用程序", L"*.exe"}
+            };
+            if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
             dialog->SetTitle(selectProgram ? L"选择要随 ChatGPT 启动的程序" : L"选择启动器部署目录");
             IShellItem* initial = nullptr;
             if (!selectProgram && SUCCEEDED(SHCreateItemFromParsingName(Text(Directory).c_str(), nullptr, IID_PPV_ARGS(&initial)))) {

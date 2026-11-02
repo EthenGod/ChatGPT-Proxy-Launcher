@@ -29,13 +29,32 @@ struct ChildGuard {
     bool set = false;
     ~ChildGuard() { if (set) SetEnvironmentVariableW(Guard, nullptr); }
 };
-bool Extension(PCWSTR name, PCWSTR ext) {
-    PCWSTR dot = wcsrchr(name, L'.');
-    return dot && !_wcsicmp(dot, ext);
-}
-bool LocalPath(PCWSTR path) {
-    return path && ((path[0] >= L'A' && path[0] <= L'Z') || (path[0] >= L'a' && path[0] <= L'z'))
-        && path[1] == L':' && path[2] == L'\\';
+void StartTarget(Kind kind, PCWSTR target, PCWSTR args, PCWSTR cwd, int show, Start start) {
+    if (kind == Kind::Exe) { start(target, args, cwd, show); return; }
+    wchar_t system[MAX_PATH];
+    UINT n = GetSystemDirectoryW(system, MAX_PATH);
+    if (!n || n >= MAX_PATH) return;
+    std::wstring parent;
+    if (!cwd) {
+        const auto split = wcsrchr(target, L'\\') - target;
+        parent.assign(target, split == 2 ? 3 : static_cast<size_t>(split));
+        cwd = parent.c_str();
+    }
+    if (kind == Kind::PowerShell) {
+        const std::wstring host = std::wstring(system) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
+        std::wstring tail = std::wstring(L"-NoLogo -NoProfile -File \"") + target + L"\"";
+        if (*args) { tail += L' '; tail += args; }
+        start(host.c_str(), tail.c_str(), cwd, show);
+    } else if (kind == Kind::Batch) {
+        const std::wstring host = std::wstring(system) + L"\\cmd.exe";
+        // Fixed command only. Expand the quoted path once, with delayed expansion and AutoRun off.
+        // Never append a shortcut's user-supplied argument tail to cmd /c.
+        constexpr wchar_t var[] = L"CHATGPT_PROXY_LAUNCHER_BATCH_PATH";
+        if (SetEnvironmentVariableW(var, target)) {
+            start(host.c_str(), L"/d /v:off /s /c \"\"%CHATGPT_PROXY_LAUNCHER_BATCH_PATH%\"\"", cwd, show);
+            SetEnvironmentVariableW(var, nullptr);
+        }
+    }
 }
 void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
     if (!LocalPath(folder.c_str())) return;
@@ -52,12 +71,12 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
     std::vector<wchar_t> buffers;
     do {
         if (file.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
-        const bool link = Extension(file.cFileName, L".lnk");
-        if (!link && !Extension(file.cFileName, L".exe")) continue;
+        auto kind = FileKind(file.cFileName);
+        if (kind == Kind::Unknown) continue;
         const std::wstring path = folder + L"\\" + file.cFileName;
         PCWSTR exe = path.c_str(), args = L"", directory = nullptr;
         int show = -1;
-        if (link) {
+        if (kind == Kind::Link) {
             if (!com.Ready()) continue;
             ComPtr<IShellLinkW> shortcut; ComPtr<IPersistFile> persist;
             if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shortcut.p)))
@@ -67,17 +86,15 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
             if (buffers.empty()) buffers.resize(3 * capacity);
             auto target = buffers.data(), tail = target + capacity, cwd = tail + capacity;
             *target = *tail = *cwd = 0;
-            if (FAILED(shortcut.p->GetPath(target, capacity, nullptr, 0)) || !LocalPath(target) || !Extension(target, L".exe")
-                || FAILED(shortcut.p->GetArguments(tail, capacity)) || FAILED(shortcut.p->GetWorkingDirectory(cwd, capacity))
-                || (*cwd && !LocalPath(cwd))) continue;
+            if (FAILED(shortcut.p->GetPath(target, capacity, nullptr, 0))
+                || FAILED(shortcut.p->GetArguments(tail, capacity)) || FAILED(shortcut.p->GetWorkingDirectory(cwd, capacity))) continue;
             if (FAILED(shortcut.p->GetShowCmd(&show))) show = -1;
-            exe = target; args = tail; directory = *cwd ? cwd : nullptr;
+            exe = target; args = tail; directory = *cwd ? cwd : nullptr; kind = FileKind(target);
         }
-        PCWSTR leaf = wcsrchr(exe, L'\\') + 1;
-        if (!_wcsicmp(exe, chat) || !_wcsicmp(leaf, L"ChatGPTProxyLauncher.exe") || !_wcsicmp(leaf, L"ChatGPTLauncherSetup.exe")) continue;
+        if (!_wcsicmp(exe, chat) || !ValidTarget(exe, args, directory ? directory : L"")) continue;
         // Descendants must not run the companion list again, including renamed copies of this launcher.
         if (!guard.set && !(guard.set = SetEnvironmentVariableW(Guard, L"1") != FALSE)) return;
-        start(exe, args, directory, show); // A broken entry does not block the next one.
+        StartTarget(kind, exe, args, directory, show, start); // A broken entry does not block the next one.
     } while (FindNextFileW(search.h, &file));
 }
 }

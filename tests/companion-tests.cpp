@@ -21,6 +21,63 @@ static bool Touch(PCWSTR path) {
     if (h == INVALID_HANDLE_VALUE) return false;
     CloseHandle(h); return true;
 }
+static bool WriteScript(const std::wstring& path, const char* contents) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0, size = static_cast<DWORD>(strlen(contents));
+    const bool ok = WriteFile(h, contents, size, &written, nullptr) && size == written;
+    CloseHandle(h); return ok;
+}
+static bool MakeShortcut(const std::wstring& path, const std::wstring& target, PCWSTR args, const std::wstring& cwd) {
+    companions::ComPtr<IShellLinkW> shell; companions::ComPtr<IPersistFile> persist;
+    PIDLIST_ABSOLUTE item = ILCreateFromPathW(target.c_str());
+    if (!item) return false;
+    const bool bound = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell.p)))
+        && SUCCEEDED(shell.p->SetIDList(item));
+    CoTaskMemFree(item);
+    return bound && SUCCEEDED(shell.p->SetArguments(args))
+        && SUCCEEDED(shell.p->SetWorkingDirectory(cwd.c_str()))
+        && SUCCEEDED(shell.p->QueryInterface(IID_PPV_ARGS(&persist.p))) && SUCCEEDED(persist.p->Save(path.c_str(), TRUE));
+}
+static int Scripts(const std::wstring& root, PCWSTR self) {
+    setup::Paths paths{setup::Join(root, L"scripts"), {}, {}, {}};
+    std::wstring folder;
+    REQUIRE(setup::EnsureCompanionFolder(paths, folder));
+    const auto bat = setup::Join(folder, L"直接 & %PATH% !.BAT"), cmd = setup::Join(root, L"工具 & %TEMP% !.CmD");
+    const auto ps = setup::Join(root, L"插件 ' & 空格.PS1"), lnk = setup::Join(root, L"自定义入口.LNK");
+    REQUIRE(WriteScript(bat, "@echo off\r\n> bat.ok echo ok\r\n"));
+    REQUIRE(WriteScript(cmd, "@echo off\r\n> cmd.ok echo ok\r\n"));
+    REQUIRE(WriteScript(ps, "param([string]$value)\r\nif ($value -ceq 'two words') { Set-Content -LiteralPath ps.ok -Value ok }\r\n"));
+    REQUIRE(setup::AddCompanionProgram(paths, bat));
+    const auto addCmd = setup::AddCompanionProgram(paths, cmd);
+    if (!addCmd) printf("Add CMD failed: %lu\n", addCmd.code);
+    REQUIRE(addCmd);
+    const auto plainPS = setup::Join(folder, L"direct.ps1");
+    REQUIRE(WriteScript(plainPS, "Set-Content -LiteralPath direct-ps.ok -Value ok\r\n"));
+    REQUIRE(MakeShortcut(lnk, ps, L"\"two words\"", folder));
+    REQUIRE(setup::AddCompanionProgram(paths, lnk) && setup::AddCompanionProgram(paths, lnk));
+    const auto imported = setup::Join(folder, L"自定义入口.lnk");
+    setup::Link info;
+    REQUIRE(setup::ReadLink(imported, info) && info.target == ps && info.arguments == L"\"two words\"" && info.directory == folder);
+    REQUIRE(MakeShortcut(lnk, ps, L"\"different settings\"", folder));
+    REQUIRE(!setup::AddCompanionProgram(paths, lnk));
+    REQUIRE(MakeShortcut(lnk, cmd, L"& echo unexpected", folder));
+    REQUIRE(!setup::AddCompanionProgram(paths, lnk));
+    REQUIRE(MakeShortcut(setup::Join(folder, L"unsupported-args.lnk"), cmd, L"& echo unexpected", folder));
+    // Local unsigned fixtures only. This sets policy for this isolated test process and its children.
+    // The production launcher never sets or overrides execution policy.
+    REQUIRE(SetEnvironmentVariableW(L"PSExecutionPolicyPreference", L"RemoteSigned"));
+    attempts = started = 0;
+    companions::Dispatch(folder, self, CountStart);
+    REQUIRE(attempts == 4 && started == 4);
+    const auto end = GetTickCount64() + 15000;
+    auto done = [&] { return Exists(setup::Join(folder, L"bat.ok")) && Exists(setup::Join(root, L"cmd.ok"))
+        && Exists(setup::Join(folder, L"ps.ok")) && Exists(setup::Join(folder, L"direct-ps.ok")); };
+    while (!done() && GetTickCount64() < end) Sleep(20);
+    REQUIRE(done());
+    puts("PASS BAT/CMD/PS1 dispatch, literal paths with special characters, LNK import, preserved arguments and working directory, collision protection.");
+    return 0;
+}
 static int Suite(PCWSTR work, PCWSTR self) {
     const auto root = setup::Join(work, L"companion-test-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(GetCurrentProcessId()));
     REQUIRE(CreateDirectoryW(root.c_str(), nullptr));
@@ -77,7 +134,7 @@ static int Suite(PCWSTR work, PCWSTR self) {
     while ((!Exists(setup::Join(folder, L"direct.ok")) || !Exists(setup::Join(working, L"link.ok"))) && GetTickCount64() < end) Sleep(10);
     REQUIRE(Exists(setup::Join(folder, L"direct.ok")) && Exists(setup::Join(working, L"link.ok")));
     printf("PASS companion EXE and shortcut launched isolated children; args, cwd, collision, filtering and recursion guard. Missing/empty folder checks: %.1f/%.1f us mean (500 calls; excludes known-folder lookup and process startup).\n", missingUs, emptyUs);
-    return 0;
+    return Scripts(root, self);
 }
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2) {

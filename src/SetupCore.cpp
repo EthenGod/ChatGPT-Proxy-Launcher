@@ -113,8 +113,15 @@ Result WriteLink(const std::wstring& path, const Link& value, bool replace = tru
     Com<IShellLinkW> link;
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
     if (FAILED(hr)) return Hr(hr, L"无法创建快捷方式对象。");
-    if (FAILED(hr = link->SetPath(value.target.c_str()))
-        || FAILED(hr = link->SetArguments(value.arguments.c_str()))
+    if (value.target.find(L'%') == std::wstring::npos) hr = link->SetPath(value.target.c_str());
+    else {
+        // SetPath can expand %NAME% inside a literal filename. Bind the actual filesystem item instead.
+        PIDLIST_ABSOLUTE item = nullptr;
+        hr = SHParseDisplayName(value.target.c_str(), nullptr, &item, 0, nullptr);
+        if (SUCCEEDED(hr)) hr = link->SetIDList(item);
+        CoTaskMemFree(item);
+    }
+    if (FAILED(hr) || FAILED(hr = link->SetArguments(value.arguments.c_str()))
         || FAILED(hr = link->SetWorkingDirectory(value.directory.c_str()))
         || FAILED(hr = link->SetDescription(value.description.c_str()))
         || FAILED(hr = link->SetIconLocation(value.target.c_str(), 0))
@@ -217,21 +224,45 @@ Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
 }
 Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
     const std::wstring name = program.substr(program.find_last_of(L'\\') + 1);
-    if (program.size() < 3 || program[1] != L':' || program[2] != L'\\' || name.size() <= 4
-        || !Same(name.substr(name.size() - 4), L".exe") || Same(name, LauncherName) || Same(name, L"ChatGPTLauncherSetup.exe"))
-        return Fail(ERROR_BAD_PATHNAME, L"请选择本机的程序 EXE，不要选择启动器或配置器。");
+    const bool importing = companions::FileKind(name.c_str()) == companions::Kind::Link;
+    if (!companions::LocalPath(program.c_str()) || (!importing && !companions::ValidTarget(program.c_str(), L"", L"")))
+        return Fail(ERROR_BAD_PATHNAME, L"请选择本机的 EXE、LNK、BAT、CMD 或 PS1 文件，不要选择启动器或配置器。");
     DWORD attrs = GetFileAttributesW(program.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY))
         return Fail(ERROR_FILE_NOT_FOUND, L"找不到所选程序。");
+    if (importing) {
+        Link source;
+        Result read = ReadLink(program, source, true);
+        if (!read) return read;
+        if (companions::FileKind(source.target.c_str()) == companions::Kind::Batch && !source.arguments.empty())
+            return Fail(ERROR_INVALID_PARAMETER, L"批处理快捷方式不支持额外参数。请将所需选项写在 BAT 或 CMD 文件中。");
+        if (!companions::ValidTarget(source.target.c_str(), source.arguments.c_str(), source.directory.c_str()))
+            return Fail(ERROR_BAD_PATHNAME, L"快捷方式必须指向本机的 EXE、BAT、CMD 或 PS1 文件，工作目录也必须在本机。");
+        DWORD targetAttrs = GetFileAttributesW(source.target.c_str());
+        if (targetAttrs == INVALID_FILE_ATTRIBUTES || (targetAttrs & FILE_ATTRIBUTE_DIRECTORY))
+            return Fail(ERROR_FILE_NOT_FOUND, L"快捷方式指向的文件不存在。");
+    }
     std::wstring folder;
     Result result = EnsureCompanionFolder(paths, folder);
     if (!result) return result;
-    if (Same(Parent(program), folder)) return {}; // A directly placed EXE is already an entry.
+    if (Same(Parent(program), folder)) return {}; // Already in the dispatch list.
     const std::wstring destination = Join(folder, name.substr(0, name.size() - 4) + L".lnk");
     if (Exists(destination)) {
-        Link existing;
-        if (ReadLink(destination, existing) && Same(existing.target, program)) return {};
+        if (importing) {
+            Snapshot a, b;
+            if (ReadFileBytes(program, a) && ReadFileBytes(destination, b) && a.exists && b.exists && a.data == b.data) return {};
+        } else {
+            Link existing;
+            if (ReadLink(destination, existing) && Same(existing.target, program)) return {};
+        }
         return Conflict(L"启动目录已有同名快捷方式。请先移走或重命名，原文件未修改。", folder);
+    }
+    if (importing) {
+        TempFile temp;
+        result = NewTemp(destination, temp);
+        if (!result) return result;
+        if (!CopyFileW(program.c_str(), temp.path.c_str(), FALSE)) return Fail(GetLastError(), L"无法复制所选快捷方式。");
+        return CommitTemp(temp, destination, false);
     }
     return WriteLink(destination, {program, L"", Parent(program), L"ChatGPT 启动时打开"}, false);
 }
@@ -361,7 +392,7 @@ Result ParseArguments(const std::wstring& arguments, Options& options) {
     }
     return {};
 }
-Result ReadLink(const std::wstring& path, Link& value) {
+Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget) {
     Com<IShellLinkW> link;
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
     if (FAILED(hr)) return Hr(hr, L"无法读取快捷方式。");
@@ -369,7 +400,7 @@ Result ReadLink(const std::wstring& path, Link& value) {
     if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))
         || FAILED(hr = persist->Load(path.c_str(), STGM_READ))) return Hr(hr, L"无法读取快捷方式：" + path);
     std::vector<wchar_t> target(32768), arguments(32768), directory(32768), description(1024);
-    if (FAILED(hr = link->GetPath(target.data(), 32768, nullptr, SLGP_RAWPATH))
+    if (FAILED(hr = link->GetPath(target.data(), 32768, nullptr, expandedTarget ? 0 : SLGP_RAWPATH))
         || FAILED(hr = link->GetArguments(arguments.data(), 32768))
         || FAILED(hr = link->GetWorkingDirectory(directory.data(), 32768))
         || FAILED(hr = link->GetDescription(description.data(), 1024))) return Hr(hr, L"无法读取快捷方式属性。");
