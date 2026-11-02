@@ -29,24 +29,31 @@ struct ChildGuard {
     bool set = false;
     ~ChildGuard() { if (set) SetEnvironmentVariableW(Guard, nullptr); }
 };
-void StartTarget(Kind kind, PCWSTR target, PCWSTR args, PCWSTR cwd, int show, Start start) {
+struct HostCache {
+    struct Item { bool lookedUp = false; std::wstring path; } items[static_cast<size_t>(Kind::Count)];
+    const std::wstring& Get(Kind kind) {
+        auto& item = items[static_cast<size_t>(kind)];
+        if (!item.lookedUp) { item.path = FindHost(kind); item.lookedUp = true; }
+        return item.path;
+    }
+};
+void StartTarget(Kind kind, PCWSTR target, PCWSTR args, PCWSTR cwd, int show, Start start, HostCache& hosts) {
     if (kind == Kind::Exe) { start(target, args, cwd, show); return; }
-    wchar_t system[MAX_PATH];
-    UINT n = GetSystemDirectoryW(system, MAX_PATH);
-    if (!n || n >= MAX_PATH) return;
+    const auto& host = hosts.Get(kind);
+    if (host.empty()) return;
     std::wstring parent;
     if (!cwd) {
         const auto split = wcsrchr(target, L'\\') - target;
         parent.assign(target, split == 2 ? 3 : static_cast<size_t>(split));
         cwd = parent.c_str();
     }
-    if (kind == Kind::PowerShell) {
-        const std::wstring host = std::wstring(system) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
-        std::wstring tail = std::wstring(L"-NoLogo -NoProfile -File \"") + target + L"\"";
+    if (kind != Kind::Batch) {
+        PCWSTR prefix = kind == Kind::PowerShell ? L"-NoLogo -NoProfile -File " :
+            kind == Kind::Jar ? L"-jar " : kind == Kind::Wsh ? L"//Nologo " : L"";
+        std::wstring tail = std::wstring(prefix) + L"\"" + target + L"\"";
         if (*args) { tail += L' '; tail += args; }
         start(host.c_str(), tail.c_str(), cwd, show);
-    } else if (kind == Kind::Batch) {
-        const std::wstring host = std::wstring(system) + L"\\cmd.exe";
+    } else {
         // Fixed command only. Expand the quoted path once, with delayed expansion and AutoRun off.
         // Never append a shortcut's user-supplied argument tail to cmd /c.
         constexpr wchar_t var[] = L"CHATGPT_PROXY_LAUNCHER_BATCH_PATH";
@@ -67,6 +74,7 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
     if (search.h == INVALID_HANDLE_VALUE) return;
     Apartment com;
     ChildGuard guard;
+    HostCache hosts;
     // Allocate shortcut buffers once, and only when there is a shortcut to read.
     std::vector<wchar_t> buffers;
     do {
@@ -94,7 +102,7 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
         if (!_wcsicmp(exe, chat) || !ValidTarget(exe, args, directory ? directory : L"")) continue;
         // Descendants must not run the companion list again, including renamed copies of this launcher.
         if (!guard.set && !(guard.set = SetEnvironmentVariableW(Guard, L"1") != FALSE)) return;
-        StartTarget(kind, exe, args, directory, show, start); // A broken entry does not block the next one.
+        StartTarget(kind, exe, args, directory, show, start, hosts); // A broken entry does not block the next one.
     } while (FindNextFileW(search.h, &file));
 }
 }

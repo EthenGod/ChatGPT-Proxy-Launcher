@@ -6,6 +6,8 @@
 - 只在 ChatGPT 进程创建成功后调用。检查模式、启动失败和继承递归保护标记的子进程都跳过。没有目录时不创建目录，没有快捷方式时不初始化此功能的 COM 组件。
 - EXE 直启，PS1 用系统 Windows PowerShell 的 `-File`，不绕过执行策略。BAT/CMD 使用系统 cmd 的固定命令，通过一次环境变量展开传入文件路径，关闭 AutoRun 和延迟展开，不拼接用户参数。各入口独立于 ChatGPT 的代理参数。
 - 文件选择器需设置 `FOS_NODEREFERENCELINKS`，否则选择 LNK 会丢失快捷方式参数。导入时复制原链接，同名不同内容保留原件。创建链接时若目标路径含字面量 `%NAME%`，用文件的 PIDL 绑定，避免 Shell 当作环境变量展开。
+- 支持类型集中在 `StartupApps.h`。VBS、JS、WSF 交给系统 WScript；Node.js 使用 CJS/MJS。不要根据 .js 内容猜运行环境。快捷方式名称按最后一个扩展名截取，不能假定扩展名长度相同。
+- Python、Node.js、Java 只在识别到对应入口时查 PATH，只用绝对盘符目录，跳过安装别名。每次派发按类型缓存查找结果，未找到的运行环境也只查一次。
 
 ## PowerShell 下载入口
 

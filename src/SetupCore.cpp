@@ -224,9 +224,10 @@ Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
 }
 Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
     const std::wstring name = program.substr(program.find_last_of(L'\\') + 1);
-    const bool importing = companions::FileKind(name.c_str()) == companions::Kind::Link;
+    auto targetKind = companions::FileKind(name.c_str());
+    const bool importing = targetKind == companions::Kind::Link;
     if (!companions::LocalPath(program.c_str()) || (!importing && !companions::ValidTarget(program.c_str(), L"", L"")))
-        return Fail(ERROR_BAD_PATHNAME, L"请选择本机的 EXE、LNK、BAT、CMD 或 PS1 文件，不要选择启动器或配置器。");
+        return Fail(ERROR_BAD_PATHNAME, L"请选择文件列表中支持的本机程序、脚本或快捷方式，不要选择启动器或配置器。");
     DWORD attrs = GetFileAttributesW(program.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY))
         return Fail(ERROR_FILE_NOT_FOUND, L"找不到所选程序。");
@@ -237,16 +238,23 @@ Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
         if (companions::FileKind(source.target.c_str()) == companions::Kind::Batch && !source.arguments.empty())
             return Fail(ERROR_INVALID_PARAMETER, L"批处理快捷方式不支持额外参数。请将所需选项写在 BAT 或 CMD 文件中。");
         if (!companions::ValidTarget(source.target.c_str(), source.arguments.c_str(), source.directory.c_str()))
-            return Fail(ERROR_BAD_PATHNAME, L"快捷方式必须指向本机的 EXE、BAT、CMD 或 PS1 文件，工作目录也必须在本机。");
+            return Fail(ERROR_BAD_PATHNAME, L"快捷方式必须指向受支持的本机程序或脚本，工作目录也必须在本机。");
+        targetKind = companions::FileKind(source.target.c_str());
         DWORD targetAttrs = GetFileAttributesW(source.target.c_str());
         if (targetAttrs == INVALID_FILE_ATTRIBUTES || (targetAttrs & FILE_ATTRIBUTE_DIRECTORY))
             return Fail(ERROR_FILE_NOT_FOUND, L"快捷方式指向的文件不存在。");
+    }
+    if (targetKind != companions::Kind::Exe && companions::FindHost(targetKind).empty()) {
+        if (PCWSTR host = companions::PathHost(targetKind))
+            return Fail(ERROR_FILE_NOT_FOUND, std::wstring(L"在 PATH 中找不到 ") + host
+                + L"。请安装对应运行环境后重新打开配置器，或选择指向解释器的快捷方式。");
+        return Fail(ERROR_FILE_NOT_FOUND, L"找不到此脚本需要的 Windows 脚本运行程序。");
     }
     std::wstring folder;
     Result result = EnsureCompanionFolder(paths, folder);
     if (!result) return result;
     if (Same(Parent(program), folder)) return {}; // Already in the dispatch list.
-    const std::wstring destination = Join(folder, name.substr(0, name.size() - 4) + L".lnk");
+    const std::wstring destination = Join(folder, name.substr(0, name.find_last_of(L'.')) + L".lnk");
     if (Exists(destination)) {
         if (importing) {
             Snapshot a, b;

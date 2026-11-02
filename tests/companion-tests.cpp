@@ -78,7 +78,86 @@ static int Scripts(const std::wstring& root, PCWSTR self) {
     puts("PASS BAT/CMD/PS1 dispatch, literal paths with special characters, LNK import, preserved arguments and working directory, collision protection.");
     return 0;
 }
-static int Suite(PCWSTR work, PCWSTR self) {
+struct Invocation { std::wstring host, args, cwd; };
+static std::vector<Invocation> invocations;
+static DWORD Record(PCWSTR host, PCWSTR args, PCWSTR cwd, int) {
+    invocations.push_back({host, args, cwd ? cwd : L""});
+    return 0;
+}
+static int MoreFormats(const std::wstring& root, PCWSTR self, bool liveWsh) {
+    setup::Paths paths{setup::Join(root, L"more"), {}, {}, {}};
+    std::wstring folder;
+    REQUIRE(setup::EnsureCompanionFolder(paths, folder));
+    const auto bin = setup::Join(root, L"fixture runtimes");
+    REQUIRE(CreateDirectoryW(bin.c_str(), nullptr));
+    // Never depend on, install or run a real third-party runtime in the standard test suite.
+    REQUIRE(SetEnvironmentVariableW(L"PATH", L".;relative"));
+    const auto python = setup::Join(root, L"plugin.test.PY");
+    REQUIRE(Touch(python.c_str()));
+    auto missing = setup::AddCompanionProgram(paths, python);
+    REQUIRE(!missing && missing.message.find(L"python.exe") != std::wstring::npos);
+    REQUIRE(!Exists(setup::Join(folder, L"plugin.test.lnk")));
+    for (PCWSTR name : {L"python.exe", L"pythonw.exe", L"node.exe", L"java.exe"})
+        REQUIRE(Touch(setup::Join(bin, name).c_str()));
+    REQUIRE(SetEnvironmentVariableW(L"PATH", (L".;\"" + bin + L"\"").c_str()));
+    struct Case { PCWSTR file; PCWSTR host; PCWSTR prefix; };
+    const Case cases[] = {
+        {L"plugin.test.PY", L"python.exe", L""}, {L"gui.PyW", L"pythonw.exe", L""},
+        {L"common.cjs", L"node.exe", L""}, {L"module.MJS", L"node.exe", L""},
+        {L"插件 & app.jar", L"java.exe", L"-jar "}
+    };
+    for (auto& c : cases) {
+        auto path = setup::Join(root, c.file);
+        if (path != python) REQUIRE(Touch(path.c_str()));
+        REQUIRE(setup::AddCompanionProgram(paths, path));
+    }
+    REQUIRE(Exists(setup::Join(folder, L"plugin.test.lnk")));
+    const auto custom = setup::Join(root, L"custom.lnk");
+    REQUIRE(MakeShortcut(custom, python, L"\"中文 参数\" \"\"", bin));
+    REQUIRE(setup::AddCompanionProgram(paths, custom));
+    companions::Dispatch(folder, self, Record);
+    REQUIRE(invocations.size() == 6);
+    auto found = [&](const std::wstring& host, const std::wstring& args, const std::wstring& cwd) {
+        for (const auto& call : invocations) if (call.host == host && call.args == args && call.cwd == cwd) return true;
+        return false;
+    };
+    for (const auto& c : cases) REQUIRE(found(setup::Join(bin, c.host),
+        std::wstring(c.prefix) + L"\"" + setup::Join(root, c.file) + L"\"", root));
+    REQUIRE(found(setup::Join(bin,L"python.exe"), L"\"" + python + L"\" \"中文 参数\" \"\"", bin));
+    REQUIRE(SetEnvironmentVariableW(L"PATH", L".;relative")); // Runtime removed after deployment.
+    invocations.clear();
+    REQUIRE(Touch(setup::Join(folder, L"survives.exe").c_str()));
+    companions::Dispatch(folder, self, Record);
+    REQUIRE(invocations.size() == 1 && invocations.front().host == setup::Join(folder, L"survives.exe"));
+    puts("PASS Python/PYW, Node CJS/MJS and Java JAR: isolated PATH discovery, command lines, missing runtime, preserved link parameters.");
+
+    const auto wsh = companions::FindHost(companions::Kind::Wsh);
+    if (wsh.empty()) { REQUIRE(!liveWsh); return 0; }
+    setup::Paths windows{setup::Join(root, L"WSH"), {}, {}, {}};
+    REQUIRE(setup::EnsureCompanionFolder(windows, folder));
+    const auto vb = setup::Join(root, L"中文 & 测试.VbS");
+    const auto js = setup::Join(folder, L"classic.Js");
+    const auto wsf = setup::Join(root, L"job.WSF");
+    REQUIRE(WriteScript(vb, "If WScript.Arguments.Count = 1 Then\r\nIf WScript.Arguments(0) = \"two words\" Then\r\nSet f = CreateObject(\"Scripting.FileSystemObject\").CreateTextFile(\"vb.ok\")\r\nf.Close\r\nEnd If\r\nEnd If\r\n"));
+    REQUIRE(WriteScript(js, "new ActiveXObject('Scripting.FileSystemObject').CreateTextFile('js.ok').Close();"));
+    REQUIRE(WriteScript(wsf, "<?xml version=\"1.0\"?>\r\n<job id=\"main\">\r\n<script language=\"JScript\">\r\nnew ActiveXObject('Scripting.FileSystemObject').CreateTextFile('wsf.ok').Close();\r\n</script>\r\n</job>"));
+    REQUIRE(MakeShortcut(custom, vb, L"\"two words\"", folder));
+    REQUIRE(setup::AddCompanionProgram(windows, custom) && setup::AddCompanionProgram(windows, wsf));
+    invocations.clear();
+    companions::Dispatch(folder, self, Record);
+    REQUIRE(invocations.size() == 3 && found(wsh, L"//Nologo \"" + vb + L"\" \"two words\"", folder)
+        && found(wsh, L"//Nologo \"" + js + L"\"", folder) && found(wsh, L"//Nologo \"" + wsf + L"\"", root));
+    if (liveWsh) {
+        companions::Dispatch(folder, self, CountStart);
+        const auto until = GetTickCount64() + 10000;
+        auto done = [&] { return Exists(setup::Join(folder, L"vb.ok")) && Exists(setup::Join(folder, L"js.ok")) && Exists(setup::Join(root, L"wsf.ok")); };
+        while (!done() && GetTickCount64() < until) Sleep(20);
+        REQUIRE(done());
+        puts("PASS live WScript: VBScript, JScript and WSF fixtures completed with expected args and cwd.");
+    }
+    return 0;
+}
+static int Suite(PCWSTR work, PCWSTR self, bool liveWsh) {
     const auto root = setup::Join(work, L"companion-test-" + std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(GetCurrentProcessId()));
     REQUIRE(CreateDirectoryW(root.c_str(), nullptr));
     setup::Paths paths{root, {}, {}, {}};
@@ -134,13 +213,14 @@ static int Suite(PCWSTR work, PCWSTR self) {
     while ((!Exists(setup::Join(folder, L"direct.ok")) || !Exists(setup::Join(working, L"link.ok"))) && GetTickCount64() < end) Sleep(10);
     REQUIRE(Exists(setup::Join(folder, L"direct.ok")) && Exists(setup::Join(working, L"link.ok")));
     printf("PASS companion EXE and shortcut launched isolated children; args, cwd, collision, filtering and recursion guard. Missing/empty folder checks: %.1f/%.1f us mean (500 calls; excludes known-folder lookup and process startup).\n", missingUs, emptyUs);
-    return Scripts(root, self);
+    int result = Scripts(root, self);
+    return result ? result : MoreFormats(root, self, liveWsh);
 }
 int wmain(int argc, wchar_t** argv) {
-    if (argc == 2) {
+    if (argc == 2 || (argc == 3 && !wcscmp(argv[2], L"--live-wsh"))) {
         if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 2;
         wchar_t self[32768]; DWORD n = GetModuleFileNameW(nullptr, self, 32768);
-        const int result = n && n < 32768 ? Suite(argv[1], self) : 2;
+        const int result = n && n < 32768 ? Suite(argv[1], self, argc == 3) : 2;
         CoUninitialize(); return result;
     }
     wchar_t guard[2]{};

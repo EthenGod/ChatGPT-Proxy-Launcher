@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "StartupApps.h"
 #include "SetupResources.h"
 #include "StartupIntegration.h"
 #include "ProxyDetection.h"
@@ -510,10 +511,17 @@ void App::Command(int id, int notification) {
             DWORD flags = 0;
             hr = dialog->GetOptions(&flags);
             if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | (selectProgram ? FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS : FOS_PICKFOLDERS) | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+            std::wstring supported;
+            if (selectProgram) for (const auto& format : companions::Formats) {
+                if (!supported.empty()) supported += L';';
+                supported += L'*'; supported += format.ext;
+            }
             const COMDLG_FILTERSPEC filters[] = {
-                {L"程序、快捷方式和脚本", L"*.exe;*.lnk;*.bat;*.cmd;*.ps1"},
+                {L"所有支持的入口", supported.c_str()},
                 {L"快捷方式", L"*.lnk"}, {L"批处理脚本", L"*.bat;*.cmd"},
-                {L"PowerShell 脚本", L"*.ps1"}, {L"应用程序", L"*.exe"}
+                {L"PowerShell 脚本", L"*.ps1"}, {L"Windows 脚本 (VBScript / JScript / WSF)", L"*.vbs;*.js;*.wsf"},
+                {L"Python 脚本", L"*.py;*.pyw"}, {L"Node.js 模块", L"*.cjs;*.mjs"},
+                {L"可执行 Java 包", L"*.jar"}, {L"应用程序", L"*.exe"}
             };
             if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
             dialog->SetTitle(selectProgram ? L"选择要随 ChatGPT 启动的程序" : L"选择启动器部署目录");
