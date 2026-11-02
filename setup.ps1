@@ -12,20 +12,34 @@
     $null = New-Item -ItemType Directory -Path $folder
     $sums = Join-Path $folder 'SHA256SUMS.txt'
     $exe = Join-Path $folder $name
-    Write-Host "Downloading ChatGPT Launcher Setup $tag ..."
-    Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt" -OutFile $sums -TimeoutSec 60
-    $entries = @([IO.File]::ReadAllLines($sums) -cmatch '\s\*?ChatGPTLauncherSetup\.exe$')
-    if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^([a-fA-F0-9]{64})[ \t]+\*?ChatGPTLauncherSetup\.exe$') {
-        throw 'Missing or invalid setup checksum. Setup was not started.'
-    }
-    $expected = $Matches[1]
-    Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $exe -TimeoutSec 120
-    $stream = [IO.File]::OpenRead($exe)
     try {
-        $sha = [Security.Cryptography.SHA256]::Create()
-        try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
-        finally { $sha.Dispose() }
-        if ($actual -ine $expected) { throw 'SHA-256 mismatch. Setup was not started.' }
-        Start-Process -FilePath $exe -WorkingDirectory $folder
-    } finally { $stream.Dispose() }
+        Write-Host "Downloading ChatGPT Launcher Setup $tag ..."
+        Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt" -OutFile $sums -TimeoutSec 60
+        $entries = @([IO.File]::ReadAllLines($sums) -cmatch '\s\*?ChatGPTLauncherSetup\.exe$')
+        if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^([a-fA-F0-9]{64})[ \t]+\*?ChatGPTLauncherSetup\.exe$') {
+            throw 'Missing or invalid setup checksum. Setup was not started.'
+        }
+        $expected = $Matches[1]
+        Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $exe -TimeoutSec 120
+        $stream = [IO.File]::OpenRead($exe)
+        try {
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+            finally { $sha.Dispose() }
+            if ($actual -ine $expected) { throw 'SHA-256 mismatch. Setup was not started.' }
+            $setupProcess = Start-Process -FilePath $exe -WorkingDirectory $folder -PassThru
+        } finally { $stream.Dispose() }
+        try { $setupProcess.WaitForExit() } finally { $setupProcess.Dispose() }
+    } finally {
+        # Only the two download paths are ours. Never follow a redirected folder or remove its other contents.
+        if ([IO.Directory]::Exists($folder)) {
+            if (([IO.File]::GetAttributes($folder) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Write-Warning "Temporary folder was redirected; cleanup skipped: $folder"
+            } else {
+                try { [IO.File]::Delete($exe) } catch { Write-Warning "Could not remove temporary file: $exe" }
+                try { [IO.File]::Delete($sums) } catch { Write-Warning "Could not remove temporary file: $sums" }
+                try { [IO.Directory]::Delete($folder, $false) } catch { Write-Warning "Temporary folder retained: $folder" }
+            }
+        }
+    }
 }
