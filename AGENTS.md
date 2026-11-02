@@ -8,9 +8,7 @@
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；只启动隔离测试子进程，不启动 ChatGPT。
 - `setup.ps1` 是 PowerShell 下载入口；`tests/download-tests.ps1` 替换网络和启动操作，验证下载与校验。
 - 发布文件：根目录运行 `cmd /c release.cmd`，重新构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。版本维护在 `src/SetupResources.rc`。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
-- 全部测试源码及入口在 `tests/`，需要提交；`work/` 只放本机产物和备份，不放正式源码。
-- `tests/setup-tests.cpp` 需要提交；测试脚本先构建正式程序，部署测试仅使用 `work/` 下的隔离目录，不修改真实自启项。
-- `tests/startup-tests.cpp`、`tests/setup-ui-tests.cpp` 也需要提交；系统自启和 Windows 设置调用必须在测试中替换，不能用真实用户配置测试。
+- 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
 - `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。
 

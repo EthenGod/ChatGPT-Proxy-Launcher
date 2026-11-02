@@ -9,8 +9,18 @@
 
 // Fault injection exists only in this translation unit, never in the release binary.
 static unsigned moveCalls = 0, failMoveAt = 0;
+static PCWSTR collisionTarget = nullptr;
 static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
     if (++moveCalls == failMoveAt) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
+    if (collisionTarget && !_wcsicmp(to, collisionTarget)) {
+        collisionTarget = nullptr;
+        HANDLE h = CreateFileW(to, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return FALSE;
+        DWORD written = 0;
+        BOOL ok = WriteFile(h, "foreign", 7, &written, nullptr);
+        CloseHandle(h);
+        if (!ok || written != 7) return FALSE;
+    }
     return MoveFileExW(from, to, flags);
 }
 #define MoveFileExW TestMove
@@ -108,6 +118,21 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
+    // A file arriving after preflight belongs to someone else, even during first deployment.
+    for (unsigned index = 0; index < 4; ++index) {
+        const auto base = Join(root, L"late-conflict-" + std::to_wstring(index));
+        Paths late{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), Join(base, L"desktop.lnk")};
+        Options first; first.directory = base; first.startup = true; first.desktop = true;
+        const std::wstring destinations[] = {Join(base, LauncherName), late.settingsLink, late.startupLink, late.desktopLink};
+        collisionTarget = destinations[index].c_str();
+        std::wstring deployed;
+        auto result = Apply(late, first, payload, deployed);
+        REQUIRE(!collisionTarget && !result && result.conflictDirectory == base && deployed.empty());
+        for (unsigned i = 0; i < 4; ++i) {
+            Snapshot file; REQUIRE(ReadFileBytes(destinations[i], file));
+            REQUIRE(i == index ? file.exists && file.data.size() == 7 && !memcmp(file.data.data(), "foreign", 7) : !file.exists);
+        }
+    }
     const Paths paths{ Join(root, L"settings"), Join(root, L"startup\\Managed.lnk"), Join(root, L"settings\\State.lnk"),
         Join(root, L"桌面 Desktop\\ChatGPT Proxy Launcher.lnk") };
     Loaded state;

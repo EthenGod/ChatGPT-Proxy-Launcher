@@ -115,6 +115,9 @@ static int MoreFormats(const std::wstring& root, PCWSTR self, bool liveWsh) {
     const auto custom = setup::Join(root, L"custom.lnk");
     REQUIRE(MakeShortcut(custom, python, L"\"中文 参数\" \"\"", bin));
     REQUIRE(setup::AddCompanionProgram(paths, custom));
+    const auto stale = setup::Join(root, L"moved.py");
+    REQUIRE(Touch(stale.c_str()) && setup::AddCompanionProgram(paths, stale));
+    REQUIRE(MoveFileW(stale.c_str(), setup::Join(root, L"renamed.py").c_str()));
     companions::Dispatch(folder, self, Record);
     REQUIRE(invocations.size() == 6);
     auto found = [&](const std::wstring& host, const std::wstring& args, const std::wstring& cwd) {

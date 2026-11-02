@@ -26,10 +26,10 @@ enum ControlId {
     Title = 1000, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, ProtocolLabel, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, Host, PortLabel, Port,
     PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
-    DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Error, Footer, ApplyButton, CloseButton
+    DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Footer, ApplyButton, CloseButton
 };
 struct Palette {
-    COLORREF background, surface, text, secondary, border, accent, error;
+    COLORREF background, surface, text, secondary, border, accent;
     COLORREF field, hover, selected, selectedText, divider, primary, primaryHover, primaryText;
 };
 struct Motion {
@@ -108,7 +108,7 @@ struct App {
     int selectedProtocol = Protocol;
     bool motionEnabled = false;
     int scrollGrab = 0, wheelRemainder = 0;
-    unsigned layoutPasses = 0, paintPasses = 0;
+    unsigned layoutPasses = 0;
     int scroll = 0, contentHeight = 0;
     std::wstring savedTarget;
     setup::Paths paths;
@@ -194,14 +194,14 @@ void App::Theme(int mode) {
     // Radix Gray: 1/2 surfaces, 3 fields, 4 hover, 6/7 borders, 11/12 text.
     // Blue 3/11 identify selection. The light primary uses Blue 11 for readable white text.
     if (contrast) colors = { GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_WINDOWTEXT),
-        GetSysColor(COLOR_GRAYTEXT), GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_WINDOWTEXT),
+        GetSysColor(COLOR_GRAYTEXT), GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT),
         GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_WINDOW), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_HIGHLIGHTTEXT),
         GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_HIGHLIGHT), GetSysColor(COLOR_HIGHLIGHTTEXT) };
     else if (dark) colors = { RGB(17,17,17), RGB(25,25,25), RGB(238,238,238), RGB(180,180,180),
-        RGB(72,72,72), RGB(0,144,255), RGB(255,155,149), RGB(34,34,34), RGB(42,42,42),
+        RGB(72,72,72), RGB(0,144,255), RGB(34,34,34), RGB(42,42,42),
         RGB(13,40,71), RGB(112,184,255), RGB(58,58,58), RGB(0,144,255), RGB(59,158,255), RGB(13,21,32) };
     else colors = { RGB(249,249,249), RGB(255,255,255), RGB(32,32,32), RGB(100,100,100),
-        RGB(206,206,206), RGB(0,144,255), RGB(172,40,37), RGB(240,240,240), RGB(232,232,232),
+        RGB(206,206,206), RGB(0,144,255), RGB(240,240,240), RGB(232,232,232),
         RGB(230,244,254), RGB(13,116,206), RGB(217,217,217), RGB(13,116,206), RGB(17,50,100), RGB(255,255,255) };
     BOOL clientAnimation = FALSE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &clientAnimation, 0);
@@ -286,7 +286,6 @@ void App::CreateControls() {
     add(AddProgram, L"BUTTON", L"添加程序…", WS_TABSTOP | BS_PUSHBUTTON);
     add(OpenCompanions, L"BUTTON", L"打开启动目录", WS_TABSTOP | BS_PUSHBUTTON);
     SendMessageW(Get(Extra), EM_SETLIMITTEXT, static_cast<WPARAM>(setup::MaxArguments), 0);
-    add(Error, L"STATIC", L"", label, 3);
     add(Footer, L"STATIC", L"保存后即可使用", SS_OWNERDRAW, 4, true);
     add(CloseButton, L"BUTTON", L"关闭", WS_TABSTOP | BS_PUSHBUTTON, 0, true);
     add(ApplyButton, L"BUTTON", L"部署并保存", WS_TABSTOP | BS_PUSHBUTTON, 1, true);
@@ -355,7 +354,6 @@ void App::Layout() {
     footer(CloseButton, root.right - S(240), footerTop + S(40), S(80), S(40));
     footer(ApplyButton, root.right - S(148), footerTop + S(40), S(116), S(40));
     if (footerBatch) EndDeferWindowPos(footerBatch);
-    ShowWindow(Get(Error), SW_HIDE);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 void App::ScrollTo(int position) {
@@ -561,31 +559,36 @@ void App::Command(int id, int notification) {
         const setup::Options options = Options();
         std::wstring unused;
         if (!setup::BuildArguments(options, unused) || !setup::NormalizeDirectory(options.directory, unused)) { Refresh(false); return; }
-        busy = true;
-        for (const auto& control : controls) EnableWindow(control.window, FALSE);
-        Refresh(false); UpdateWindow(window);
-        worker = std::thread([this, options]() {
+        try {
             auto completion = std::make_unique<Completion>();
             completion->previous = savedTarget;
             completion->checkStartup = options.startup && !startupReminderShown;
-            const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
-            else {
-                try {
-                    completion->result = setup::Apply(paths, options, payload, completion->target);
+            worker = std::thread([this, options, completion = std::move(completion)]() mutable {
+                const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+                if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
+                else {
+                    try {
+                        completion->result = setup::Apply(paths, options, payload, completion->target);
+                    }
+                    catch (...) { completion->result = { ERROR_NOT_ENOUGH_MEMORY, L"保存未完成。请重新打开工具检查配置后重试。" }; }
+                    if (completion->result && completion->checkStartup) {
+                        try { completion->startupReport = setup::TryDisableOfficialStartup(); }
+                        catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
+                    }
+                    CoUninitialize();
                 }
-                catch (...) { completion->result = { ERROR_NOT_ENOUGH_MEMORY, L"保存未完成。请重新打开工具检查配置后重试。" }; }
-                if (completion->result && completion->checkStartup) {
-                    try { completion->startupReport = setup::TryDisableOfficialStartup(); }
-                    catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
-                }
-                CoUninitialize();
-            }
-            if (PostMessageW(window, SavedMessage, 0, reinterpret_cast<LPARAM>(completion.get()))) completion.release();
-        });
+                if (PostMessageW(window, SavedMessage, 0, reinterpret_cast<LPARAM>(completion.get()))) completion.release();
+            });
+        } catch (...) {
+            Set(Footer, L"未能开始保存。设置仍在，请重试。");
+            return;
+        }
+        busy = true;
+        for (const auto& control : controls) EnableWindow(control.window, FALSE);
+        Refresh(false); UpdateWindow(window);
         return;
     }
-    if (notification == EN_CHANGE || notification == CBN_SELCHANGE || notification == BN_CLICKED) {
+    if (notification == EN_CHANGE || notification == BN_CLICKED) {
         if (id != Preview) Refresh(true);
     }
 }
@@ -621,7 +624,6 @@ void App::DrawSurface(HWND target, HDC dc) {
     }
 }
 void App::Paint(HWND target) {
-    ++paintPasses;
     PAINTSTRUCT ps{}; HDC output = BeginPaint(target, &ps);
     RECT rect{}; GetClientRect(target, &rect);
     HDC dc = nullptr;

@@ -83,12 +83,16 @@ Result NewTemp(const std::wstring& target, TempFile& temp) {
     return {};
 }
 Result CommitTemp(TempFile& temp, const std::wstring& target, bool replace = true) {
-    if (!MoveFileExW(temp.path.c_str(), target.c_str(), (replace ? MOVEFILE_REPLACE_EXISTING : 0) | MOVEFILE_WRITE_THROUGH))
-        return Fail(GetLastError(), L"无法保存文件，可能没有权限或文件正在使用：" + target);
+    if (!MoveFileExW(temp.path.c_str(), target.c_str(), (replace ? MOVEFILE_REPLACE_EXISTING : 0) | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD error = GetLastError();
+        if (!replace && (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS))
+            return Conflict(L"保存期间出现同名文件，未覆盖：" + target, Parent(target));
+        return Fail(error, L"无法保存文件，可能没有权限或文件正在使用：" + target);
+    }
     temp.path.clear();
     return {};
 }
-Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data) {
+Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool replace = true) {
     TempFile temp;
     Result result = NewTemp(path, temp);
     if (!result) return result;
@@ -102,7 +106,7 @@ Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data) {
             || written != data.size() || !FlushFileBuffers(handle.h))
             return Fail(GetLastError(), L"无法完整写入文件。");
     }
-    return CommitTemp(temp, path);
+    return CommitTemp(temp, path, replace);
 }
 Result Restore(const std::wstring& path, const Snapshot& snapshot) {
     if (snapshot.exists) return WriteAtomic(path, snapshot.data);
@@ -520,7 +524,7 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
         return failure;
     };
     if (!oldExe.exists || oldExe.data != bytes) {
-        result = WriteAtomic(target, bytes); if (!result) return result;
+        result = WriteAtomic(target, bytes, oldExe.exists); if (!result) return result;
         exeChanged = true;
     }
     Snapshot check;
@@ -528,17 +532,17 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     if (!result) return rollback(result);
     if (!check.exists || check.data != bytes) return rollback(Fail(ERROR_CRC, L"部署后的程序校验失败。"));
     const Link value{ target, arguments, directory, Marker };
-    result = WriteLink(paths.settingsLink, value); if (!result) return rollback(result);
+    result = WriteLink(paths.settingsLink, value, oldSettings.exists); if (!result) return rollback(result);
     settingsChanged = true;
     if (options.startup) {
-        result = WriteLink(paths.startupLink, value); if (!result) return rollback(result);
+        result = WriteLink(paths.startupLink, value, oldStartup.exists); if (!result) return rollback(result);
         startupChanged = true;
     } else if (oldStartup.exists) {
         if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), L"无法关闭登录自启。"));
         startupChanged = true;
     }
     if (options.desktop) {
-        result = WriteLink(paths.desktopLink, value); if (!result) return rollback(result);
+        result = WriteLink(paths.desktopLink, value, oldDesktop.exists); if (!result) return rollback(result);
         desktopChanged = true;
     } else if (previous.options.desktop && oldDesktop.exists) {
         if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), L"无法移除桌面快捷方式。"));

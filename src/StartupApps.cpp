@@ -84,7 +84,8 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
         const std::wstring path = folder + L"\\" + file.cFileName;
         PCWSTR exe = path.c_str(), args = L"", directory = nullptr;
         int show = -1;
-        if (kind == Kind::Link) {
+        const bool fromShortcut = kind == Kind::Link;
+        if (fromShortcut) {
             if (!com.Ready()) continue;
             ComPtr<IShellLinkW> shortcut; ComPtr<IPersistFile> persist;
             if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shortcut.p)))
@@ -100,6 +101,11 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
             exe = target; args = tail; directory = *cwd ? cwd : nullptr; kind = FileKind(target);
         }
         if (!_wcsicmp(exe, chat) || !ValidTarget(exe, args, directory ? directory : L"")) continue;
+        // CreateProcess validates EXEs, but for scripts it only validates the interpreter.
+        if (fromShortcut && kind != Kind::Exe) {
+            const DWORD targetAttrs = GetFileAttributesW(exe);
+            if (targetAttrs == INVALID_FILE_ATTRIBUTES || (targetAttrs & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        }
         // Descendants must not run the companion list again, including renamed copies of this launcher.
         if (!guard.set && !(guard.set = SetEnvironmentVariableW(Guard, L"1") != FALSE)) return;
         StartTarget(kind, exe, args, directory, show, start, hosts); // A broken entry does not block the next one.
