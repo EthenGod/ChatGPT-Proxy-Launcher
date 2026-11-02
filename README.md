@@ -1,29 +1,50 @@
 # ChatGPT 轻量启动器
 
-用于 Windows x64 的非官方 ChatGPT 启动器。它可以按指定的代理设置启动已安装的 ChatGPT，也可以创建桌面快捷方式或设置登录自启。启动器发出启动请求后即退出，不在后台常驻，不修改系统代理。
-
-[![前往 GitHub Releases 下载 Windows x64 版](https://img.shields.io/badge/Windows%20x64-%E5%89%8D%E5%BE%80%20Releases%20%E4%B8%8B%E8%BD%BD-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases)
-
-打开 [GitHub Releases 页面](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases)，在最新版本的 **Assets（附件）** 中下载 **`ChatGPTLauncherSetup.exe`**。它已内置启动器，普通用户只需下载这一个文件。使用前请先安装 ChatGPT Windows 应用。
+用于 Windows x64 的非官方 ChatGPT 启动器。支持为 ChatGPT 指定代理、创建桌面快捷方式和设置登录自启。启动后即退出，不修改系统代理。
 
 ## 快速开始
 
-也可以在 Windows PowerShell 中粘贴以下一行，下载并打开最新版配置器：
+**开始前：**按键盘上的 **Windows 徽标键（Win）**，输入 `ChatGPT`。如果能找到并打开 ChatGPT 桌面应用，就可以继续。如果平时只在浏览器里用 ChatGPT，请先从 [ChatGPT 官方下载页](https://chatgpt.com/download/) 安装 Windows 版。本工具只负责设置启动方式。
 
-```powershell
-irm https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1 | iex
-```
+下面两种方式打开的是同一个配置器。**选一种就行，推荐方式一。**
 
-这行命令会执行仓库中的 [setup.ps1](setup.ps1)。脚本将配置器下载到新的临时目录，按同一版本的 `SHA256SUMS.txt` 核对文件后才打开界面。下载或校验失败时不会启动；只有点击“部署并保存”才会部署。
+### 方式一：用 PowerShell 一行打开（推荐）
 
-使用期间请保留 PowerShell 窗口。配置器退出后，脚本会清理本次下载的 EXE 和校验文件，并回到命令提示符。中途关闭配置器也会清理，已部署的启动器和快捷方式会保留。如果先强制结束 PowerShell 或关机，临时文件可能留下。
+1. 按 **Win**，输入 `Windows PowerShell`，点击搜索结果中的 **Windows PowerShell**。用系统自带的版本即可；如果想用 PowerShell 7，可从 [PowerShell 7 官方发布页](https://github.com/PowerShell/PowerShell/releases/latest) 下载。
+2. 点下面代码框右上角的复制按钮。如果没看到按钮，用鼠标从 `irm` 选到最后的 `iex`，按 **Ctrl+C** 复制。
 
-1. 双击 `ChatGPTLauncherSetup.exe`。按需勾选“登录 Windows 后自动启动”或“创建桌面快捷方式”。
-2. 需要代理时，勾选“使用指定代理”，选择协议并填写地址。先运行代理软件，再点击空白的端口框，工具会尝试填入本机端口。未检测到时，请查看代理软件的端口设置并手动填写。
-3. 核对启动参数预览，点击“部署并保存”。如果出现自启提示，按提示到 Windows 的“设置 → 应用 → 启动”核对，避免 ChatGPT 自带自启和本工具同时启动。
-4. 保存后可以关闭配置工具。若已创建桌面快捷方式，双击它即可按当前配置启动 ChatGPT。保存配置本身不会启动 ChatGPT。
+   ```powershell
+   irm https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1 | iex
+   ```
 
-以后要修改配置，重新打开部署工具，调整后点击“保存更改”。默认部署目录为 `%LOCALAPPDATA%\ChatGPTProxyLauncher`；在“高级”中可更改目录、设置代理绕过列表或添加其他启动参数。
+3. 点击刚打开的 PowerShell 窗口，按 **Ctrl+V** 粘贴，再按 **Enter（回车）** 运行。
+4. 看到 `Downloading ChatGPT Launcher Setup` 表示正在下载。等 **“ChatGPT 启动器设置”** 窗口出现，继续看下面的 **“打开后怎么设置”**。先别关 PowerShell，配置完成后再关。
+
+如果出现报错而没有打开配置器，可以改用方式二。
+
+### 方式二：手动下载并打开
+
+[![打开 ChatGPT 轻量启动器的最新版下载页](https://img.shields.io/badge/GitHub-%E6%89%93%E5%BC%80%E6%9C%80%E6%96%B0%E7%89%88%E4%B8%8B%E8%BD%BD%E9%A1%B5-2563EB?style=for-the-badge&logo=github)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)
+
+1. 点击上方蓝色按钮（或[点这里打开下载页](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)）。向下翻到 **Assets（附件）**；如果没看到文件列表，点一下 **Assets** 展开。
+2. 点击 **`ChatGPTLauncherSetup.exe`** 下载。只需这一个文件，不用下载另一个 EXE 或源码 ZIP。
+3. 等下载完成，在浏览器按 **Ctrl+J** 打开下载记录。找到 `ChatGPTLauncherSetup.exe`，点击旁边的文件夹图标或“在文件夹中显示”。
+4. 在打开的文件夹里双击刚下载的文件。看到 **“ChatGPT 启动器设置”** 窗口后，按下面的步骤设置。
+
+### 打开后怎么设置（两种方式相同）
+
+1. **选择什么时候启动。** 找到 **登录 Windows 后自动启动**。想让 ChatGPT 每次登录电脑时打开，就保持开启；只想自己手动打开，就点击右侧开关把它关闭。
+2. **在桌面放一个启动图标。** 打开 **创建桌面快捷方式**，方便稍后双击启动。不想创建就保持关闭。下面灰色的 **启动时不显示主窗口** 暂不可用，跳过即可。
+3. **设置代理。** 需要代理时：
+   - 先打开平时用的代理软件，让它保持运行，再回到配置器，打开 **使用指定代理**。
+   - 在 **协议** 中选择代理软件提供的类型。例如，软件显示“HTTP 端口”，就选 **HTTP**。如果代理软件就在这台电脑上，**地址** 保留默认的 `127.0.0.1`。
+   - 点击空白的 **端口** 输入框。如果自动出现数字，就不用再填。如果仍为空，打开代理软件的设置，找到所选协议对应的端口号，把那串数字填回这里。
+4. **保存设置。** 下方的 **启动参数预览** 会自动更新，不用在里面打字。第一次使用可以跳过“高级”，直接点右下角 **部署并保存**。如果以前部署过，按钮叫 **保存更改**。
+5. **如果弹出“部署已完成”：**点 **确定** 打开 Windows 的“启动应用”设置。找到 **ChatGPT**，确认它自带的启动开关为**关**；找到 **ChatGPT Proxy Launcher**，确认它的开关为**开**。这样登录时才会使用刚保存的设置。
+6. **关闭配置器。** 回到配置器，看到 **已保存** 后点 **完成**，不用再部署一次。用方式一的用户，请等 PowerShell 再次显示 `PS …>` 输入提示后再关窗口，让脚本先清理临时下载文件。
+7. **试着启动。** 保存设置不会立即打开 ChatGPT。如果创建了桌面图标，回到桌面双击 **ChatGPT Proxy Launcher**。如果 ChatGPT 已在运行，先完整退出它，再双击图标。如果只开启了登录自启，下次登录 Windows 时会自动尝试启动。
+
+**以后想改设置：**用方式一重新运行命令，或用方式二再次双击下载好的配置器。改完点 **保存更改** 即可。
 
 ## 使用说明
 
