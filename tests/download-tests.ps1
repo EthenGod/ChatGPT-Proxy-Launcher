@@ -4,14 +4,20 @@ $ErrorActionPreference = 'Stop'
 $root = $ProjectRoot
 $entry = Join-Path $root 'setup.ps1'
 $oldTemp = $env:TEMP
+$ProgressPreference = 'SilentlyContinue'
 $testFolder = Join-Path $root ('work\download-tests-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testFolder -Force
-$calls = @{launches = 0; browserOpens = 0; waitMs = 0; messages = [Collections.Generic.List[string]]::new()}
+$calls = @{launches = 0; browserOpens = 0; waitMs = 0; messages = [Collections.Generic.List[string]]::new(); progressActive = $false; stages = [Collections.Generic.List[string]]::new()}
 $fixture = [Text.Encoding]::ASCII.GetBytes('test setup payload')
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
 function Write-Host($Object, $ForegroundColor) { $calls.messages.Add([string]$Object) }
+function Write-Progress($Id, $Activity, $Status, [switch]$Completed) {
+    if ($Id -ne 1 -or !$Activity -or $ProgressPreference -ne 'Continue') { throw 'Invalid progress configuration' }
+    $calls.progressActive = !$Completed
+    if (!$Completed) { $calls.stages.Add($Status) }
+}
 function Start-Sleep($Milliseconds) {
     if ($Milliseconds -ne 100) { throw 'Unexpected polling interval' }
     if ($calls.folder -and [IO.Directory]::Exists($calls.folder)) { throw 'Completion shown before cleanup' }
@@ -19,11 +25,13 @@ function Start-Sleep($Milliseconds) {
     if ($SessionProbe) { Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds $Milliseconds }
 }
 function Invoke-RestMethod($Uri, $TimeoutSec) {
+    if (!$calls.progressActive -or $ProgressPreference -ne 'Continue') { throw 'No progress while fetching release' }
     if ($scenario -eq 'offline') { throw 'Offline' }
     if ($Uri -ne 'https://api.github.com/repos/EthenGod/ChatGPT-Proxy-Launcher/releases/latest') { throw 'Wrong API URL' }
     @{tag_name = 'v9.8.7'}
 }
 function Invoke-WebRequest([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec) {
+    if (!$calls.progressActive -or $ProgressPreference -ne 'Continue') { throw 'Download progress disabled' }
     $calls.folder = Split-Path $OutFile
     $asset = Split-Path $OutFile -Leaf
     if ($Uri -ne "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v9.8.7/$asset") { throw 'Wrong asset URL' }
@@ -40,6 +48,7 @@ function Invoke-WebRequest([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec
     } else { throw 'Unexpected asset' }
 }
 function Start-Process($FilePath, $WorkingDirectory, [switch]$PassThru) {
+    if ($calls.progressActive) { throw 'Progress left visible when launching a process' }
     if ($FilePath -eq 'https://github.com/EthenGod/ChatGPT-Proxy-Launcher') {
         if ([IO.Directory]::Exists($calls.folder) -or $calls.waitMs -ne 10000) { throw 'Browser opened before cleanup or timeout' }
         $calls.browserOpens++
@@ -75,9 +84,13 @@ try {
         $calls.waitMs = 0
         $calls.browserOpens = 0
         $calls.messages.Clear()
+        $calls.stages.Clear()
         $before = $calls.launches
         $failed = $false
         try { & $entry } catch { if ($success) { throw }; $failed = $true }
+        if ($calls.progressActive -or !$calls.stages.Count) { throw "Progress not shown or cleared: $scenario" }
+        if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Caller progress preference changed' }
+        if ($success -and $calls.stages.Count -ne 4) { throw "Missing progress stage: $scenario" }
         if ($success) {
             if ($failed -or $calls.launches -ne $before + 1) { throw 'Valid download did not launch once' }
             if (![IO.File]::Exists((Join-Path $testFolder "$scenario.observed"))) { throw "Did not wait for child: $scenario" }
@@ -142,5 +155,5 @@ exit 71
         if (!$child.WaitForExit(30000)) { $child.Kill(); throw 'Session exit timed out' }
         if ($child.ExitCode -ne 0 -or $timer.Elapsed.TotalSeconds -lt 10) { throw 'Session did not wait and exit correctly' }
     } finally { $child.Dispose() }
-    Write-Output 'PASS: download checks, cleanup, completion text, any-key/timeout browser launch, session exit and failure retention (isolated processes; browser mocked).'
+    Write-Output 'PASS: download progress and preference scope, checks, cleanup, completion text, any-key/timeout browser launch and session exit (isolated processes; browser mocked).'
 } finally { $env:TEMP = $oldTemp }

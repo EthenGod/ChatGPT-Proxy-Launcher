@@ -18,7 +18,7 @@
    ```
 
 3. 点击刚打开的 PowerShell 窗口，按 **Ctrl+V** 粘贴，再按 **Enter（回车）** 运行。
-4. 看到 `Downloading ChatGPT Launcher Setup` 表示正在下载。等 **“ChatGPT 启动器设置”** 窗口出现，继续看下面的 **“打开后怎么设置”**。先别关 PowerShell，退出配置器后会自动清理并关闭。
+4. PowerShell 会显示获取版本、下载和校验的进度。等 **“ChatGPT 启动器设置”** 窗口出现，继续看下面的 **“打开后怎么设置”**。先别关 PowerShell，退出配置器后会自动清理并关闭。
 
 如果出现报错而没有打开配置器，可以改用方式二。
 
