@@ -2,6 +2,31 @@
 # Keep this entry point ASCII so Windows PowerShell can execute it from an HTTP response.
 & {
     $ErrorActionPreference = 'Stop'
+    function Read-SetupKey {
+        # Redirected input and non-console hosts may not support keyboard input.
+        try {
+            if (![Console]::IsInputRedirected -and [Console]::KeyAvailable) {
+                return [Console]::ReadKey($true)
+            }
+        } catch { }
+        return $null
+    }
+    function Show-SetupCompletion {
+        Write-Host ''
+        # Unicode escapes keep the HTTP entry point ASCII for Windows PowerShell 5.1.
+        Write-Host ([regex]::Unescape('\u4e34\u65f6\u6587\u4ef6\u5df2\u6e05\u7406\u3002'))
+        Write-Host ([regex]::Unescape('\u559c\u6b22\u672c\u9879\u76ee\u8bf7\u7ed9\u672c\u9879\u76ee\u70b9\u4e00\u4e2a Star \u8c22\u8c22\u55b5~')) -ForegroundColor Cyan
+        $url = 'https://github.com/EthenGod/ChatGPT-Proxy-Launcher'
+        Write-Host $url
+        Write-Host ([regex]::Unescape('\u6309\u4efb\u610f\u952e\u6253\u5f00\u9879\u76ee\u4e3b\u9875\u5e76\u9000\u51fa\uff1b10 \u79d2\u5185\u65e0\u64cd\u4f5c\u4e5f\u4f1a\u81ea\u52a8\u6253\u5f00\u5e76\u9000\u51fa\u3002'))
+        Write-Host ([regex]::Unescape('\u53ea\u60f3\u9000\u51fa\uff0c\u8bf7\u76f4\u63a5\u5173\u95ed\u6b64\u7a97\u53e3\u3002'))
+        for ($tick = 0; $tick -lt 100; $tick++) {
+            if ($null -ne (Read-SetupKey)) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        try { Start-Process -FilePath $url }
+        catch { Write-Warning "Could not open browser. Open this address manually: $url" }
+    }
     $repo = 'EthenGod/ChatGPT-Proxy-Launcher'
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 30
     $tag = [string]$release.tag_name
@@ -12,6 +37,7 @@
     $null = New-Item -ItemType Directory -Path $folder
     $sums = Join-Path $folder 'SHA256SUMS.txt'
     $exe = Join-Path $folder $name
+    $cleanupComplete = $true
     try {
         Write-Host "Downloading ChatGPT Launcher Setup $tag ..."
         Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt" -OutFile $sums -TimeoutSec 60
@@ -34,12 +60,18 @@
         # Only the two download paths are ours. Never follow a redirected folder or remove its other contents.
         if ([IO.Directory]::Exists($folder)) {
             if (([IO.File]::GetAttributes($folder) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $cleanupComplete = $false
                 Write-Warning "Temporary folder was redirected; cleanup skipped: $folder"
             } else {
-                try { [IO.File]::Delete($exe) } catch { Write-Warning "Could not remove temporary file: $exe" }
-                try { [IO.File]::Delete($sums) } catch { Write-Warning "Could not remove temporary file: $sums" }
-                try { [IO.Directory]::Delete($folder, $false) } catch { Write-Warning "Temporary folder retained: $folder" }
+                try { [IO.File]::Delete($exe) } catch { $cleanupComplete = $false; Write-Warning "Could not remove temporary file: $exe" }
+                try { [IO.File]::Delete($sums) } catch { $cleanupComplete = $false; Write-Warning "Could not remove temporary file: $sums" }
+                try { [IO.Directory]::Delete($folder, $false) } catch { $cleanupComplete = $false; Write-Warning "Temporary folder retained: $folder" }
             }
         }
+    }
+    if ($cleanupComplete) {
+        Show-SetupCompletion
+        # With the documented irm | iex command, exit only this PowerShell session.
+        exit 0
     }
 }
