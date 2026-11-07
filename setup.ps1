@@ -5,6 +5,21 @@
     # Enable native transfer progress only in this script's scope.
     $ProgressPreference = 'Continue'
     $progress = @{ Id = 1; Activity = [regex]::Unescape('\u51c6\u5907 ChatGPT \u914d\u7f6e\u5668') }
+    function Invoke-SetupProgress([scriptblock]$Action) {
+        $savedView = $null
+        # Minimal progress can count CJK characters as one cell and leave wrapped rows behind.
+        if ($PSVersionTable.PSVersion -ge [version]'7.2') {
+            $savedView = $PSStyle.Progress.View
+            $PSStyle.Progress.View = 'Classic'
+        }
+        try { & $Action }
+        finally {
+            try { Write-Progress @progress -Completed }
+            finally {
+                if ($null -ne $savedView) { $PSStyle.Progress.View = $savedView }
+            }
+        }
+    }
     function Read-SetupKey {
         # Redirected input and non-console hosts may not support keyboard input.
         try {
@@ -31,12 +46,13 @@
         catch { Write-Warning "Could not open browser. Open this address manually: $url" }
     }
     $repo = 'EthenGod/ChatGPT-Proxy-Launcher'
-    try {
+    $tag = Invoke-SetupProgress {
         Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u83b7\u53d6\u6700\u65b0\u7248\u672c'))
         $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 30
         $tag = [string]$release.tag_name
         if ($tag -cnotmatch '\Av[0-9]+(?:\.[0-9]+){2,3}\z') { throw 'Unexpected release tag. Setup was not started.' }
-    } finally { Write-Progress @progress -Completed }
+        return $tag
+    }
     $base = "https://github.com/$repo/releases/download/$tag"
     $name = 'ChatGPTLauncherSetup.exe'
     $folder = Join-Path $env:TEMP ('ChatGPTLauncherSetup-' + [guid]::NewGuid().ToString('N'))
@@ -46,28 +62,29 @@
     $cleanupComplete = $true
     try {
         Write-Host "Downloading ChatGPT Launcher Setup $tag ..."
-        Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u4e0b\u8f7d\u6821\u9a8c\u6587\u4ef6'))
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt" -OutFile $sums -TimeoutSec 60
-        $entries = @([IO.File]::ReadAllLines($sums) -cmatch '\s\*?ChatGPTLauncherSetup\.exe$')
-        if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^([a-fA-F0-9]{64})[ \t]+\*?ChatGPTLauncherSetup\.exe$') {
-            throw 'Missing or invalid setup checksum. Setup was not started.'
+        $setupProcess = Invoke-SetupProgress {
+            Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u4e0b\u8f7d\u6821\u9a8c\u6587\u4ef6'))
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt" -OutFile $sums -TimeoutSec 60
+            $entries = @([IO.File]::ReadAllLines($sums) -cmatch '\s\*?ChatGPTLauncherSetup\.exe$')
+            if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^([a-fA-F0-9]{64})[ \t]+\*?ChatGPTLauncherSetup\.exe$') {
+                throw 'Missing or invalid setup checksum. Setup was not started.'
+            }
+            $expected = $Matches[1]
+            Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u4e0b\u8f7d\u914d\u7f6e\u5668'))
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $exe -TimeoutSec 120
+            Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u6821\u9a8c\u6587\u4ef6'))
+            $stream = [IO.File]::OpenRead($exe)
+            try {
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+                finally { $sha.Dispose() }
+                if ($actual -ine $expected) { throw 'SHA-256 mismatch. Setup was not started.' }
+                Write-Progress @progress -Completed
+                Start-Process -FilePath $exe -WorkingDirectory $folder -PassThru
+            } finally { $stream.Dispose() }
         }
-        $expected = $Matches[1]
-        Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u4e0b\u8f7d\u914d\u7f6e\u5668'))
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $exe -TimeoutSec 120
-        Write-Progress @progress -Status ([regex]::Unescape('\u6b63\u5728\u6821\u9a8c\u6587\u4ef6'))
-        $stream = [IO.File]::OpenRead($exe)
-        try {
-            $sha = [Security.Cryptography.SHA256]::Create()
-            try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
-            finally { $sha.Dispose() }
-            if ($actual -ine $expected) { throw 'SHA-256 mismatch. Setup was not started.' }
-            Write-Progress @progress -Completed
-            $setupProcess = Start-Process -FilePath $exe -WorkingDirectory $folder -PassThru
-        } finally { $stream.Dispose() }
         try { $setupProcess.WaitForExit() } finally { $setupProcess.Dispose() }
     } finally {
-        Write-Progress @progress -Completed
         # Only the two download paths are ours. Never follow a redirected folder or remove its other contents.
         if ([IO.Directory]::Exists($folder)) {
             if (([IO.File]::GetAttributes($folder) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {

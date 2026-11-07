@@ -5,6 +5,12 @@ $root = $ProjectRoot
 $entry = Join-Path $root 'setup.ps1'
 $oldTemp = $env:TEMP
 $ProgressPreference = 'SilentlyContinue'
+$hasProgressView = $PSVersionTable.PSVersion -ge [version]'7.2'
+$originalProgressView = if ($hasProgressView) { $PSStyle.Progress.View } else { $null }
+$progressNodeType = if ($hasProgressView) {
+    $consoleAssembly = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'Microsoft.PowerShell.ConsoleHost' }
+    $consoleAssembly.GetType('Microsoft.PowerShell.ProgressNode')
+} else { $null }
 $testFolder = Join-Path $root ('work\download-tests-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testFolder -Force
 $calls = @{launches = 0; browserOpens = 0; waitMs = 0; messages = [Collections.Generic.List[string]]::new(); progressActive = $false; stages = [Collections.Generic.List[string]]::new()}
@@ -13,10 +19,28 @@ $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
 function Write-Host($Object, $ForegroundColor) { $calls.messages.Add([string]$Object) }
+function Assert-ProgressFits($Activity, $Status, $Percent = -1) {
+    if (!$hasProgressView) { return }
+    if ($PSStyle.Progress.View -ne 'Classic') { throw 'Progress must use the CJK-safe renderer' }
+    if (!$progressNodeType) { throw 'Console progress renderer unavailable for width checks' }
+    $record = [Management.Automation.ProgressRecord]::new(1, $Activity, $Status)
+    $record.PercentComplete = $Percent
+    $flags = [Reflection.BindingFlags]'Instance,NonPublic,Public'
+    foreach ($width in 20,40,60,80,120) {
+        # Exercise the installed renderer, not a reimplementation of its layout calculations.
+        $node = [Activator]::CreateInstance($progressNodeType, $flags, $null, @([long]0, $record), $null)
+        $rows = [Collections.ArrayList]::new()
+        $null = $progressNodeType.GetMethod('Render', $flags).Invoke($node, @($rows, 0, $width, $Host.UI.RawUI))
+        foreach ($row in $rows) {
+            $plain = [regex]::Replace($row, '\x1b\[[0-9;?]*[ -/]*[@-~]', '')
+            if ($Host.UI.RawUI.LengthInBufferCells($plain) -gt $width) { throw "Progress wraps past $width columns" }
+        }
+    }
+}
 function Write-Progress($Id, $Activity, $Status, [switch]$Completed) {
     if ($Id -ne 1 -or !$Activity -or $ProgressPreference -ne 'Continue') { throw 'Invalid progress configuration' }
     $calls.progressActive = !$Completed
-    if (!$Completed) { $calls.stages.Add($Status) }
+    if (!$Completed) { $calls.stages.Add($Status); Assert-ProgressFits $Activity $Status }
 }
 function Start-Sleep($Milliseconds) {
     if ($Milliseconds -ne 100) { throw 'Unexpected polling interval' }
@@ -32,6 +56,7 @@ function Invoke-RestMethod($Uri, $TimeoutSec) {
 }
 function Invoke-WebRequest([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec) {
     if (!$calls.progressActive -or $ProgressPreference -ne 'Continue') { throw 'Download progress disabled' }
+    Assert-ProgressFits ([regex]::Unescape('\u6b63\u5728\u4e0b\u8f7d\u914d\u7f6e\u5668')) '1048576 / 2097152 bytes' 50
     $calls.folder = Split-Path $OutFile
     $asset = Split-Path $OutFile -Leaf
     if ($Uri -ne "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v9.8.7/$asset") { throw 'Wrong asset URL' }
@@ -72,6 +97,7 @@ if ('SCENARIO' -eq 'killed') { [Diagnostics.Process]::GetCurrentProcess().Kill()
 }
 try {
     $env:TEMP = $testFolder
+    if ($hasProgressView) { $PSStyle.Progress.View = 'Minimal' }
     if ($SessionProbe) {
         $scenario = 'ok'
         Invoke-Expression ([IO.File]::ReadAllText($entry))
@@ -79,6 +105,9 @@ try {
     }
     if (@([IO.File]::ReadAllBytes($entry) | Where-Object { $_ -gt 127 }).Count) { throw 'HTTP entry point must remain ASCII' }
     foreach ($scenario in 'ok','killed','offline','missing','duplicate','malformed','interrupted','corrupt','startfail','keep') {
+        # Cover restoring both caller styles, including every download failure path.
+        $callerView = if ($scenario -in 'killed','missing','malformed','corrupt','keep') { 'Classic' } else { 'Minimal' }
+        if ($hasProgressView) { $PSStyle.Progress.View = $callerView }
         $success = $scenario -in 'ok','killed','keep'
         $calls.folder = $null
         $calls.waitMs = 0
@@ -90,6 +119,7 @@ try {
         try { & $entry } catch { if ($success) { throw }; $failed = $true }
         if ($calls.progressActive -or !$calls.stages.Count) { throw "Progress not shown or cleared: $scenario" }
         if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Caller progress preference changed' }
+        if ($hasProgressView -and $PSStyle.Progress.View -ne $callerView) { throw "Caller progress view not restored: $scenario" }
         if ($success -and $calls.stages.Count -ne 4) { throw "Missing progress stage: $scenario" }
         if ($success) {
             if ($failed -or $calls.launches -ne $before + 1) { throw 'Valid download did not launch once' }
@@ -155,5 +185,8 @@ exit 71
         if (!$child.WaitForExit(30000)) { $child.Kill(); throw 'Session exit timed out' }
         if ($child.ExitCode -ne 0 -or $timer.Elapsed.TotalSeconds -lt 10) { throw 'Session did not wait and exit correctly' }
     } finally { $child.Dispose() }
-    Write-Output 'PASS: download progress and preference scope, checks, cleanup, completion text, any-key/timeout browser launch and session exit (isolated processes; browser mocked).'
-} finally { $env:TEMP = $oldTemp }
+    Write-Output 'PASS: native progress row widths and style restoration, download checks, cleanup, completion text, any-key/timeout browser launch and session exit (isolated processes; browser mocked).'
+} finally {
+    $env:TEMP = $oldTemp
+    if ($hasProgressView) { $PSStyle.Progress.View = $originalProgressView }
+}
