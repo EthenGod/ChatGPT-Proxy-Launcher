@@ -233,6 +233,26 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     Snapshot envBefore, envAfter;
     REQUIRE(ReadFileBytes(paths.codexEnvFile, envBefore) && envBefore.exists);
     REQUIRE(std::string(envBefore.data.begin(), envBefore.data.end()).find("all_proxy=http://127.0.0.1:7897") == 0);
+    const std::string unrelatedEnv = "# keep\nOTHER=fixture-value\n";
+    REQUIRE(WriteAtomic(paths.codexEnvFile, {unrelatedEnv.begin(), unrelatedEnv.end()}));
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(ReadFileBytes(paths.codexEnvFile, envAfter));
+    const std::string appendedEnv = unrelatedEnv + "all_proxy=http://127.0.0.1:7897\nALL_PROXY=http://127.0.0.1:7897\n"
+        "HTTP_PROXY=http://127.0.0.1:7897\nHTTPS_PROXY=http://127.0.0.1:7897\n";
+    REQUIRE(std::string(envAfter.data.begin(), envAfter.data.end()) == appendedEnv);
+    // An existing file with only one proxy key is updated in place; the other three
+    // requested keys are appended without disturbing unrelated values or comments.
+    const std::string partialEnv = "# keep\nOTHER=fixture-value\nHTTP_PROXY=http://old:1 # proxy comment\n";
+    REQUIRE(WriteAtomic(paths.codexEnvFile, {partialEnv.begin(), partialEnv.end()}));
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(ReadFileBytes(paths.codexEnvFile, envAfter));
+    const std::string filledEnv = "# keep\nOTHER=fixture-value\nHTTP_PROXY=http://127.0.0.1:7897 # proxy comment\n"
+        "all_proxy=http://127.0.0.1:7897\nALL_PROXY=http://127.0.0.1:7897\nHTTPS_PROXY=http://127.0.0.1:7897\n";
+    REQUIRE(std::string(envAfter.data.begin(), envAfter.data.end()) == filledEnv);
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(ReadFileBytes(paths.codexEnvFile, envAfter));
+    REQUIRE(std::string(envAfter.data.begin(), envAfter.data.end()) == filledEnv);
+    REQUIRE(WriteAtomic(paths.codexEnvFile, envBefore.data));
     options.codexEnv = false; options.port = L"7898";
     REQUIRE(Apply(paths, options, payload, target));
     REQUIRE(ReadFileBytes(paths.codexEnvFile, envAfter) && envAfter.data == envBefore.data);

@@ -12,7 +12,7 @@
 - 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
 - `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。
-- `src/CodexClose.cpp` 在 `.env` 保存成功后请求桌面版 Codex 正常关闭。`tests/codex-close-tests.cpp` 替换进程、窗口和等待调用，不关闭真实应用。
+- `src/CodexClose.cpp` 在 `.env` 保存成功后请求整个 ChatGPT 桌面应用退出，并检查附属后台进程。只调用主窗口的应用退出入口，不向辅助窗口发送关闭消息。`tests/codex-close-tests.cpp` 替换进程、窗口、键盘输入、焦点和等待调用，不关闭真实应用。
 
 ## 工作方式
 - 尽量用中文大白话解释。先读相关源码和文档，明确目标、影响文件及验收方法，再做小范围修改。

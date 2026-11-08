@@ -59,7 +59,7 @@ struct Completion {
     std::wstring target, previous;
     bool checkStartup = false;
     bool codexEnv = true, wroteCodexEnv = false;
-    setup::CodexCloseResult closeResult = setup::CodexCloseResult::NeedsManualExit;
+    setup::ChatGPTCloseResult closeResult = setup::ChatGPTCloseResult::NeedsManualExit;
     setup::StartupReport startupReport;
 };
 bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop || id == CodexEnv; }
@@ -78,13 +78,13 @@ constexpr wchar_t CodexEnvHelpText[] =
     L"Codex 默认优先使用 WebSocket，这在理想环境下很不错，但 Codex 的 WebSocket 似乎没有正常走系统代理。"
     L"尝试重新连接未果后，会回退到传统连接。通过配置 .env 文件，可以让 Codex 的 WebSocket 走代理。\n\n"
     L"WebSocket 对代理不是很友好，所以“重新连接 (5/5)”也有小概率是单纯由于代理不稳定。\n\n"
-    L"保存后会尝试关闭 Codex，请先保存工作。重新打开后使用新配置。";
+    L"保存后会尝试退出整个 ChatGPT 桌面应用，请先保存工作。重新打开后 Codex 使用新配置。";
 constexpr wchar_t ProxyHelpText[] = L"不要更改，除非你知道自己在做什么";
 PCWSTR HelpText(int id) { return id == CodexEnvHelp ? CodexEnvHelpText : ProxyHelpText; }
-PCWSTR CodexCloseMessage(setup::CodexCloseResult result) {
-    if (result == setup::CodexCloseResult::Closed) return L"已保存 .env，并已关闭 Codex。请重新打开 Codex。";
-    if (result == setup::CodexCloseResult::NotRunning) return L"已保存 .env。下次打开 Codex 时生效。";
-    return L"已保存 .env，未能确认 Codex 已退出。请手动退出后重新打开 Codex。";
+PCWSTR ChatGPTCloseMessage(setup::ChatGPTCloseResult result) {
+    if (result == setup::ChatGPTCloseResult::Closed) return L"已保存 .env，并已退出 ChatGPT。请重新打开 ChatGPT。";
+    if (result == setup::ChatGPTCloseResult::NotRunning) return L"已保存 .env。下次打开 ChatGPT 后，Codex 使用新配置。";
+    return L"已保存 .env，未能确认 ChatGPT 已完全退出。请手动退出后重新打开。";
 }
 bool ReadCodexEnvPreference() {
     DWORD enabled = 1, size = sizeof(enabled);
@@ -501,7 +501,7 @@ void App::Refresh(bool edited) {
         if (!args) Set(Footer, args.message.substr(0, args.message.find(L'\n')));
         else if (!path) Set(Footer, path.message.substr(0, path.message.find(L'\n')));
         else Set(Footer, busy ? L"正在保存…" : savedThisSession && !dirty ? L"已保存，可以关闭"
-            : options.proxy && options.codexEnv ? L"保存后将尝试关闭 Codex，请先保存工作。" : dirty ? L"有更改待保存" : L"保存后即可使用");
+            : options.proxy && options.codexEnv ? L"保存后会尝试退出整个 ChatGPT，请先保存工作。" : dirty ? L"有更改待保存" : L"保存后即可使用");
     }
     Set(ApplyButton, busy ? L"正在保存…" : savedThisSession && !dirty ? L"已保存" : savedTarget.empty() ? L"部署并保存" : L"保存更改");
     Set(CloseButton, savedThisSession && !dirty ? L"完成" : L"关闭");
@@ -670,8 +670,8 @@ void App::Command(int id, int notification) {
                         catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
                     }
                     if (completion->result && completion->wroteCodexEnv) {
-                        try { completion->closeResult = setup::TryCloseCodex(); }
-                        catch (...) { completion->closeResult = setup::CodexCloseResult::NeedsManualExit; }
+                        try { completion->closeResult = setup::TryCloseChatGPT(); }
+                        catch (...) { completion->closeResult = setup::ChatGPTCloseResult::NeedsManualExit; }
                     }
                     CoUninitialize();
                 }
@@ -1114,9 +1114,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             app->Refresh(false);
             const bool moved = !done->previous.empty() && _wcsicmp(done->previous.c_str(), done->target.c_str()) != 0;
             app->Set(Footer, moved ? L"已保存。旧目录中的文件已保留。" : L"已保存。下次启动时使用这些选项。");
-            if (done->wroteCodexEnv) app->Set(Footer, CodexCloseMessage(done->closeResult));
+            if (done->wroteCodexEnv) app->Set(Footer, ChatGPTCloseMessage(done->closeResult));
             if (!preferenceSaved) app->Set(Footer,
-                std::wstring(done->wroteCodexEnv ? CodexCloseMessage(done->closeResult) : L"配置已保存。") + L"未能记住 .env 选项，下次打开时请核对。");
+                std::wstring(done->wroteCodexEnv ? ChatGPTCloseMessage(done->closeResult) : L"配置已保存。") + L"未能记住 .env 选项，下次打开时请核对。");
             if (done->checkStartup) {
                 app->startupReminderShown = true;
                 std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
@@ -1127,7 +1127,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     L"4. 核对后回到部署器，点击右下方「完成」即可退出。\n\n"
                     L"这样可以避免 ChatGPT 自带自启先运行，导致本工具配置的启动参数无法生效。\n\n"
                     L"自动处理结果：\n" + done->startupReport.Message();
-                if (done->wroteCodexEnv) reminder += L"\n\n" + std::wstring(CodexCloseMessage(done->closeResult));
+                if (done->wroteCodexEnv) reminder += L"\n\n" + std::wstring(ChatGPTCloseMessage(done->closeResult));
                 if (!done->wroteCodexEnv && preferenceSaved)
                     app->Set(Footer, L"已保存，可关闭本工具。请在 Windows 设置中核对自带自启。");
                 MessageBoxW(window, reminder.c_str(), L"部署已完成", MB_OK | MB_ICONINFORMATION);

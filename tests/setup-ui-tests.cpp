@@ -14,7 +14,7 @@ static DWORD settingsError = 0;
 static setup::ProxyDetection proxyResult;
 static unsigned proxyCalls = 0;
 static unsigned codexCloseCalls = 0;
-static setup::CodexCloseResult closeResult = setup::CodexCloseResult::Closed;
+static setup::ChatGPTCloseResult closeResult = setup::ChatGPTCloseResult::Closed;
 static std::wstring envFileForClose;
 static bool envSavedBeforeClose = true;
 static DWORD storedLightTheme = 0;
@@ -50,7 +50,7 @@ static LSTATUS WINAPI TestThemeWrite(HKEY key, LPCWSTR path, LPCWSTR name, DWORD
     storedLightTheme = *static_cast<const DWORD*>(data); themeReadResult = ERROR_SUCCESS; return ERROR_SUCCESS;
 }
 namespace setup {
-CodexCloseResult TryCloseCodex() {
+ChatGPTCloseResult TryCloseChatGPT() {
     ++codexCloseCalls;
     envSavedBeforeClose = envSavedBeforeClose && GetFileAttributesW(envFileForClose.c_str()) != INVALID_FILE_ATTRIBUTES;
     return closeResult;
@@ -585,12 +585,12 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(app.Checked(Desktop) && IsWindowEnabled(app.Get(Desktop)));
     REQUIRE(GetFileAttributesW(app.paths.codexEnvFile.c_str()) != INVALID_FILE_ATTRIBUTES);
     REQUIRE(storedCodexEnv == 1 && app.Checked(CodexEnv));
-    REQUIRE(codexCloseCalls == 1 && envSavedBeforeClose && app.Text(Footer).find(L"已关闭 Codex") != std::wstring::npos);
+    REQUIRE(codexCloseCalls == 1 && envSavedBeforeClose && app.Text(Footer).find(L"已退出 ChatGPT") != std::wstring::npos);
     setup::Loaded versionState; REQUIRE(setup::Load(app.paths, versionState) && !versionState.deployedVersion.empty());
     REQUIRE(app.Text(State).find(L"已部署 v" + versionState.deployedVersion) == 0);
     app.ScrollTo(0);
     REQUIRE(Capture(app, setup::Join(folder, L"setup-version.png").c_str()));
-    REQUIRE(lastDialog.find(L"重新打开 Codex") != std::wstring::npos && app.Text(Footer).find(L"重新打开 Codex") != std::wstring::npos);
+    REQUIRE(lastDialog.find(L"重新打开 ChatGPT") != std::wstring::npos && app.Text(Footer).find(L"重新打开 ChatGPT") != std::wstring::npos);
     setup::Link desktopLink;
     REQUIRE(setup::ReadLink(app.paths.desktopLink, desktopLink) && desktopLink.target == app.savedTarget);
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
@@ -619,7 +619,7 @@ static int RunTests(PCWSTR folder) {
     SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
     setup::Loaded deployed; REQUIRE(setup::Load(app.paths, deployed) && deployed.deployed && deployed.options.startup);
     app.Check(Startup, false); app.Refresh(true);
-    closeResult = setup::CodexCloseResult::NeedsManualExit;
+    closeResult = setup::ChatGPTCloseResult::NeedsManualExit;
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(app.Text(Footer).find(L"请手动退出") != std::wstring::npos && !app.dirty);
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
