@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "../src/StartupIntegration.h"
 #include "../src/ProxyDetection.h"
+#include "../src/CodexClose.h"
 #include <stdio.h>
 #include <chrono>
 #include <shellapi.h>
@@ -12,11 +13,23 @@ static bool settingsAfterReminder = false;
 static DWORD settingsError = 0;
 static setup::ProxyDetection proxyResult;
 static unsigned proxyCalls = 0;
+static unsigned codexCloseCalls = 0;
+static setup::CodexCloseResult closeResult = setup::CodexCloseResult::Closed;
+static std::wstring envFileForClose;
+static bool envSavedBeforeClose = true;
 static DWORD storedLightTheme = 0;
 static LSTATUS themeReadResult = ERROR_FILE_NOT_FOUND, themeWriteResult = ERROR_SUCCESS;
 static unsigned themeWrites = 0;
 static bool themePathValid = true;
+static DWORD storedCodexEnv = 1;
+static LSTATUS envReadResult = ERROR_FILE_NOT_FOUND, envWriteResult = ERROR_SUCCESS;
 static LSTATUS WINAPI TestThemeRead(HKEY key, LPCWSTR path, LPCWSTR name, DWORD, LPDWORD, PVOID data, LPDWORD size) {
+    if (name && !wcscmp(name, L"ConfigureCodexEnv")) {
+        themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup");
+        if (envReadResult != ERROR_SUCCESS) return envReadResult;
+        if (*size < sizeof(DWORD)) return ERROR_MORE_DATA;
+        *static_cast<DWORD*>(data) = storedCodexEnv; *size = sizeof(DWORD); return ERROR_SUCCESS;
+    }
     themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && name
         && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup") && !wcscmp(name, L"LightTheme");
     if (themeReadResult != ERROR_SUCCESS) return themeReadResult;
@@ -24,6 +37,12 @@ static LSTATUS WINAPI TestThemeRead(HKEY key, LPCWSTR path, LPCWSTR name, DWORD,
     *static_cast<DWORD*>(data) = storedLightTheme; *size = sizeof(DWORD); return ERROR_SUCCESS;
 }
 static LSTATUS WINAPI TestThemeWrite(HKEY key, LPCWSTR path, LPCWSTR name, DWORD type, LPCVOID data, DWORD size) {
+    if (name && !wcscmp(name, L"ConfigureCodexEnv")) {
+        themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup");
+        if (type != REG_DWORD || size != sizeof(DWORD)) return ERROR_INVALID_DATA;
+        if (envWriteResult != ERROR_SUCCESS) return envWriteResult;
+        storedCodexEnv = *static_cast<const DWORD*>(data); envReadResult = ERROR_SUCCESS; return ERROR_SUCCESS;
+    }
     ++themeWrites;
     themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && name && type == REG_DWORD && size == sizeof(DWORD)
         && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup") && !wcscmp(name, L"LightTheme");
@@ -31,6 +50,11 @@ static LSTATUS WINAPI TestThemeWrite(HKEY key, LPCWSTR path, LPCWSTR name, DWORD
     storedLightTheme = *static_cast<const DWORD*>(data); themeReadResult = ERROR_SUCCESS; return ERROR_SUCCESS;
 }
 namespace setup {
+CodexCloseResult TryCloseCodex() {
+    ++codexCloseCalls;
+    envSavedBeforeClose = envSavedBeforeClose && GetFileAttributesW(envFileForClose.c_str()) != INVALID_FILE_ATTRIBUTES;
+    return closeResult;
+}
 ProxyDetection DetectProxyPort(const std::wstring&, const std::wstring&) {
     ++proxyCalls; Sleep(20); return proxyResult;
 }
@@ -151,7 +175,7 @@ static bool Capture(App& app, PCWSTR filename) {
 }
 static bool LabelsFit(App& app) {
     for (const auto& item : app.controls) {
-        if (!IsWindowVisible(item.window) || IsField(item.id) || item.id == Footer || item.id == ThemeToggle) continue;
+        if (!IsWindowVisible(item.window) || IsField(item.id) || item.id == Footer || item.id == ThemeToggle || IsHelp(item.id)) continue;
         RECT bounds{}; GetClientRect(item.window, &bounds);
         HDC dc = GetDC(item.window);
         HGDIOBJ old = SelectObject(dc, app.fonts[item.font]);
@@ -174,6 +198,10 @@ static bool WaitForSave(App& app) {
     return !app.busy;
 }
 static int RunTests(PCWSTR folder) {
+    REQUIRE(ReadCodexEnvPreference());
+    envReadResult = ERROR_SUCCESS; storedCodexEnv = 9; REQUIRE(ReadCodexEnvPreference());
+    storedCodexEnv = 0; REQUIRE(!ReadCodexEnvPreference());
+    envReadResult = ERROR_FILE_NOT_FOUND; storedCodexEnv = 1;
     REQUIRE(ReadDarkPreference()); // Missing or malformed preference defaults to dark.
     themeReadResult = ERROR_SUCCESS; storedLightTheme = 9;
     REQUIRE(ReadDarkPreference());
@@ -192,7 +220,8 @@ static int RunTests(PCWSTR folder) {
     App app;
     app.instance = GetModuleHandleW(nullptr);
     const std::wstring root = setup::Join(folder, L"ui-isolated-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
-    app.paths = {root, setup::Join(root, L"startup.lnk"), setup::Join(root, L"settings.lnk"), setup::Join(root, L"desktop.lnk")};
+    app.paths = {root, setup::Join(root, L"startup.lnk"), setup::Join(root, L"settings.lnk"), setup::Join(root, L"desktop.lnk"), setup::Join(root, L"profile\\.codex\\.env")};
+    envFileForClose = app.paths.codexEnvFile;
     WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = app.instance;
     cls.lpfnWndProc = WindowProc; cls.lpszClassName = L"SetupTestWindow"; RegisterClassExW(&cls);
     cls.lpfnWndProc = BodyProc; cls.lpszClassName = L"ChatGPTSetupBody"; RegisterClassExW(&cls);
@@ -201,6 +230,7 @@ static int RunTests(PCWSTR folder) {
     ShowWindow(app.window, SW_SHOWNOACTIVATE);
     UpdateWindow(app.window);
     REQUIRE(app.preferredDark && (app.contrast || app.dark));
+    REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_VERSION_TEXT);
     const auto initialArguments = app.Text(Preview);
     const bool initialDirty = app.dirty;
     app.Theme(1);
@@ -239,6 +269,34 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(fontSizes.size() == 3);
     REQUIRE(app.Checked(Startup) && app.Checked(Silent) && app.savedTarget.empty());
     REQUIRE(app.Text(Preview) == L"--no-startup-window");
+    REQUIRE(app.Checked(CodexEnv) && !IsWindowVisible(app.Get(CodexEnv)) && !IsWindowVisible(app.Get(CodexEnvHelp)));
+    SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
+    REQUIRE(IsWindowVisible(app.Get(CodexEnv)) && IsWindowVisible(app.Get(CodexEnvHelp)));
+    REQUIRE(app.Options().codexEnv && app.tooltip);
+    REQUIRE(SendMessageW(app.tooltip, TTM_GETTOOLCOUNT, 0, 0) == 3);
+    wchar_t helpText[2048]{};
+    TOOLINFOW help{TTTOOLINFOW_V2_SIZE}; help.hwnd = app.body;
+    help.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); help.lpszText = helpText;
+    SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
+    REQUIRE(!wcscmp(helpText, CodexEnvHelpText));
+    for (int id : {ProtocolHelp, HostHelp}) {
+        help.uId = reinterpret_cast<UINT_PTR>(app.Get(id));
+        SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
+        REQUIRE(!wcscmp(helpText, L"不要更改，除非你知道自己在做什么"));
+    }
+    RECT helpBounds{}; GetWindowRect(app.Get(CodexEnvHelp), &helpBounds);
+    MapWindowPoints(nullptr, app.body, reinterpret_cast<POINT*>(&helpBounds), 2);
+    REQUIRE(ChildWindowFromPointEx(app.body, {(helpBounds.left + helpBounds.right) / 2, (helpBounds.top + helpBounds.bottom) / 2},
+        CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == app.Get(CodexEnvHelp));
+    app.Set(Port, L"12345");
+    REQUIRE(app.Text(Footer).find(L"请先保存工作") != std::wstring::npos);
+    const auto proxyArguments = app.Text(Preview);
+    SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
+    REQUIRE(!app.Options().codexEnv && app.Text(Preview) == proxyArguments);
+    SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
+    SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
+    REQUIRE(!IsWindowVisible(app.Get(CodexEnv)) && app.Checked(CodexEnv));
+    app.Set(Port, L"");
     REQUIRE(!app.Checked(Desktop) && IsWindowEnabled(app.Get(Desktop)));
     SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
     REQUIRE(app.Options().desktop && app.Text(Preview) == L"--no-startup-window");
@@ -458,6 +516,19 @@ static int RunTests(PCWSTR folder) {
         app.Command(Advanced, BN_CLICKED);
         REQUIRE(!app.advanced && LabelsFit(app));
         if (scale == 192) REQUIRE(Capture(app, setup::Join(folder, L"setup-narrow-200.png").c_str()));
+        const bool proxyEnabled = app.Checked(Proxy);
+        app.Check(Proxy, true); app.Refresh(false);
+        REQUIRE(LabelsFit(app));
+        RECT row{}, question{};
+        GetWindowRect(app.Get(CodexEnv), &row); GetWindowRect(app.Get(CodexEnvHelp), &question);
+        HDC measure = GetDC(app.Get(CodexEnv)); HGDIOBJ previousFont = SelectObject(measure, app.fonts[0]); SIZE label{};
+        const auto caption = app.Text(CodexEnv);
+        GetTextExtentPoint32W(measure, caption.c_str(), static_cast<int>(caption.size()), &label);
+        SelectObject(measure, previousFont); ReleaseDC(app.Get(CodexEnv), measure);
+        REQUIRE(question.left >= row.left + label.cx && question.right <= row.right - app.S(62));
+        REQUIRE(abs((row.top + row.bottom) - (question.top + question.bottom)) <= 1);
+        if (scale == 192) REQUIRE(Capture(app, setup::Join(folder, L"setup-env-narrow-200.png").c_str()));
+        app.Check(Proxy, proxyEnabled); app.Refresh(false);
         app.Command(Advanced, BN_CLICKED);
     }
     app.dpi = originalDpi; app.Theme(0); app.motionEnabled = false;
@@ -487,8 +558,18 @@ static int RunTests(PCWSTR folder) {
     saved.options.startup = false; saved.options.silent = false;
     app.RestoreOptions(saved);
     REQUIRE(!app.Checked(Startup) && !app.Checked(Silent) && app.Text(Preview).empty());
+    REQUIRE(app.Text(State).find(L"启动器缺失") != std::wstring::npos);
+    saved.deployed = true; saved.deployedVersion = L"2.3.4.5";
+    app.RestoreOptions(saved);
+    REQUIRE(app.Text(State).find(L"已部署 v2.3.4.5") == 0);
+    app.Set(Directory, setup::Join(root, L"not-saved")); app.Refresh(true);
+    REQUIRE(app.Text(State).find(L"已部署 v2.3.4.5") == 0); // Editing does not pretend the new directory is deployed.
+    saved.deployedVersion.clear(); app.RestoreOptions(saved);
+    REQUIRE(app.Text(State).find(L"版本无法识别") != std::wstring::npos);
+    saved.deployed = false; app.RestoreOptions(saved);
     REQUIRE(!IsWindowEnabled(app.Get(Silent)));
     REQUIRE(!disableCalls && !settingsCalls && !reminderCalls); // UI edits alone do not change the OS.
+    REQUIRE(!codexCloseCalls);
     // Exercise the actual worker and file commit; only registry/Settings/reminder endpoints are replaced.
     HANDLE payloadFile = CreateFileW(setup::Join(folder, L"..\\outputs\\ChatGPTProxyLauncher.exe").c_str(), GENERIC_READ,
         FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -498,9 +579,18 @@ static int RunTests(PCWSTR folder) {
     CloseHandle(payloadFile); REQUIRE(read == payload.size());
     app.payload = {payload.data(), payload.size()};
     app.Check(Startup, true);
+    app.Check(Proxy, true); app.Set(Port, L"12345"); app.Refresh(true);
     SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(app.Checked(Desktop) && IsWindowEnabled(app.Get(Desktop)));
+    REQUIRE(GetFileAttributesW(app.paths.codexEnvFile.c_str()) != INVALID_FILE_ATTRIBUTES);
+    REQUIRE(storedCodexEnv == 1 && app.Checked(CodexEnv));
+    REQUIRE(codexCloseCalls == 1 && envSavedBeforeClose && app.Text(Footer).find(L"已关闭 Codex") != std::wstring::npos);
+    setup::Loaded versionState; REQUIRE(setup::Load(app.paths, versionState) && !versionState.deployedVersion.empty());
+    REQUIRE(app.Text(State).find(L"已部署 v" + versionState.deployedVersion) == 0);
+    app.ScrollTo(0);
+    REQUIRE(Capture(app, setup::Join(folder, L"setup-version.png").c_str()));
+    REQUIRE(lastDialog.find(L"重新打开 Codex") != std::wstring::npos && app.Text(Footer).find(L"重新打开 Codex") != std::wstring::npos);
     setup::Link desktopLink;
     REQUIRE(setup::ReadLink(app.paths.desktopLink, desktopLink) && desktopLink.target == app.savedTarget);
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
@@ -512,18 +602,32 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(!app.busy && disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
     // Manual startup review is advisory, and edits after it do not repeat the reminder.
     app.Set(Extra, L"--test-option"); app.Refresh(true);
+    SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
     REQUIRE(IsWindowEnabled(app.Get(ApplyButton)));
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1 && !app.dirty);
+    REQUIRE(!app.Checked(CodexEnv) && storedCodexEnv == 0);
+    REQUIRE(codexCloseCalls == 1);
+    // A preference failure must not undo the completed deployment or flip the visible choice.
+    envWriteResult = ERROR_ACCESS_DENIED;
+    SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
+    app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
+    REQUIRE(app.Checked(CodexEnv) && storedCodexEnv == 0 && !app.dirty);
+    REQUIRE(app.Text(Footer).find(L"未能记住") != std::wstring::npos);
+    envWriteResult = ERROR_SUCCESS;
     REQUIRE(setup::ReadLink(app.paths.desktopLink, desktopLink) && desktopLink.arguments == app.Text(Preview));
     SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
     setup::Loaded deployed; REQUIRE(setup::Load(app.paths, deployed) && deployed.deployed && deployed.options.startup);
     app.Check(Startup, false); app.Refresh(true);
+    closeResult = setup::CodexCloseResult::NeedsManualExit;
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
+    REQUIRE(app.Text(Footer).find(L"请手动退出") != std::wstring::npos && !app.dirty);
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
     REQUIRE(!app.Checked(Desktop) && GetFileAttributesW(app.paths.desktopLink.c_str()) == INVALID_FILE_ATTRIBUTES);
     app.Check(Startup, true); app.Refresh(true); app.payload = {};
+    const unsigned closeBeforeFailure = codexCloseCalls;
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
+    REQUIRE(codexCloseCalls == closeBeforeFailure);
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 2);
     REQUIRE(!IsWindowEnabled(app.Get(Silent)) && !app.Checked(Silent));
     REQUIRE(folderCalls == 0); // Neither success nor unrelated errors open Explorer.
@@ -570,6 +674,9 @@ static int RunTests(PCWSTR folder) {
     puts("PASS unavailable silent switch stays disabled across edits, restore and save success/failure; Tab skips it and saved values are retained");
     puts("PASS three font sizes, interruptible 150 ms motion, stopped idle timer, reduced motion and high contrast");
     puts("PASS dark default, independent theme preference and write failure (mock registry); owner-drawn protocol selection, arrows, Space, Tab stops and rendering");
+    puts("PASS Codex env defaults, expansion, help hit target/text, 100-200 percent layout, isolated save, preference persistence/failure and restart reminder");
+    puts("PASS deployed version display, unknown/missing state, unsaved path changes and refresh after actual isolated deployment");
+    puts("PASS configurator version, protocol/address tooltips and close request only after successful env save, opt-out and failed-save exclusion (mock close)");
     printf("PASS conflict folder handoff, Unicode/spaces, unrelated errors and Explorer failure fallback (mocked)\n");
     printf("PASS saved state, one startup reminder per session, repeat-save no-op, later edits, Settings-after-reminder and failure recovery\n");
     printf("PASS owner-draw synchronous dispatch, preserved style through Tab/default-button changes, Enter/Space, balanced footer at 100/150 percent and short windows\n");

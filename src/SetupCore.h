@@ -17,10 +17,11 @@ inline constexpr wchar_t Marker[] = L"ChatGPT Launcher Setup / v1";
 inline constexpr size_t MaxArguments = 8191; // Conservative, verified by Shell round trip.
 struct Options {
     bool startup = false, silent = false, proxy = false, desktop = false;
+    bool codexEnv = true;
     std::wstring protocol = L"http", host = L"127.0.0.1", port;
     std::wstring bypass, extra, directory;
 };
-struct Paths { std::wstring defaultDirectory, startupLink, settingsLink, desktopLink; };
+struct Paths { std::wstring defaultDirectory, startupLink, settingsLink, desktopLink, codexEnvFile; };
 struct Link { std::wstring target, arguments, directory, description; };
 struct Result {
     DWORD code = 0;
@@ -30,7 +31,7 @@ struct Result {
 };
 struct Loaded {
     Options options;
-    std::wstring managedTarget, notice;
+    std::wstring managedTarget, notice, deployedVersion;
     bool deployed = false, hasSettings = false;
 };
 struct Payload { const BYTE* data; size_t size; };

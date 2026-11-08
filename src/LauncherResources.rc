@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include <windows.h>
 #include "AppIcon.h"
+#include "AppVersion.h"
 IDI_CHATGPT ICON "../assets/ChatGPT.ico"
+1 VERSIONINFO
+ FILEVERSION APP_VERSION_NUMBER
+ PRODUCTVERSION APP_VERSION_NUMBER
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904B0"
+  BEGIN
+   VALUE "FileDescription", "ChatGPT Proxy Launcher\0"
+   VALUE "ProductName", "ChatGPT Proxy Launcher\0"
+   VALUE "OriginalFilename", "ChatGPTProxyLauncher.exe\0"
+   VALUE "LegalCopyright", "GPL-3.0-only; unofficial local launcher\0"
+   VALUE "FileVersion", APP_VERSION_TEXT "\0"
+   VALUE "ProductVersion", APP_VERSION_TEXT "\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x0409, 1200
+ END
+END

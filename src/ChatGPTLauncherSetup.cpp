@@ -4,6 +4,8 @@
 #include "SetupResources.h"
 #include "StartupIntegration.h"
 #include "ProxyDetection.h"
+#include "AppVersion.h"
+#include "CodexClose.h"
 #include <commctrl.h>
 #include <shlobj.h>
 #include <shellapi.h>
@@ -23,8 +25,8 @@ constexpr UINT PortDetectedMessage = WM_APP + 3;
 constexpr int FooterHeight = 96;
 constexpr UINT_PTR MotionTimer = 1;
 enum ControlId {
-    Title = 1000, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
-    ProxyTitle, Proxy, ProtocolLabel, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, Host, PortLabel, Port,
+    Title = 1000, SetupVersion, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
+    ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, Port,
     PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
     DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Footer, ApplyButton, CloseButton
 };
@@ -56,17 +58,44 @@ struct Completion {
     setup::Result result;
     std::wstring target, previous;
     bool checkStartup = false;
+    bool codexEnv = true, wroteCodexEnv = false;
+    setup::CodexCloseResult closeResult = setup::CodexCloseResult::NeedsManualExit;
     setup::StartupReport startupReport;
 };
-bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop; }
+bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop || id == CodexEnv; }
 bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == ProtocolSocks; }
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
+bool IsHelp(int id) { return id == CodexEnvHelp || id == ProtocolHelp || id == HostHelp; }
 bool IsButton(int id) {
-    return IsSwitch(id) || IsSegment(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == AddProgram || id == OpenCompanions;
+    return IsSwitch(id) || IsSegment(id) || IsHelp(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == AddProgram || id == OpenCompanions;
 }
 bool IsActionButton(int id) { return IsButton(id) && !IsSwitch(id) && !IsSegment(id); }
 bool IsOwnerDrawButton(int id) { return IsActionButton(id) || IsSegment(id); }
 constexpr wchar_t AppearanceKey[] = L"Software\\Community\\ChatGPTLauncherSetup";
+constexpr wchar_t CodexEnvHelpText[] =
+    L"配置 .env 后，可无需开启系统代理使用 Codex 对话（即使未使用本工具启动或未开启“使用指定代理”）。注意：.env 不作用于 Chat。\n\n"
+    L"这可能能够解决 Codex 的“重新连接 (5/5)”：\n"
+    L"Codex 默认优先使用 WebSocket，这在理想环境下很不错，但 Codex 的 WebSocket 似乎没有正常走系统代理。"
+    L"尝试重新连接未果后，会回退到传统连接。通过配置 .env 文件，可以让 Codex 的 WebSocket 走代理。\n\n"
+    L"WebSocket 对代理不是很友好，所以“重新连接 (5/5)”也有小概率是单纯由于代理不稳定。\n\n"
+    L"保存后会尝试关闭 Codex，请先保存工作。重新打开后使用新配置。";
+constexpr wchar_t ProxyHelpText[] = L"不要更改，除非你知道自己在做什么";
+PCWSTR HelpText(int id) { return id == CodexEnvHelp ? CodexEnvHelpText : ProxyHelpText; }
+PCWSTR CodexCloseMessage(setup::CodexCloseResult result) {
+    if (result == setup::CodexCloseResult::Closed) return L"已保存 .env，并已关闭 Codex。请重新打开 Codex。";
+    if (result == setup::CodexCloseResult::NotRunning) return L"已保存 .env。下次打开 Codex 时生效。";
+    return L"已保存 .env，未能确认 Codex 已退出。请手动退出后重新打开 Codex。";
+}
+bool ReadCodexEnvPreference() {
+    DWORD enabled = 1, size = sizeof(enabled);
+    return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"ConfigureCodexEnv", RRF_RT_REG_DWORD,
+        nullptr, &enabled, &size) != ERROR_SUCCESS || enabled != 0;
+}
+bool SaveCodexEnvPreference(bool enabled) {
+    const DWORD value = enabled ? 1 : 0;
+    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"ConfigureCodexEnv", REG_DWORD,
+        &value, sizeof(value)) == ERROR_SUCCESS;
+}
 bool ReadDarkPreference() {
     DWORD light = 0, size = sizeof(light);
     return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", RRF_RT_REG_DWORD,
@@ -99,7 +128,7 @@ void Rounded(HDC dc, const RECT& rect, int radius, COLORREF fill, COLORREF borde
 LRESULT CALLBACK StyledControl(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 struct App {
     HINSTANCE instance = nullptr;
-    HWND window = nullptr, body = nullptr;
+    HWND window = nullptr, body = nullptr, tooltip = nullptr;
     UINT dpi = 96;
     bool advanced = false, loading = true, dirty = false, busy = false, fatal = false;
     bool savedThisSession = false, startupReminderShown = false;
@@ -150,6 +179,7 @@ struct App {
     void Theme(int mode = -1);
     void SelectProtocol(int id);
     void CreateControls();
+    void UpdateTooltip();
     void Layout();
     void Refresh(bool edited);
     void DetectPort();
@@ -231,6 +261,7 @@ void App::Theme(int mode) {
     EnableWindow(Get(ThemeToggle), !contrast && !busy);
     const BOOL useDark = dark;
     DwmSetWindowAttribute(window, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &useDark, sizeof(useDark));
+    UpdateTooltip();
     if (body) InvalidateRect(body, nullptr, TRUE);
     InvalidateRect(window, nullptr, TRUE);
 }
@@ -248,6 +279,7 @@ void App::CreateControls() {
     const DWORD label = SS_LEFT | SS_NOPREFIX;
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
     add(Title, L"STATIC", L"ChatGPT 启动器", label, 2);
+    add(SetupVersion, L"STATIC", L"配置器 v" APP_VERSION_TEXT, label, 3);
     add(ThemeToggle, L"BUTTON", L"切换为浅色", WS_TABSTOP | BS_OWNERDRAW);
     add(State, L"STATIC", L"尚未部署，仅对当前 Windows 用户生效", label, 3);
     add(StartTitle, L"STATIC", L"启动设置", label, 1);
@@ -257,12 +289,19 @@ void App::CreateControls() {
     add(SilentHint, L"STATIC", L"保存时尝试关闭 ChatGPT 自带自启。", label, 3);
     add(ProxyTitle, L"STATIC", L"代理连接", label, 1);
     add(Proxy, L"BUTTON", L"使用指定代理", WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(CodexEnv, L"BUTTON", L"同时配置 Codex 的 .env 文件（推荐）", WS_TABSTOP | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX);
+    add(CodexEnvHelp, L"BUTTON", L"Codex .env 配置说明", WS_TABSTOP | BS_OWNERDRAW);
+    // The help button sits above the full-width switch, next to its label.
+    SetWindowPos(Get(CodexEnvHelp), Get(Proxy), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    Check(CodexEnv, ReadCodexEnvPreference());
     add(ProtocolLabel, L"STATIC", L"协议", label, 3);
+    add(ProtocolHelp, L"BUTTON", L"协议设置说明", WS_TABSTOP | BS_OWNERDRAW);
     add(Protocol, L"BUTTON", L"HTTP", WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON, 3);
     add(ProtocolHttps, L"BUTTON", L"HTTPS", WS_TABSTOP | BS_AUTORADIOBUTTON, 3);
     add(ProtocolSocks, L"BUTTON", L"SOCKS5", WS_TABSTOP | BS_AUTORADIOBUTTON, 3);
     Check(Protocol, true);
     add(HostLabel, L"STATIC", L"地址", label, 3);
+    add(HostHelp, L"BUTTON", L"地址设置说明", WS_TABSTOP | BS_OWNERDRAW);
     add(Host, L"EDIT", L"127.0.0.1", edit | WS_GROUP);
     add(PortLabel, L"STATIC", L"端口", label, 3);
     add(Port, L"EDIT", L"", edit);
@@ -289,16 +328,40 @@ void App::CreateControls() {
     add(Footer, L"STATIC", L"保存后即可使用", SS_OWNERDRAW, 4, true);
     add(CloseButton, L"BUTTON", L"关闭", WS_TABSTOP | BS_PUSHBUTTON, 0, true);
     add(ApplyButton, L"BUTTON", L"部署并保存", WS_TABSTOP | BS_PUSHBUTTON, 1, true);
+    INITCOMMONCONTROLSEX tipClasses{ sizeof(tipClasses), ICC_BAR_CLASSES };
+    InitCommonControlsEx(&tipClasses);
+    tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr, instance, nullptr);
+    // No reserved v6 fields are used; this size also works without a visual-styles manifest.
+    for (int id : {CodexEnvHelp, ProtocolHelp, HostHelp}) {
+        TOOLINFOW tip{ TTTOOLINFOW_V2_SIZE };
+        tip.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        tip.hwnd = body; tip.uId = reinterpret_cast<UINT_PTR>(Get(id));
+        tip.lpszText = const_cast<PWSTR>(HelpText(id));
+        SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tip));
+    }
+    SendMessageW(tooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 30000);
+    UpdateTooltip();
+}
+void App::UpdateTooltip() {
+    if (!tooltip) return;
+    SetWindowTheme(tooltip, L"", L"");
+    SendMessageW(tooltip, WM_SETFONT, reinterpret_cast<WPARAM>(fonts[0]), FALSE);
+    SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, S(460));
+    SendMessageW(tooltip, TTM_SETTIPBKCOLOR, colors.surface, 0);
+    SendMessageW(tooltip, TTM_SETTIPTEXTCOLOR, colors.text, 0);
 }
 
 void App::Layout() {
     if (!body) return;
+    if (tooltip) SendMessageW(tooltip, TTM_POP, 0, 0);
     ++layoutPasses;
     RECT root{}; GetClientRect(window, &root);
     const int footerHeight = S(FooterHeight);
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
-    contentHeight = S(advanced ? 710 : 666);
+    const int envOffset = Checked(Proxy) ? 48 : 0;
+    contentHeight = S(advanced ? 710 : 666 + envOffset);
     scroll = std::clamp(scroll, 0, std::max(0, contentHeight - static_cast<int>(area.bottom)));
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
@@ -309,7 +372,13 @@ void App::Layout() {
         if (batch) batch = DeferWindowPos(batch, control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
         else SetWindowPos(control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
     };
-    place(Title, 32, 24, width - 120, 34);
+    HDC titleDC = GetDC(body); HGDIOBJ titleFont = SelectObject(titleDC, fonts[2]); SIZE titleSize{};
+    const auto title = Text(Title);
+    GetTextExtentPoint32W(titleDC, title.c_str(), static_cast<int>(title.size()), &titleSize);
+    SelectObject(titleDC, titleFont); ReleaseDC(body, titleDC);
+    const int titleWidth = MulDiv(titleSize.cx, 96, static_cast<int>(dpi));
+    place(Title, 32, 24, titleWidth + 2, 34);
+    place(SetupVersion, 44 + titleWidth, 39, width - titleWidth - 128, 20);
     place(ThemeToggle, width - 68, 24, 36, 36);
     place(State, 32, 66, width - 64, 20);
     place(StartTitle, 32, 108, width - 64, 20, !advanced);
@@ -319,16 +388,24 @@ void App::Layout() {
     place(Silent, 48, 268, inner, 32, !advanced);
     place(ProxyTitle, 32, 340, width - 64, 20, !advanced);
     place(Proxy, 48, 384, inner, 36, !advanced);
-    place(ProtocolLabel, 48, 432, 208, 18, !advanced);
-    place(Protocol, 52, 462, 64, 28, !advanced);
-    place(ProtocolHttps, 120, 462, 64, 28, !advanced);
-    place(ProtocolSocks, 188, 462, 64, 28, !advanced);
-    place(HostLabel, 272, 432, inner - 344, 18, !advanced);
-    place(Host, 284, 466, inner - 368, 20, !advanced);
-    place(PortLabel, width - 152, 432, 104, 18, !advanced);
-    place(Port, width - 140, 466, 80, 20, !advanced);
-    place(PreviewTitle, 32, advanced ? 588 : 542, width - 64, 20);
-    place(Preview, 44, advanced ? 632 : 586, width - 88, 44);
+    place(CodexEnv, 48, 432, inner, 36, !advanced && envOffset);
+    HDC measure = GetDC(body); HGDIOBJ oldFont = SelectObject(measure, fonts[0]); SIZE labelSize{};
+    const auto envLabel = Text(CodexEnv);
+    GetTextExtentPoint32W(measure, envLabel.c_str(), static_cast<int>(envLabel.size()), &labelSize);
+    SelectObject(measure, oldFont); ReleaseDC(body, measure);
+    place(CodexEnvHelp, std::min(48 + MulDiv(labelSize.cx, 96, static_cast<int>(dpi)) + 6, width - 128), 438, 24, 24, !advanced && envOffset);
+    place(ProtocolLabel, 48, 432 + envOffset, 28, 18, !advanced);
+    place(ProtocolHelp, 78, 429 + envOffset, 24, 24, !advanced);
+    place(Protocol, 52, 462 + envOffset, 64, 28, !advanced);
+    place(ProtocolHttps, 120, 462 + envOffset, 64, 28, !advanced);
+    place(ProtocolSocks, 188, 462 + envOffset, 64, 28, !advanced);
+    place(HostLabel, 272, 432 + envOffset, 28, 18, !advanced);
+    place(HostHelp, 302, 429 + envOffset, 24, 24, !advanced);
+    place(Host, 284, 466 + envOffset, inner - 368, 20, !advanced);
+    place(PortLabel, width - 152, 432 + envOffset, 104, 18, !advanced);
+    place(Port, width - 140, 466 + envOffset, 80, 20, !advanced);
+    place(PreviewTitle, 32, advanced ? 588 : 542 + envOffset, width - 64, 20);
+    place(Preview, 44, advanced ? 632 : 586 + envOffset, width - 88, 44);
     place(DirectoryLabel, 32, 108, width - 64, 20, advanced);
     place(Directory, 60, 166, inner - 208, 20, advanced);
     place(Browse, width - 216, 156, 72, 40, advanced);
@@ -361,6 +438,7 @@ void App::ScrollTo(int position) {
     position = std::clamp(position, 0, std::max(0, contentHeight - static_cast<int>(viewport.bottom)));
     const int delta = scroll - position;
     if (!delta) return;
+    if (tooltip) SendMessageW(tooltip, TTM_POP, 0, 0);
     scroll = position;
     // Translate every body child, including those currently outside the clipping area.
     // No layout, font changes or control-by-control immediate painting during a wheel event.
@@ -389,6 +467,7 @@ setup::Options App::Options() const {
     setup::Options options;
     options.startup = Checked(Startup); options.silent = Checked(Silent); options.proxy = Checked(Proxy);
     options.desktop = Checked(Desktop);
+    options.codexEnv = Checked(CodexEnv);
     options.protocol = Checked(ProtocolSocks) ? L"socks5" : Checked(ProtocolHttps) ? L"https" : L"http";
     options.host = Text(Host); options.port = Text(Port); options.directory = Text(Directory);
     options.bypass = Text(Bypass); options.extra = Text(Extra);
@@ -406,6 +485,11 @@ void App::Refresh(bool edited) {
     EnableWindow(Get(ProtocolSocks), options.proxy && !busy);
     EnableWindow(Get(Host), options.proxy && !busy);
     EnableWindow(Get(Port), options.proxy && !busy);
+    EnableWindow(Get(CodexEnv), options.proxy && !busy);
+    EnableWindow(Get(CodexEnvHelp), options.proxy && !busy);
+    EnableWindow(Get(ProtocolHelp), !busy);
+    EnableWindow(Get(HostHelp), !busy);
+    if (((GetWindowLongPtrW(Get(CodexEnv), GWL_STYLE) & WS_VISIBLE) != 0) != (!advanced && options.proxy)) Layout();
     std::wstring arguments, directory;
     const setup::Result args = setup::BuildArguments(options, arguments);
     const setup::Result path = setup::NormalizeDirectory(options.directory, directory);
@@ -416,7 +500,8 @@ void App::Refresh(bool edited) {
     if (!fatal) {
         if (!args) Set(Footer, args.message.substr(0, args.message.find(L'\n')));
         else if (!path) Set(Footer, path.message.substr(0, path.message.find(L'\n')));
-        else Set(Footer, busy ? L"正在保存…" : dirty ? L"有更改待保存" : savedThisSession ? L"已保存，可以关闭" : L"保存后即可使用");
+        else Set(Footer, busy ? L"正在保存…" : savedThisSession && !dirty ? L"已保存，可以关闭"
+            : options.proxy && options.codexEnv ? L"保存后将尝试关闭 Codex，请先保存工作。" : dirty ? L"有更改待保存" : L"保存后即可使用");
     }
     Set(ApplyButton, busy ? L"正在保存…" : savedThisSession && !dirty ? L"已保存" : savedTarget.empty() ? L"部署并保存" : L"保存更改");
     Set(CloseButton, savedThisSession && !dirty ? L"完成" : L"关闭");
@@ -455,12 +540,16 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
     savedTarget = loaded.managedTarget;
     Check(Startup, loaded.options.startup); Check(Silent, loaded.options.silent); Check(Proxy, loaded.options.proxy);
     Check(Desktop, loaded.options.desktop);
+    Check(CodexEnv, ReadCodexEnvPreference());
     Check(Protocol, loaded.options.protocol == L"http");
     Check(ProtocolHttps, loaded.options.protocol == L"https");
     Check(ProtocolSocks, loaded.options.protocol == L"socks5");
     Set(Host, loaded.options.host); Set(Port, loaded.options.port);
     Set(Directory, loaded.options.directory); Set(Bypass, loaded.options.bypass); Set(Extra, loaded.options.extra);
-    Set(State, (loaded.deployed ? L"已部署" : loaded.hasSettings ? L"启动器缺失，保存可重新部署" : L"尚未部署")
+    const std::wstring deployment = loaded.deployed
+        ? loaded.deployedVersion.empty() ? L"已部署，版本无法识别" : L"已部署 v" + loaded.deployedVersion
+        : loaded.hasSettings ? L"启动器缺失，保存可重新部署" : L"尚未部署";
+    Set(State, deployment
         + std::wstring(!loaded.hasSettings ? L"，选项将在保存后生效" : loaded.options.startup ? L"，登录自启已配置" : L"，登录自启未配置"));
     if (!loaded.notice.empty()) {
         Set(State, loaded.notice);
@@ -470,6 +559,9 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
 }
 void App::Command(int id, int notification) {
     if (loading || busy) return;
+    if (IsHelp(id) && notification == BN_CLICKED) {
+        MessageBoxW(window, HelpText(id), id == CodexEnvHelp ? L"Codex 代理配置" : L"代理设置说明", MB_OK | MB_ICONINFORMATION); return;
+    }
     if (id == ThemeToggle && notification == BN_CLICKED) {
         if (contrast) return;
         preferredDark = !dark;
@@ -563,6 +655,8 @@ void App::Command(int id, int notification) {
             auto completion = std::make_unique<Completion>();
             completion->previous = savedTarget;
             completion->checkStartup = options.startup && !startupReminderShown;
+            completion->codexEnv = options.codexEnv;
+            completion->wroteCodexEnv = options.proxy && options.codexEnv;
             worker = std::thread([this, options, completion = std::move(completion)]() mutable {
                 const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
                 if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
@@ -574,6 +668,10 @@ void App::Command(int id, int notification) {
                     if (completion->result && completion->checkStartup) {
                         try { completion->startupReport = setup::TryDisableOfficialStartup(); }
                         catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
+                    }
+                    if (completion->result && completion->wroteCodexEnv) {
+                        try { completion->closeResult = setup::TryCloseCodex(); }
+                        catch (...) { completion->closeResult = setup::CodexCloseResult::NeedsManualExit; }
                     }
                     CoUninitialize();
                 }
@@ -603,8 +701,9 @@ void App::DrawSurface(HWND target, HDC dc) {
         };
         if (advanced) card(140, 256);
         else {
-            card(140, 316); card(372, 518);
-            RECT segments{S(48), S(458) - scroll, S(256), S(494) - scroll};
+            const int offset = Checked(Proxy) ? 48 : 0;
+            card(140, 316); card(372, 518 + offset);
+            RECT segments{S(48), S(458 + offset) - scroll, S(256), S(494 + offset) - scroll};
             Rounded(dc, segments, S(10), colors.field, colors.border);
         }
         for (const auto& item : controls) {
@@ -701,6 +800,13 @@ void App::DrawControl(HWND control, HDC dc) {
         text.top += std::max(0L, (rect.bottom - measure.bottom) / 2);
         DrawTextW(dc, caption.c_str(), -1, &text, DT_WORDBREAK | DT_NOPREFIX);
         SelectObject(dc, old); return;
+    } else if (IsHelp(id)) {
+        RECT circle{S(3), S(3), rect.right - S(3), rect.bottom - S(3)};
+        Rounded(dc, circle, S(9), Blend(colors.surface, colors.hover, hover), focusVisible ? colors.accent : colors.secondary);
+        SetTextColor(dc, colors.secondary);
+        HGDIOBJ old = SelectObject(dc, fonts[3]);
+        DrawTextW(dc, L"?", 1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old); return;
     } else if (id == ThemeToggle) {
         const COLORREF fill = enabled ? Blend(colors.surface, colors.hover, pressed ? 1.0f : hover) : colors.surface;
         Rounded(dc, rect, S(10), fill, focusVisible ? colors.accent : colors.divider, focusVisible ? 2.0f : 1.0f);
@@ -795,7 +901,7 @@ LRESULT ColorControl(App& app, HDC dc, HWND control) {
     }
     const bool surface = id == SilentHint || id == ProtocolLabel || id == HostLabel || id == PortLabel || id == DirectoryHint
         || id == Footer || id == CloseButton || id == ApplyButton || id == Advanced;
-    const bool secondary = id == State || id == SilentHint
+    const bool secondary = id == State || id == SetupVersion || id == SilentHint
         || id == DirectoryHint || id == ProtocolLabel || id == HostLabel || id == PortLabel || id == Footer;
     SetTextColor(dc, secondary ? app.colors.secondary : app.colors.text);
     SetBkColor(dc, surface ? app.colors.surface : app.colors.background);
@@ -995,18 +1101,25 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         app->busy = false;
         for (const auto& control : app->controls) EnableWindow(control.window, TRUE);
         if (done->result) {
+            const bool preferenceSaved = SaveCodexEnvPreference(done->codexEnv);
             setup::Loaded loaded;
             const setup::Result result = setup::Load(app->paths, loaded);
             if (result) app->RestoreOptions(loaded);
-            else { app->dirty = false; app->savedTarget = done->target; }
+            else {
+                app->dirty = false; app->savedTarget = done->target;
+                app->Set(State, L"已保存，无法重新读取部署信息");
+            }
+            app->Check(CodexEnv, done->codexEnv);
             app->savedThisSession = true;
             app->Refresh(false);
             const bool moved = !done->previous.empty() && _wcsicmp(done->previous.c_str(), done->target.c_str()) != 0;
             app->Set(Footer, moved ? L"已保存。旧目录中的文件已保留。" : L"已保存。下次启动时使用这些选项。");
-            app->Set(State, app->Checked(Startup) ? L"已部署，登录自启已配置" : L"已部署，登录自启未配置");
+            if (done->wroteCodexEnv) app->Set(Footer, CodexCloseMessage(done->closeResult));
+            if (!preferenceSaved) app->Set(Footer,
+                std::wstring(done->wroteCodexEnv ? CodexCloseMessage(done->closeResult) : L"配置已保存。") + L"未能记住 .env 选项，下次打开时请核对。");
             if (done->checkStartup) {
                 app->startupReminderShown = true;
-                const std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
+                std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
                     L"接下来请按这几步操作：\n"
                     L"1. 点击本提示的「确定」，打开 Windows「启动应用」设置。\n"
                     L"2. 找到「ChatGPT」，确认开关为「关」；如果已经关闭，不用再改。\n"
@@ -1014,7 +1127,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     L"4. 核对后回到部署器，点击右下方「完成」即可退出。\n\n"
                     L"这样可以避免 ChatGPT 自带自启先运行，导致本工具配置的启动参数无法生效。\n\n"
                     L"自动处理结果：\n" + done->startupReport.Message();
-                app->Set(Footer, L"已保存，可关闭本工具。请在 Windows 设置中核对自带自启。");
+                if (done->wroteCodexEnv) reminder += L"\n\n" + std::wstring(CodexCloseMessage(done->closeResult));
+                if (!done->wroteCodexEnv && preferenceSaved)
+                    app->Set(Footer, L"已保存，可关闭本工具。请在 Windows 设置中核对自带自启。");
                 MessageBoxW(window, reminder.c_str(), L"部署已完成", MB_OK | MB_ICONINFORMATION);
                 const setup::Result opened = setup::OpenStartupSettings(window);
                 if (!opened) MessageBoxW(window, (L"配置已保存。\n\n" + opened.message).c_str(), L"请手动打开启动设置", MB_OK | MB_ICONINFORMATION);

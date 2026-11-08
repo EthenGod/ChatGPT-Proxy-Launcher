@@ -49,6 +49,106 @@ Result EnsureDirectory(const std::wstring& path) {
     return Fail(static_cast<DWORD>(error), L"无法创建目录：" + path);
 }
 struct Snapshot { bool exists = false; std::vector<BYTE> data; };
+std::wstring ReadFileVersion(const std::wstring& path) {
+    // Read metadata only. Never start the deployed executable to ask for its version.
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
+    if (!size || size > 1024 * 1024) return {};
+    std::vector<BYTE> data(size);
+    if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data())) return {};
+    LPVOID value = nullptr;
+    UINT length = 0;
+    if (!VerQueryValueW(data.data(), L"\\", &value, &length) || !value || length < sizeof(VS_FIXEDFILEINFO)) return {};
+    VS_FIXEDFILEINFO info{};
+    CopyMemory(&info, value, sizeof(info));
+    if (info.dwSignature != VS_FFI_SIGNATURE || info.dwFileType != VFT_APP
+        || (!info.dwFileVersionMS && !info.dwFileVersionLS)) return {};
+    std::wstring version = std::to_wstring(HIWORD(info.dwFileVersionMS)) + L"."
+        + std::to_wstring(LOWORD(info.dwFileVersionMS)) + L"." + std::to_wstring(HIWORD(info.dwFileVersionLS));
+    if (LOWORD(info.dwFileVersionLS)) version += L"." + std::to_wstring(LOWORD(info.dwFileVersionLS));
+    return version;
+}
+Result MergeCodexEnv(const std::vector<BYTE>& source, const Options& options, std::vector<BYTE>& output) {
+    // Preserve unrelated bytes, comments, BOM and line endings. Never parse or expose secrets.
+    if (source.size() > 1024 * 1024 || std::find(source.begin(), source.end(), 0) != source.end()
+        || (!source.empty() && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            reinterpret_cast<const char*>(source.data()), static_cast<int>(source.size()), nullptr, 0)))
+        return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 不是有效的 UTF-8 文本，或文件过大。请手动检查，原文件未修改。");
+    const std::wstring address = options.protocol + L"://" + options.host + L":" + options.port;
+    if (address.find_first_of(L"'\"$`\r\n") != std::wstring::npos
+        || std::any_of(address.begin(), address.end(), [](wchar_t c) { return c < L' '; }))
+        return Fail(ERROR_INVALID_PARAMETER, L"代理地址包含 .env 不支持的字符。");
+    const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, address.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (!count) return Fail(ERROR_INVALID_PARAMETER, L"无法编码 Codex 的代理地址。");
+    std::string url(static_cast<size_t>(count), '\0');
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, address.c_str(), -1, &url[0], count, nullptr, nullptr);
+    url.pop_back();
+    const char* keys[] = {"all_proxy", "ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"};
+    bool found[4]{};
+    const std::string input(source.begin(), source.end());
+    const size_t bom = input.compare(0, 3, "\xef\xbb\xbf") == 0 ? 3 : 0;
+    std::string result = input.substr(0, bom);
+    const std::string newline = input.find('\n') != std::string::npos && input.find("\r\n") == std::string::npos ? "\n" : "\r\n";
+    char quote = 0;
+    for (size_t start = bom; start < input.size();) {
+        const size_t eol = input.find('\n', start);
+        const size_t next = eol == std::string::npos ? input.size() : eol + 1;
+        size_t end = eol == std::string::npos ? input.size() : eol;
+        if (end > start && input[end - 1] == '\r') --end;
+        const std::string line = input.substr(start, end - start);
+        const std::string ending = input.substr(end, next - end);
+        size_t keyStart = line.find_first_not_of(" \t");
+        if (keyStart != std::string::npos && line.compare(keyStart, 6, "export") == 0
+            && keyStart + 6 < line.size() && (line[keyStart + 6] == ' ' || line[keyStart + 6] == '\t'))
+            keyStart = line.find_first_not_of(" \t", keyStart + 7);
+        const size_t equals = line.find('=', keyStart);
+        int match = -1, exact = -1;
+        if (!quote && keyStart != std::string::npos && line[keyStart] != '#' && equals != std::string::npos) {
+            const size_t last = line.find_last_not_of(" \t", equals - 1);
+            const std::string key = last == std::string::npos ? "" : line.substr(keyStart, last + 1 - keyStart);
+            for (int i = 0; i < 4; ++i) {
+                // Windows environment names ignore case. Update existing aliases too,
+                // while still ensuring all four requested spellings are present.
+                if (_stricmp(key.c_str(), keys[i]) == 0) match = i;
+                if (key == keys[i]) exact = i;
+            }
+        }
+        // Track quoted multiline values so proxy-like text inside another value stays untouched.
+        const size_t valueStart = quote ? 0 : (keyStart == std::string::npos || line[keyStart] == '#' || equals == std::string::npos) ? line.size() : equals + 1;
+        bool escaped = false;
+        size_t commentStart = std::string::npos;
+        for (size_t i = valueStart; i < line.size(); ++i) {
+            const char c = line[i];
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && quote != '\'') { escaped = true; continue; }
+            if (quote) { if (c == quote) quote = 0; }
+            else if (c == '#' && (i == valueStart || line[i - 1] == ' ' || line[i - 1] == '\t')) {
+                commentStart = i;
+                while (commentStart > valueStart && (line[commentStart - 1] == ' ' || line[commentStart - 1] == '\t')) --commentStart;
+                break;
+            }
+            else if (c == '\'' || c == '"') quote = c;
+        }
+        if (match >= 0) {
+            if (quote) return Fail(ERROR_INVALID_DATA, L".env 中的代理变量跨越多行，请先手动整理，原文件未修改。");
+            result += line.substr(0, equals + 1) + url;
+            if (commentStart != std::string::npos) {
+                if (line[commentStart] == '#') result += ' ';
+                result += line.substr(commentStart);
+            }
+            result += ending;
+            if (exact >= 0) found[exact] = true;
+        } else result += line + ending;
+        start = next;
+    }
+    if (quote) return Fail(ERROR_INVALID_DATA, L".env 中有未闭合的引号，请先手动检查，原文件未修改。");
+    for (int i = 0; i < 4; ++i) if (!found[i]) {
+        if (result.size() > bom && result.back() != '\n') result += newline;
+        result += std::string(keys[i]) + "=" + url + newline;
+    }
+    output.assign(result.begin(), result.end());
+    return {};
+}
 Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
     file = {};
     Handle handle;
@@ -215,6 +315,10 @@ Result GetPaths(Paths& paths) {
     // The optional desktop entry must not prevent deployment when the desktop is unavailable.
     paths.desktopLink = SUCCEEDED(hr) ? Join(desktop, LinkName) : L"";
     CoTaskMemFree(desktop);
+    PWSTR profile = nullptr;
+    hr = SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &profile);
+    paths.codexEnvFile = SUCCEEDED(hr) ? Join(Join(profile, L".codex"), L".env") : L"";
+    CoTaskMemFree(profile);
     return {};
 }
 Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
@@ -454,6 +558,7 @@ Result Load(const Paths& paths, Loaded& loaded) {
         if (!parsed) loaded.notice = parsed.message;
         const DWORD a = GetFileAttributesW(loaded.managedTarget.c_str());
         loaded.deployed = a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+        if (loaded.deployed) loaded.deployedVersion = ReadFileVersion(loaded.managedTarget);
     } else {
         // These are form defaults, not a statement that Windows startup is already configured.
         loaded.options.startup = true;
@@ -484,7 +589,17 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     result = Load(paths, previous);
     if (!result) return result;
     const std::wstring target = Join(directory, LauncherName);
-    Snapshot oldExe, oldSettings, oldStartup, oldDesktop;
+    Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv;
+    std::vector<BYTE> envBytes;
+    const bool touchEnv = options.proxy && options.codexEnv;
+    if (touchEnv) {
+        if (paths.codexEnvFile.empty()) return Fail(ERROR_PATH_NOT_FOUND, L"无法获取 Codex 的 .env 文件位置。");
+        const DWORD attributes = GetFileAttributesW(paths.codexEnvFile.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+            return Fail(ERROR_BAD_PATHNAME, L"Codex 的 .env 不是普通文件，请手动检查。");
+        result = ReadFileBytes(paths.codexEnvFile, oldEnv); if (!result) return result;
+        result = MergeCodexEnv(oldEnv.data, options, envBytes); if (!result) return result;
+    }
     result = ReadFileBytes(target, oldExe); if (!result) return result;
     result = ReadFileBytes(paths.settingsLink, oldSettings); if (!result) return result;
     result = ReadFileBytes(paths.startupLink, oldStartup); if (!result) return result;
@@ -512,10 +627,12 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     result = EnsureDirectory(Parent(paths.settingsLink)); if (!result) return result;
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
     if (options.desktop) { result = EnsureDirectory(Parent(paths.desktopLink)); if (!result) return result; }
-    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false;
+    if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
+    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false;
     auto rollback = [&](Result failure) {
         std::wstring restoreErrors;
         auto note = [&](const Result& restored) { if (!restored) restoreErrors += L"\n" + restored.message; };
+        if (envChanged) note(Restore(paths.codexEnvFile, oldEnv));
         if (desktopChanged) note(Restore(paths.desktopLink, oldDesktop));
         if (startupChanged) note(Restore(paths.startupLink, oldStartup));
         if (settingsChanged) note(Restore(paths.settingsLink, oldSettings));
@@ -554,6 +671,15 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     if (!verify.deployed || verify.options.startup != options.startup || verify.options.desktop != options.desktop
         || !Same(verify.managedTarget, target))
         return rollback(Fail(ERROR_INVALID_DATA, L"保存后的配置校验失败。"));
+    if (touchEnv && (!oldEnv.exists || oldEnv.data != envBytes)) {
+        result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
+        if (check.exists != oldEnv.exists || check.data != oldEnv.data)
+            return rollback(Fail(ERROR_RETRY, L"保存期间 Codex 的 .env 被其他程序更改，请重试。"));
+        result = WriteAtomic(paths.codexEnvFile, envBytes, oldEnv.exists); if (!result) return rollback(result);
+        envChanged = true;
+        result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
+        if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, L"Codex 的 .env 保存校验失败。"));
+    }
     deployedTarget = target;
     return {};
 }

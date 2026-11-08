@@ -27,8 +27,42 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
 #include "../src/SetupCore.cpp"
 #undef MoveFileExW
 #include "../src/SetupResources.h"
+#include "../src/AppVersion.h"
 
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL at line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
+static int EnvTests() {
+    using namespace setup;
+    Options options; options.proxy = true; options.port = L"12345";
+    std::vector<BYTE> merged, again;
+    REQUIRE(MergeCodexEnv({}, options, merged));
+    const std::string expected = "all_proxy=http://127.0.0.1:12345\r\nALL_PROXY=http://127.0.0.1:12345\r\nHTTP_PROXY=http://127.0.0.1:12345\r\nHTTPS_PROXY=http://127.0.0.1:12345\r\n";
+    REQUIRE(std::string(merged.begin(), merged.end()) == expected);
+    REQUIRE(MergeCodexEnv(merged, options, again) && again == merged);
+    const std::string old = "\xef\xbb\xbf# keep comment\nOTHER=value\nTEXT=\"first\nHTTP_PROXY=literal\nlast\"\n export ALL_PROXY = 'http://old:1'  # keep inline\nHTTP_PROXY=http://old:1\nHTTP_PROXY=http://old:2\nexport\thttps_proxy=http://old:3\nTAIL=中文";
+    options.protocol = L"socks5"; options.host = L"[::1]";
+    REQUIRE(MergeCodexEnv({old.begin(), old.end()}, options, merged));
+    const std::string text(merged.begin(), merged.end());
+    REQUIRE(text.find("\xef\xbb\xbf# keep comment\nOTHER=value\nTEXT=\"first\nHTTP_PROXY=literal\nlast\"\n") == 0);
+    REQUIRE(text.find(" export ALL_PROXY =socks5://[::1]:12345  # keep inline\n") != std::string::npos);
+    REQUIRE(text.find("old:") == std::string::npos && text.find("TAIL=中文\n") != std::string::npos);
+    REQUIRE(text.find("export\thttps_proxy=socks5://[::1]:12345\n") != std::string::npos);
+    REQUIRE(text.find("HTTPS_PROXY=socks5://[::1]:12345\n") != std::string::npos);
+    REQUIRE(text.find('\r') == std::string::npos);
+    REQUIRE(MergeCodexEnv(merged, options, again) && again == merged);
+    options.protocol = L"https"; options.host = L"proxy.example.com";
+    REQUIRE(MergeCodexEnv({}, options, merged));
+    REQUIRE(std::string(merged.begin(), merged.end()).find("https://proxy.example.com:12345") != std::string::npos);
+    REQUIRE(!MergeCodexEnv({0xff, 0xfe, 0, 0}, options, merged));
+    const std::string broken = "TEXT=\"unterminated";
+    REQUIRE(!MergeCodexEnv({broken.begin(), broken.end()}, options, merged));
+    const std::string multilineProxy = "HTTP_PROXY=\"first\nlast\"";
+    REQUIRE(!MergeCodexEnv({multilineProxy.begin(), multilineProxy.end()}, options, merged));
+    REQUIRE(!MergeCodexEnv(std::vector<BYTE>(1024 * 1024 + 1, 'a'), options, merged));
+    options.host = L"bad${VALUE}";
+    REQUIRE(!MergeCodexEnv({}, options, merged));
+    puts("PASS Codex env generation, UTF-8/BOM, multiline preservation, duplicate keys, idempotence and protocol selection");
+    return 0;
+}
 static int ParameterTests() {
     using namespace setup;
     Options options;
@@ -118,23 +152,72 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
+    {
+        const std::string expected = APP_VERSION_TEXT;
+        const std::wstring current(expected.begin(), expected.end());
+        REQUIRE(ReadFileVersion(launcherArg) == current && ReadFileVersion(setupArg) == current);
+        const std::wstring base = Join(root, L"version 中文");
+        REQUIRE(EnsureDirectory(base));
+        Paths versionPaths{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), {}, {}};
+        const auto file = Join(base, LauncherName);
+        REQUIRE(WriteAtomic(file, payloadBytes.data));
+        Loaded installed;
+        REQUIRE(Load(versionPaths, installed) && !installed.deployed && installed.deployedVersion.empty());
+        REQUIRE(WriteLink(versionPaths.settingsLink, {file, L"", base, Marker}));
+        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion == current);
+        // Give the isolated EXE a different numeric version, leaving its text version unchanged.
+        HMODULE image = LoadLibraryExW(file.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+        REQUIRE(image);
+        HRSRC version = FindResourceW(image, MAKEINTRESOURCEW(1), RT_VERSION);
+        REQUIRE(version);
+        const auto raw = static_cast<const BYTE*>(LockResource(LoadResource(image, version)));
+        REQUIRE(raw);
+        std::vector<BYTE> resourceBytes(raw, raw + SizeofResource(image, version));
+        FreeLibrary(image);
+        const BYTE signature[]{0xbd, 0x04, 0xef, 0xfe};
+        const auto at = std::search(resourceBytes.begin(), resourceBytes.end(), std::begin(signature), std::end(signature));
+        REQUIRE(at != resourceBytes.end() && static_cast<size_t>(resourceBytes.end() - at) >= sizeof(VS_FIXEDFILEINFO));
+        VS_FIXEDFILEINFO fixed{}; CopyMemory(&fixed, &*at, sizeof(fixed));
+        fixed.dwFileVersionMS = MAKELONG(3, 2); fixed.dwFileVersionLS = MAKELONG(5, 4);
+        CopyMemory(&*at, &fixed, sizeof(fixed));
+        HANDLE edit = BeginUpdateResourceW(file.c_str(), TRUE); REQUIRE(edit);
+        const BOOL updated = UpdateResourceW(edit, RT_VERSION, MAKEINTRESOURCEW(1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+            resourceBytes.data(), static_cast<DWORD>(resourceBytes.size()));
+        const BOOL committed = EndUpdateResourceW(edit, !updated); REQUIRE(updated && committed);
+        REQUIRE(Load(versionPaths, installed) && installed.deployedVersion == L"2.3.4.5");
+        // Old executables without version resources remain usable, with an unknown version.
+        edit = BeginUpdateResourceW(file.c_str(), TRUE); REQUIRE(edit && EndUpdateResourceW(edit, FALSE));
+        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion.empty());
+        Options fresh; fresh.directory = base;
+        std::wstring savedTarget;
+        REQUIRE(Apply(versionPaths, fresh, payload, savedTarget));
+        REQUIRE(Load(versionPaths, installed) && installed.deployedVersion == current);
+        REQUIRE(WriteAtomic(file, {1, 2, 3, 4}));
+        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion.empty());
+        REQUIRE(DeleteFileW(file.c_str()));
+        REQUIRE(Load(versionPaths, installed) && installed.hasSettings && !installed.deployed && installed.deployedVersion.empty());
+        REQUIRE(CreateDirectoryW(file.c_str(), nullptr));
+        REQUIRE(Load(versionPaths, installed) && !installed.deployed && installed.deployedVersion.empty());
+        puts("PASS deployed version: shared build metadata, managed target only, different numeric version, versionless/corrupt/missing file and refresh after save");
+    }
     // A file arriving after preflight belongs to someone else, even during first deployment.
-    for (unsigned index = 0; index < 4; ++index) {
+    for (unsigned index = 0; index < 5; ++index) {
         const auto base = Join(root, L"late-conflict-" + std::to_wstring(index));
-        Paths late{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), Join(base, L"desktop.lnk")};
+        Paths late{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), Join(base, L"desktop.lnk"), Join(base, L".env")};
         Options first; first.directory = base; first.startup = true; first.desktop = true;
-        const std::wstring destinations[] = {Join(base, LauncherName), late.settingsLink, late.startupLink, late.desktopLink};
+        first.proxy = true; first.port = L"12345";
+        const std::wstring destinations[] = {Join(base, LauncherName), late.settingsLink, late.startupLink, late.desktopLink, late.codexEnvFile};
         collisionTarget = destinations[index].c_str();
         std::wstring deployed;
         auto result = Apply(late, first, payload, deployed);
         REQUIRE(!collisionTarget && !result && result.conflictDirectory == base && deployed.empty());
-        for (unsigned i = 0; i < 4; ++i) {
+        for (unsigned i = 0; i < 5; ++i) {
             Snapshot file; REQUIRE(ReadFileBytes(destinations[i], file));
             REQUIRE(i == index ? file.exists && file.data.size() == 7 && !memcmp(file.data.data(), "foreign", 7) : !file.exists);
         }
     }
     const Paths paths{ Join(root, L"settings"), Join(root, L"startup\\Managed.lnk"), Join(root, L"settings\\State.lnk"),
-        Join(root, L"桌面 Desktop\\ChatGPT Proxy Launcher.lnk") };
+        Join(root, L"桌面 Desktop\\ChatGPT Proxy Launcher.lnk"), Join(root, L"profile\\.codex\\.env") };
     Loaded state;
     REQUIRE(Load(paths, state) && !state.hasSettings && state.options.startup && state.options.silent);
     REQUIRE(!state.options.desktop);
@@ -144,6 +227,52 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     options.extra = L"--title=\"中文 空格\" \"\"";
     std::wstring target, arguments;
     REQUIRE(Apply(paths, options, payload, target));
+    Snapshot envBefore, envAfter;
+    REQUIRE(ReadFileBytes(paths.codexEnvFile, envBefore) && envBefore.exists);
+    REQUIRE(std::string(envBefore.data.begin(), envBefore.data.end()).find("all_proxy=http://127.0.0.1:7897") == 0);
+    options.codexEnv = false; options.port = L"7898";
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(ReadFileBytes(paths.codexEnvFile, envAfter) && envAfter.data == envBefore.data);
+    options.codexEnv = true; options.proxy = false;
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(ReadFileBytes(paths.codexEnvFile, envAfter) && envAfter.data == envBefore.data);
+    options.proxy = true; options.port = L"7897";
+    REQUIRE(Apply(paths, options, payload, target));
+    {
+        Snapshot settings, startup, desktop, file;
+        REQUIRE(ReadFileBytes(paths.settingsLink, settings) && ReadFileBytes(paths.startupLink, startup)
+            && ReadFileBytes(paths.desktopLink, desktop));
+        Options changed = options; changed.port = L"12345";
+        changed.directory = Join(root, L"env-rollback-new");
+        // The EXE and all three shortcuts committed before the final env write fails.
+        moveCalls = 0; failMoveAt = 5;
+        REQUIRE(!Apply(paths, changed, payload, target)); failMoveAt = 0;
+        REQUIRE(!Exists(Join(changed.directory, LauncherName)));
+        REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
+        REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
+        REQUIRE(ReadFileBytes(paths.desktopLink, file) && file.data == desktop.data);
+        REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
+        // A read lock permits preflight but blocks atomic replacement: all link changes roll back.
+        changed.directory = options.directory;
+        HANDLE envLock = CreateFileW(paths.codexEnvFile.c_str(), GENERIC_READ, FILE_SHARE_READ,
+            nullptr, OPEN_EXISTING, 0, nullptr);
+        REQUIRE(envLock != INVALID_HANDLE_VALUE);
+        const Result locked = Apply(paths, changed, payload, target); CloseHandle(envLock);
+        REQUIRE(!locked);
+        REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
+        REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
+        REQUIRE(ReadFileBytes(paths.desktopLink, file) && file.data == desktop.data);
+        REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
+        Paths unavailable = paths; unavailable.codexEnvFile.clear();
+        REQUIRE(!Apply(unavailable, options, payload, target));
+        Options skipped = options; skipped.codexEnv = false;
+        REQUIRE(Apply(unavailable, skipped, payload, target));
+        skipped.codexEnv = true; skipped.proxy = false;
+        REQUIRE(Apply(unavailable, skipped, payload, target));
+        REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
+        REQUIRE(Apply(paths, options, payload, target));
+        puts("PASS isolated Codex env opt-out, missing profile, locked file, full rollback and late-file collision protection");
+    }
     REQUIRE(Load(paths, state) && state.deployed && state.options.startup);
     REQUIRE(state.options.directory == options.directory && state.options.extra == options.extra);
     REQUIRE(BuildArguments(options, arguments));
@@ -280,7 +409,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc != 4) return 2;
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com)) return 3;
-    int result = ParameterTests();
+    int result = EnvTests();
+    if (!result) result = ParameterTests();
     if (!result) result = IntegrationTests(argv[1], argv[2], argv[3]);
     CoUninitialize();
     return result;
