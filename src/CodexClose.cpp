@@ -57,8 +57,9 @@ BOOL CALLBACK CloseWindow(HWND window, LPARAM argument) {
     if (found == targets.processes.end() || GetWindow(window, GW_OWNER)
         || (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) return TRUE;
     // Keep the verified process handle alive through dispatch and exit verification.
-    if (WaitForSingleObject(found->handle, 0) == WAIT_TIMEOUT && !PostMessageW(window, WM_CLOSE, 0, 0))
-        targets.uncertain = true;
+    // A window can disappear between enumeration and posting. The retained process
+    // handles below decide whether exit succeeded, even when posting fails.
+    if (WaitForSingleObject(found->handle, 0) == WAIT_TIMEOUT) PostMessageW(window, WM_CLOSE, 0, 0);
     return TRUE;
 }
 }

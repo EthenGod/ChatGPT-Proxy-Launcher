@@ -57,6 +57,9 @@ static int EnvTests() {
     REQUIRE(!MergeCodexEnv({broken.begin(), broken.end()}, options, merged));
     const std::string multilineProxy = "HTTP_PROXY=\"first\nlast\"";
     REQUIRE(!MergeCodexEnv({multilineProxy.begin(), multilineProxy.end()}, options, merged));
+    // A bare CR must not cause the following unrelated variable to be swallowed as a proxy value.
+    const std::string bareCr = "HTTP_PROXY=old\rKEEP=value\r";
+    REQUIRE(!MergeCodexEnv({bareCr.begin(), bareCr.end()}, options, merged));
     REQUIRE(!MergeCodexEnv(std::vector<BYTE>(1024 * 1024 + 1, 'a'), options, merged));
     options.host = L"bad${VALUE}";
     REQUIRE(!MergeCodexEnv({}, options, merged));
@@ -244,6 +247,13 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
             && ReadFileBytes(paths.desktopLink, desktop));
         Options changed = options; changed.port = L"12345";
         changed.directory = Join(root, L"env-rollback-new");
+        const std::string bareCr = "HTTP_PROXY=old\rKEEP=value\r";
+        const std::vector<BYTE> invalidEnv(bareCr.begin(), bareCr.end());
+        REQUIRE(WriteAtomic(paths.codexEnvFile, invalidEnv));
+        moveCalls = 0;
+        REQUIRE(!Apply(paths, changed, payload, target) && moveCalls == 0);
+        REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == invalidEnv);
+        REQUIRE(WriteAtomic(paths.codexEnvFile, envBefore.data));
         // The EXE and all three shortcuts committed before the final env write fails.
         moveCalls = 0; failMoveAt = 5;
         REQUIRE(!Apply(paths, changed, payload, target)); failMoveAt = 0;

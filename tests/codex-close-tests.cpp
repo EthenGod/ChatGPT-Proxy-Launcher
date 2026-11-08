@@ -11,6 +11,7 @@ struct FakeProcess {
     std::wstring image = L"C:\\Fixture\\app\\ChatGPT.exe";
     UINT_PTR user = 1;
     bool alive = true, window = true, exits = true, denied = false, sendFails = false, owner = false, tool = false;
+    bool exitsBeforePost = false;
 };
 static std::vector<FakeProcess> processes;
 static std::vector<DWORD> messages;
@@ -87,6 +88,7 @@ static LONG_PTR WINAPI Style(HWND window, int) { return Find(window)->tool ? WS_
 static BOOL WINAPI Post(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     safeAccess = safeAccess && message == WM_CLOSE && wparam == 0 && lparam == 0;
     auto p = Find(window); messages.push_back(p->pid);
+    if (p->exitsBeforePost) { p->alive = false; SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
     if (p->sendFails) return FALSE;
     if (p->exits) p->alive = false;
     return TRUE;
@@ -130,6 +132,9 @@ static void Reset() {
 int main() {
     using setup::CodexCloseResult; using setup::TryCloseCodex;
     Reset(); REQUIRE(TryCloseCodex() == CodexCloseResult::Closed && messages == std::vector<DWORD>{2});
+    REQUIRE(safeAccess && acquired == released && clockTicks == 0);
+    Reset(); processes[0].exitsBeforePost = true;
+    REQUIRE(TryCloseCodex() == CodexCloseResult::Closed);
     REQUIRE(safeAccess && acquired == released && clockTicks == 0);
     for (int mode = 0; mode < 6; ++mode) {
         Reset(); auto& p = processes[0];

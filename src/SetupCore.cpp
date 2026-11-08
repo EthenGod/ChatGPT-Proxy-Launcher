@@ -74,6 +74,10 @@ Result MergeCodexEnv(const std::vector<BYTE>& source, const Options& options, st
         || (!source.empty() && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
             reinterpret_cast<const char*>(source.data()), static_cast<int>(source.size()), nullptr, 0)))
         return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 不是有效的 UTF-8 文本，或文件过大。请手动检查，原文件未修改。");
+    for (size_t i = 0; i < source.size(); ++i) {
+        if (source[i] == '\r' && (i + 1 == source.size() || source[i + 1] != '\n'))
+            return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 换行格式不受支持。请保存为 LF 或 CRLF 后重试，原文件未修改。");
+    }
     const std::wstring address = options.protocol + L"://" + options.host + L":" + options.port;
     if (address.find_first_of(L"'\"$`\r\n") != std::wstring::npos
         || std::any_of(address.begin(), address.end(), [](wchar_t c) { return c < L' '; }))
