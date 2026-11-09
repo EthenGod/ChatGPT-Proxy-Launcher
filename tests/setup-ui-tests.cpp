@@ -273,16 +273,16 @@ static int RunTests(PCWSTR folder) {
     SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
     REQUIRE(IsWindowVisible(app.Get(CodexEnv)) && IsWindowVisible(app.Get(CodexEnvHelp)));
     REQUIRE(app.Options().codexEnv && app.tooltip);
-    REQUIRE(SendMessageW(app.tooltip, TTM_GETTOOLCOUNT, 0, 0) == 3);
+    REQUIRE(SendMessageW(app.tooltip, TTM_GETTOOLCOUNT, 0, 0) == 4);
     wchar_t helpText[2048]{};
     TOOLINFOW help{TTTOOLINFOW_V2_SIZE}; help.hwnd = app.body;
     help.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); help.lpszText = helpText;
     SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
     REQUIRE(!wcscmp(helpText, CodexEnvHelpText));
-    for (int id : {ProtocolHelp, HostHelp}) {
+    for (int id : {ProtocolHelp, HostHelp, PortHelp}) {
         help.uId = reinterpret_cast<UINT_PTR>(app.Get(id));
         SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
-        REQUIRE(!wcscmp(helpText, L"不要更改，除非你知道自己在做什么"));
+        REQUIRE(!wcscmp(helpText, id == PortHelp ? PortHelpText : L"不要更改，除非你知道自己在做什么"));
     }
     RECT helpBounds{}; GetWindowRect(app.Get(CodexEnvHelp), &helpBounds);
     MapWindowPoints(nullptr, app.body, reinterpret_cast<POINT*>(&helpBounds), 2);

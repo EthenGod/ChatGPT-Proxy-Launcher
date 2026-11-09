@@ -4,6 +4,8 @@
 
 ## 快速开始
 
+[![小黑盒 | 查看简要使用教程](https://img.shields.io/badge/%E5%B0%8F%E9%BB%91%E7%9B%92-%E6%9F%A5%E7%9C%8B%E7%AE%80%E8%A6%81%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B-1F2328?style=for-the-badge)](https://www.xiaoheihe.cn/app/bbs/link/196448409)
+
 **开始前：**按键盘上的 **Windows 徽标键（Win）**，输入 `ChatGPT`。如果能找到并打开 ChatGPT 桌面应用，就可以继续。如果平时只在浏览器里用 ChatGPT，请先从 [ChatGPT 官方下载页](https://chatgpt.com/download/) 安装 Windows 版。本工具只负责设置启动方式。
 
 下面两种方式打开的是同一个配置器。**选一种就行，推荐方式一。**

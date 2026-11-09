@@ -26,7 +26,7 @@ constexpr int FooterHeight = 96;
 constexpr UINT_PTR MotionTimer = 1;
 enum ControlId {
     Title = 1000, SetupVersion, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
-    ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, Port,
+    ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, PortHelp, Port,
     PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
     DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Footer, ApplyButton, CloseButton
 };
@@ -65,7 +65,7 @@ struct Completion {
 bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop || id == CodexEnv; }
 bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == ProtocolSocks; }
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
-bool IsHelp(int id) { return id == CodexEnvHelp || id == ProtocolHelp || id == HostHelp; }
+bool IsHelp(int id) { return id == CodexEnvHelp || id == ProtocolHelp || id == HostHelp || id == PortHelp; }
 bool IsButton(int id) {
     return IsSwitch(id) || IsSegment(id) || IsHelp(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == AddProgram || id == OpenCompanions;
 }
@@ -73,14 +73,18 @@ bool IsActionButton(int id) { return IsButton(id) && !IsSwitch(id) && !IsSegment
 bool IsOwnerDrawButton(int id) { return IsActionButton(id) || IsSegment(id); }
 constexpr wchar_t AppearanceKey[] = L"Software\\Community\\ChatGPTLauncherSetup";
 constexpr wchar_t CodexEnvHelpText[] =
-    L"配置 .env 后，可无需开启系统代理使用 Codex 对话（即使未使用本工具启动或未开启“使用指定代理”）。注意：.env 不作用于 Chat。\n\n"
+    L"配置 .env 后，可无需开启系统代理使用 Codex 对话（即使未使用本工具启动或未开启“使用指定代理”）。注意：.env 不作用于 Chat。"
+    L"将向 .env 写入下面的协议、地址和端口。\n\n"
     L"这可能能够解决 Codex 的“重新连接 (5/5)”：\n"
     L"Codex 默认优先使用 WebSocket，这在理想环境下很不错，但 Codex 的 WebSocket 似乎没有正常走系统代理。"
     L"尝试重新连接未果后，会回退到传统连接。通过配置 .env 文件，可以让 Codex 的 WebSocket 走代理。\n\n"
     L"WebSocket 对代理不是很友好，所以“重新连接 (5/5)”也有小概率是单纯由于代理不稳定。\n\n"
     L"保存后会尝试退出整个 ChatGPT 桌面应用，请先保存工作。重新打开后 Codex 使用新配置。";
 constexpr wchar_t ProxyHelpText[] = L"不要更改，除非你知道自己在做什么";
-PCWSTR HelpText(int id) { return id == CodexEnvHelp ? CodexEnvHelpText : ProxyHelpText; }
+constexpr wchar_t PortHelpText[] =
+    L"后台保持打开平时用的代理软件，点击空白的端口输入框时会尝试自动填入检测到的端口，注意手动核对是否正确。\n"
+    L"如果识别错误或识别失败，打开代理软件的设置，找到端口设置或类似设置，把那串数字填回这里。";
+PCWSTR HelpText(int id) { return id == CodexEnvHelp ? CodexEnvHelpText : id == PortHelp ? PortHelpText : ProxyHelpText; }
 PCWSTR ChatGPTCloseMessage(setup::ChatGPTCloseResult result) {
     if (result == setup::ChatGPTCloseResult::Closed) return L"已保存 .env，并已退出 ChatGPT。请重新打开 ChatGPT。";
     if (result == setup::ChatGPTCloseResult::NotRunning) return L"已保存 .env。下次打开 ChatGPT 后，Codex 使用新配置。";
@@ -304,6 +308,7 @@ void App::CreateControls() {
     add(HostHelp, L"BUTTON", L"地址设置说明", WS_TABSTOP | BS_OWNERDRAW);
     add(Host, L"EDIT", L"127.0.0.1", edit | WS_GROUP);
     add(PortLabel, L"STATIC", L"端口", label, 3);
+    add(PortHelp, L"BUTTON", L"端口设置说明", WS_TABSTOP | BS_OWNERDRAW);
     add(Port, L"EDIT", L"", edit);
     SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"点击检测"));
     SendMessageW(Get(Port), EM_SETLIMITTEXT, 5, 0);
@@ -333,7 +338,7 @@ void App::CreateControls() {
     tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr, instance, nullptr);
     // No reserved v6 fields are used; this size also works without a visual-styles manifest.
-    for (int id : {CodexEnvHelp, ProtocolHelp, HostHelp}) {
+    for (int id : {CodexEnvHelp, ProtocolHelp, HostHelp, PortHelp}) {
         TOOLINFOW tip{ TTTOOLINFOW_V2_SIZE };
         tip.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
         tip.hwnd = body; tip.uId = reinterpret_cast<UINT_PTR>(Get(id));
@@ -402,7 +407,8 @@ void App::Layout() {
     place(HostLabel, 272, 432 + envOffset, 28, 18, !advanced);
     place(HostHelp, 302, 429 + envOffset, 24, 24, !advanced);
     place(Host, 284, 466 + envOffset, inner - 368, 20, !advanced);
-    place(PortLabel, width - 152, 432 + envOffset, 104, 18, !advanced);
+    place(PortLabel, width - 152, 432 + envOffset, 28, 18, !advanced);
+    place(PortHelp, width - 122, 429 + envOffset, 24, 24, !advanced);
     place(Port, width - 140, 466 + envOffset, 80, 20, !advanced);
     place(PreviewTitle, 32, advanced ? 588 : 542 + envOffset, width - 64, 20);
     place(Preview, 44, advanced ? 632 : 586 + envOffset, width - 88, 44);
@@ -489,6 +495,7 @@ void App::Refresh(bool edited) {
     EnableWindow(Get(CodexEnvHelp), options.proxy && !busy);
     EnableWindow(Get(ProtocolHelp), !busy);
     EnableWindow(Get(HostHelp), !busy);
+    EnableWindow(Get(PortHelp), !busy);
     if (((GetWindowLongPtrW(Get(CodexEnv), GWL_STYLE) & WS_VISIBLE) != 0) != (!advanced && options.proxy)) Layout();
     std::wstring arguments, directory;
     const setup::Result args = setup::BuildArguments(options, arguments);
