@@ -662,6 +662,7 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(!IsWindowEnabled(app.Get(Silent)) && !app.Checked(Silent));
     REQUIRE(!IsWindowEnabled(app.Get(ApplyButton)) && app.Text(ApplyButton) == L"已保存");
     REQUIRE(IsWindowEnabled(app.Get(CloseButton)) && app.Text(CloseButton) == L"完成");
+    REQUIRE(GetFocus() == app.Get(CloseButton));
     app.Command(ApplyButton, BN_CLICKED);
     REQUIRE(!app.busy && disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1);
     // Manual startup review is advisory, and edits after it do not repeat the reminder.
@@ -692,6 +693,7 @@ static int RunTests(PCWSTR folder) {
     const unsigned closeBeforeFailure = codexCloseCalls;
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(codexCloseCalls == closeBeforeFailure);
+    REQUIRE(GetFocus() == app.Get(ApplyButton));
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 2);
     REQUIRE(!IsWindowEnabled(app.Get(Silent)) && !app.Checked(Silent));
     REQUIRE(folderCalls == 0); // Neither success nor unrelated errors open Explorer.
@@ -732,10 +734,13 @@ static int RunTests(PCWSTR folder) {
     const unsigned finalReminders = reminderCalls, finalSettings = settingsCalls;
     app.Command(ApplyButton, BN_CLICKED);
     REQUIRE(!app.busy && reminderCalls == finalReminders && settingsCalls == finalSettings);
-    app.Command(CloseButton, BN_CLICKED);
+    REQUIRE(GetFocus() == app.Get(CloseButton));
+    MSG finishKey{}; finishKey.hwnd = GetFocus(); finishKey.message = WM_KEYDOWN; finishKey.wParam = VK_RETURN;
+    REQUIRE(IsDialogMessageW(app.window, &finishKey));
     REQUIRE(!IsWindow(app.window) && reminderCalls == finalReminders);
     printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
     puts("PASS dirty-region buffers and pixel-identical partial/full surface painting across themes, scaling and scrolling");
+    puts("PASS save focus: successful completion selects Done, failures select Save, Enter closes after success");
     puts("PASS unavailable silent switch stays disabled across edits, restore and save success/failure; Tab skips it and saved values are retained");
     puts("PASS three font sizes, interruptible 150 ms motion, stopped idle timer, reduced motion and high contrast");
     puts("PASS dark default, independent theme preference and write failure (mock registry); owner-drawn protocol selection, arrows, Space, Tab stops and rendering");

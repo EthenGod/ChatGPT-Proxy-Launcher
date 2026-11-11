@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 // Fault injection exists only in this translation unit, never in the release binary.
 static unsigned moveCalls = 0, failMoveAt = 0;
@@ -28,8 +29,20 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
 #undef MoveFileExW
 #include "../src/SetupResources.h"
 #include "../src/AppVersion.h"
+#include "../src/CodexEnv.h"
 
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL at line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
+// Compare observable arguments using Windows' parser, not private tokenizer structures.
+static bool DecodeArguments(const std::wstring& text, std::vector<std::wstring>& values) {
+    int count = 0;
+    struct Arguments {
+        LPWSTR* value;
+        ~Arguments() { if (value) LocalFree(value); }
+    } args{CommandLineToArgvW((L"program " + text).c_str(), &count)};
+    if (!args.value || count < 1) return false;
+    values.assign(args.value + 1, args.value + count);
+    return true;
+}
 static int EnvTests() {
     using namespace setup;
     Options options; options.proxy = true; options.port = L"12345";
@@ -52,7 +65,9 @@ static int EnvTests() {
     options.protocol = L"https"; options.host = L"proxy.example.com";
     REQUIRE(MergeCodexEnv({}, options, merged));
     REQUIRE(std::string(merged.begin(), merged.end()).find("https://proxy.example.com:12345") != std::string::npos);
+    const auto beforeFailure = merged;
     REQUIRE(!MergeCodexEnv({0xff, 0xfe, 0, 0}, options, merged));
+    REQUIRE(merged == beforeFailure);
     const std::string broken = "TEXT=\"unterminated";
     REQUIRE(!MergeCodexEnv({broken.begin(), broken.end()}, options, merged));
     const std::string multilineProxy = "HTTP_PROXY=\"first\nlast\"";
@@ -81,15 +96,11 @@ static int ParameterTests() {
     REQUIRE(parsed.proxy && parsed.silent && parsed.protocol == L"http" && parsed.port == L"7897");
     REQUIRE(parsed.bypass == options.bypass);
     REQUIRE(parsed.extra == options.extra);
-    std::vector<Token> originalTokens, restoredTokens;
-    REQUIRE(Tokens(args, originalTokens));
+    std::vector<std::wstring> originalTokens, restoredTokens;
+    REQUIRE(DecodeArguments(args, originalTokens));
     REQUIRE(BuildArguments(parsed, args));
-    REQUIRE(Tokens(args, restoredTokens));
-    REQUIRE(originalTokens.size() == restoredTokens.size());
-    for (size_t i = 0; i < originalTokens.size(); ++i) {
-        REQUIRE(originalTokens[i].value == restoredTokens[i].value);
-        REQUIRE(originalTokens[i].raw == restoredTokens[i].raw);
-    }
+    REQUIRE(DecodeArguments(args, restoredTokens));
+    REQUIRE(originalTokens == restoredTokens);
     for (const std::wstring& sample : { L"", L"plain", L"two words", L"中文 引号\"尾部\\", L"\\\"", L"\"\"", L"ends with \\\\" }) {
         int count = 0;
         LPWSTR* argv = CommandLineToArgvW((L"stub " + QuoteArgument(sample)).c_str(), &count);
@@ -101,9 +112,14 @@ static int ParameterTests() {
     for (int i = 0; i < 500; ++i) {
         std::wstring sample;
         for (int n = 0; n < i % 31; ++n) { seed = seed * 1664525u + 1013904223u; sample += alphabet[seed % alphabet.size()]; }
-        std::vector<Token> tokens;
-        REQUIRE(Tokens(QuoteArgument(sample), tokens));
-        REQUIRE(tokens.size() == 1 && tokens[0].value == sample);
+        std::vector<std::wstring> tokens;
+        REQUIRE(DecodeArguments(QuoteArgument(sample), tokens));
+        REQUIRE(tokens.size() == 1 && tokens[0] == sample);
+        Options original, roundTrip;
+        original.extra = L"--note=" + QuoteArgument(sample) + L"  \"\"";
+        std::wstring encoded, restored;
+        REQUIRE(BuildArguments(original, encoded) && ParseArguments(encoded, roundTrip));
+        REQUIRE(BuildArguments(roundTrip, restored) && restored == encoded);
     }
     options = {}; options.proxy = true;
     for (const auto& bad : { L"", L"0", L"65536", L"123456", L"abc", L"80 80" }) {

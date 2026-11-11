@@ -3,7 +3,8 @@
 ## 项目与命令
 - 这是 Windows x64 原生 C++ ChatGPT 启动器，不是 OpenAI 官方产品。
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法。
-- 图形配置工具入口为 `src/ChatGPTLauncherSetup.cpp`，部署与参数逻辑在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
+- 图形配置工具入口为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
+- `src/SetupArguments.cpp` 只处理启动参数的生成、解析和校验；`src/CodexEnv.cpp` 只合并 `.env` 字节。文件读写、所有权检查与回滚统一留在 `src/SetupCore.cpp`。
 - 构建：根目录运行 `cmd /c build.cmd`，需要 Visual Studio / Build Tools 的 C++ 桌面开发组件和 Windows SDK；产物在 `outputs/`。
 - `tools/msvc-env.cmd` 是共用工具链入口，优先复用 x64 开发者终端，否则用 Visual Studio Installer 的 `vswhere` 定位带 C++ 工具的安装。
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；只启动隔离测试子进程，不启动 ChatGPT。

@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "CodexEnv.h"
 #include "StartupApps.h"
 #include <shlobj.h>
-#include <shellapi.h>
 #include <shlwapi.h>
-#include <algorithm>
-#include <cwctype>
-#include <memory>
+#include <utility>
 
 namespace setup {
 namespace {
@@ -67,91 +65,6 @@ std::wstring ReadFileVersion(const std::wstring& path) {
         + std::to_wstring(LOWORD(info.dwFileVersionMS)) + L"." + std::to_wstring(HIWORD(info.dwFileVersionLS));
     if (LOWORD(info.dwFileVersionLS)) version += L"." + std::to_wstring(LOWORD(info.dwFileVersionLS));
     return version;
-}
-Result MergeCodexEnv(const std::vector<BYTE>& source, const Options& options, std::vector<BYTE>& output) {
-    // Preserve unrelated bytes, comments, BOM and line endings. Never parse or expose secrets.
-    if (source.size() > 1024 * 1024 || std::find(source.begin(), source.end(), 0) != source.end()
-        || (!source.empty() && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-            reinterpret_cast<const char*>(source.data()), static_cast<int>(source.size()), nullptr, 0)))
-        return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 不是有效的 UTF-8 文本，或文件过大。请手动检查，原文件未修改。");
-    for (size_t i = 0; i < source.size(); ++i) {
-        if (source[i] == '\r' && (i + 1 == source.size() || source[i + 1] != '\n'))
-            return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 换行格式不受支持。请保存为 LF 或 CRLF 后重试，原文件未修改。");
-    }
-    const std::wstring address = options.protocol + L"://" + options.host + L":" + options.port;
-    if (address.find_first_of(L"'\"$`\r\n") != std::wstring::npos
-        || std::any_of(address.begin(), address.end(), [](wchar_t c) { return c < L' '; }))
-        return Fail(ERROR_INVALID_PARAMETER, L"代理地址包含 .env 不支持的字符。");
-    const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, address.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (!count) return Fail(ERROR_INVALID_PARAMETER, L"无法编码 Codex 的代理地址。");
-    std::string url(static_cast<size_t>(count), '\0');
-    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, address.c_str(), -1, &url[0], count, nullptr, nullptr);
-    url.pop_back();
-    const char* keys[] = {"all_proxy", "ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"};
-    bool found[4]{};
-    const std::string input(source.begin(), source.end());
-    const size_t bom = input.compare(0, 3, "\xef\xbb\xbf") == 0 ? 3 : 0;
-    std::string result = input.substr(0, bom);
-    const std::string newline = input.find('\n') != std::string::npos && input.find("\r\n") == std::string::npos ? "\n" : "\r\n";
-    char quote = 0;
-    for (size_t start = bom; start < input.size();) {
-        const size_t eol = input.find('\n', start);
-        const size_t next = eol == std::string::npos ? input.size() : eol + 1;
-        size_t end = eol == std::string::npos ? input.size() : eol;
-        if (end > start && input[end - 1] == '\r') --end;
-        const std::string line = input.substr(start, end - start);
-        const std::string ending = input.substr(end, next - end);
-        size_t keyStart = line.find_first_not_of(" \t");
-        if (keyStart != std::string::npos && line.compare(keyStart, 6, "export") == 0
-            && keyStart + 6 < line.size() && (line[keyStart + 6] == ' ' || line[keyStart + 6] == '\t'))
-            keyStart = line.find_first_not_of(" \t", keyStart + 7);
-        const size_t equals = line.find('=', keyStart);
-        int match = -1, exact = -1;
-        if (!quote && keyStart != std::string::npos && line[keyStart] != '#' && equals != std::string::npos) {
-            const size_t last = line.find_last_not_of(" \t", equals - 1);
-            const std::string key = last == std::string::npos ? "" : line.substr(keyStart, last + 1 - keyStart);
-            for (int i = 0; i < 4; ++i) {
-                // Windows environment names ignore case. Update existing aliases too,
-                // while still ensuring all four requested spellings are present.
-                if (_stricmp(key.c_str(), keys[i]) == 0) match = i;
-                if (key == keys[i]) exact = i;
-            }
-        }
-        // Track quoted multiline values so proxy-like text inside another value stays untouched.
-        const size_t valueStart = quote ? 0 : (keyStart == std::string::npos || line[keyStart] == '#' || equals == std::string::npos) ? line.size() : equals + 1;
-        bool escaped = false;
-        size_t commentStart = std::string::npos;
-        for (size_t i = valueStart; i < line.size(); ++i) {
-            const char c = line[i];
-            if (escaped) { escaped = false; continue; }
-            if (c == '\\' && quote != '\'') { escaped = true; continue; }
-            if (quote) { if (c == quote) quote = 0; }
-            else if (c == '#' && (i == valueStart || line[i - 1] == ' ' || line[i - 1] == '\t')) {
-                commentStart = i;
-                while (commentStart > valueStart && (line[commentStart - 1] == ' ' || line[commentStart - 1] == '\t')) --commentStart;
-                break;
-            }
-            else if (c == '\'' || c == '"') quote = c;
-        }
-        if (match >= 0) {
-            if (quote) return Fail(ERROR_INVALID_DATA, L".env 中的代理变量跨越多行，请先手动整理，原文件未修改。");
-            result += line.substr(0, equals + 1) + url;
-            if (commentStart != std::string::npos) {
-                if (line[commentStart] == '#') result += ' ';
-                result += line.substr(commentStart);
-            }
-            result += ending;
-            if (exact >= 0) found[exact] = true;
-        } else result += line + ending;
-        start = next;
-    }
-    if (quote) return Fail(ERROR_INVALID_DATA, L".env 中有未闭合的引号，请先手动检查，原文件未修改。");
-    for (int i = 0; i < 4; ++i) if (!found[i]) {
-        if (result.size() > bom && result.back() != '\n') result += newline;
-        result += std::string(keys[i]) + "=" + url + newline;
-    }
-    output.assign(result.begin(), result.end());
-    return {};
 }
 Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
     file = {};
@@ -247,47 +160,6 @@ Result WriteLink(const std::wstring& path, const Link& value, bool replace = tru
         || !Same(read.directory, value.directory) || read.description != value.description)
         return Fail(ERROR_INVALID_DATA, L"快捷方式回读结果不一致，已停止保存。");
     return CommitTemp(temp, path, replace);
-}
-struct Token { std::wstring value, raw; size_t start = 0, end = 0; };
-Result Tokens(const std::wstring& arguments, std::vector<Token>& tokens) {
-    tokens.clear();
-    if (arguments.find_first_of(L"\r\n") != std::wstring::npos
-        || arguments.find(L'\0') != std::wstring::npos)
-        return Fail(ERROR_INVALID_PARAMETER, L"启动参数不能包含换行或空字符。");
-    size_t i = 0;
-    while (i < arguments.size()) {
-        if (arguments[i] == L' ' || arguments[i] == L'\t') { ++i; continue; }
-        const size_t start = i;
-        bool quoted = false;
-        size_t slashes = 0;
-        for (; i < arguments.size(); ++i) {
-            const wchar_t c = arguments[i];
-            if (!quoted && (c == L' ' || c == L'\t')) break;
-            if (c == L'"' && slashes % 2 == 0) quoted = !quoted;
-            slashes = c == L'\\' ? slashes + 1 : 0;
-        }
-        if (quoted) return Fail(ERROR_INVALID_PARAMETER, L"额外启动参数中有未闭合的双引号。");
-        const std::wstring raw = arguments.substr(start, i - start);
-        int count = 0;
-        LPWSTR* argv = CommandLineToArgvW((L"program " + raw).c_str(), &count);
-        if (!argv) return Fail(GetLastError(), L"无法解析启动参数。");
-        if (count != 2) { LocalFree(argv); return Fail(ERROR_INVALID_DATA, L"启动参数格式无效。"); }
-        tokens.push_back({ argv[1], raw, start, i });
-        LocalFree(argv);
-    }
-    return {};
-}
-int ManagedKind(const std::wstring& arg) {
-    const std::wstring key = arg.substr(0, arg.find(L'='));
-    if (key == L"--proxy-server") return 1;
-    if (key == L"--no-startup-window") return 2;
-    if (key == L"--proxy-bypass-list") return 3;
-    return 0;
-}
-void Append(std::wstring& text, const std::wstring& item) {
-    if (item.empty()) return;
-    if (!text.empty()) text += L' ';
-    text += item;
 }
 } // namespace
 
@@ -416,99 +288,6 @@ Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
             return Fail(ERROR_BAD_PATHNAME, L"部署目录包含 Windows 不支持的名称。");
         if (end == std::wstring::npos) break;
         start = end + 1;
-    }
-    return {};
-}
-std::wstring QuoteArgument(const std::wstring& value) {
-    if (!value.empty() && value.find_first_of(L" \t\"") == std::wstring::npos) return value;
-    std::wstring out = L"\"";
-    size_t slashes = 0;
-    for (wchar_t c : value) {
-        if (c == L'\\') { ++slashes; continue; }
-        out.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
-        slashes = 0;
-        out += c;
-    }
-    out.append(slashes * 2, L'\\');
-    return out + L'"';
-}
-Result BuildArguments(const Options& options, std::wstring& arguments) {
-    arguments.clear();
-    if (options.proxy) {
-        if (options.protocol != L"http" && options.protocol != L"https" && options.protocol != L"socks5")
-            return Fail(ERROR_INVALID_PARAMETER, L"请选择有效的代理协议。");
-        if (options.host.empty() || options.host.find_first_of(L" \t\r\n/\\\"@;=?#") != std::wstring::npos
-            || options.host.find(L'\0') != std::wstring::npos)
-            return Fail(ERROR_INVALID_PARAMETER, L"代理地址只填写主机名或 IP，不包含协议、端口或账号密码。");
-        if (options.host.find(L':') != std::wstring::npos
-            && (options.host.front() != L'[' || options.host.back() != L']'))
-            return Fail(ERROR_INVALID_PARAMETER, L"IPv6 地址请放在方括号中，例如 [::1]。");
-        if (options.port.empty() || options.port.size() > 5
-            || options.port.find_first_not_of(L"0123456789") != std::wstring::npos)
-            return Fail(ERROR_INVALID_PARAMETER, L"代理端口应为 1 到 65535 的数字。");
-        const unsigned long port = wcstoul(options.port.c_str(), nullptr, 10);
-        if (!port || port > 65535) return Fail(ERROR_INVALID_PARAMETER, L"代理端口应为 1 到 65535。");
-        Append(arguments, QuoteArgument(L"--proxy-server=" + options.protocol + L"://" + options.host + L":" + options.port));
-    }
-    if (options.silent) Append(arguments, L"--no-startup-window");
-    if (!options.bypass.empty()) Append(arguments, QuoteArgument(L"--proxy-bypass-list=" + options.bypass));
-    Append(arguments, options.extra);
-    if (arguments.size() > MaxArguments) return Fail(ERROR_FILENAME_EXCED_RANGE, L"启动参数过长（最多 8191 个字符）。");
-    std::vector<Token> tokens;
-    Result result = Tokens(arguments, tokens);
-    if (!result) return result;
-    unsigned counts[4]{};
-    for (const auto& token : tokens) {
-        if (token.value == L"--") break;
-        const int kind = ManagedKind(token.value);
-        if (kind && ++counts[kind] > 1)
-            return Fail(ERROR_INVALID_PARAMETER, L"同一启动选项出现了两次，请检查额外参数与界面设置。");
-        if (token.value == L"--launcher-check")
-            return Fail(ERROR_INVALID_PARAMETER, L"--launcher-check 只用于诊断，不能保存为启动选项。");
-    }
-    return {};
-}
-Result ParseArguments(const std::wstring& arguments, Options& options) {
-    options.proxy = false; options.silent = false; options.bypass.clear(); options.extra.clear();
-    std::vector<Token> tokens;
-    Result result = Tokens(arguments, tokens);
-    if (!result) { options.extra = arguments; return result; }
-    unsigned counts[4]{};
-    for (const auto& token : tokens) {
-        if (token.value == L"--") break;
-        ++counts[ManagedKind(token.value)];
-    }
-    // Preserve the complete original text when duplicate managed options cannot be represented by the form.
-    if (counts[1] > 1 || counts[2] > 1 || counts[3] > 1) { options.extra = arguments; return {}; }
-    size_t lastUnknownEnd = 0;
-    bool previousUnknown = false, positional = false;
-    for (const auto& token : tokens) {
-        if (token.value == L"--") positional = true;
-        if (!positional && token.value == L"--no-startup-window") { options.silent = true; previousUnknown = false; continue; }
-        if (!positional && token.value.rfind(L"--proxy-bypass-list=", 0) == 0 && token.value.size() > 20) {
-            options.bypass = token.value.substr(20); previousUnknown = false; continue;
-        }
-        if (!positional && token.value.rfind(L"--proxy-server=", 0) == 0) {
-            const std::wstring value = token.value.substr(15);
-            const size_t separator = value.find(L"://"), colon = value.rfind(L':');
-            if (separator != std::wstring::npos && colon > separator + 3) {
-                Options candidate = options;
-                candidate.proxy = true; candidate.protocol = value.substr(0, separator);
-                candidate.host = value.substr(separator + 3, colon - separator - 3); candidate.port = value.substr(colon + 1);
-                candidate.extra.clear();
-                std::wstring ignored;
-                if (BuildArguments(candidate, ignored)) {
-                    options.proxy = true; options.protocol = candidate.protocol;
-                    options.host = candidate.host; options.port = candidate.port;
-                    previousUnknown = false;
-                    continue;
-                }
-            }
-        }
-        if (previousUnknown) options.extra += arguments.substr(lastUnknownEnd, token.end - lastUnknownEnd);
-        else Append(options.extra, token.raw);
-        previousUnknown = true;
-        lastUnknownEnd = token.end;
     }
     return {};
 }

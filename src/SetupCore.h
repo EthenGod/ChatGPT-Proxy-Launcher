@@ -37,13 +37,19 @@ struct Loaded {
 struct Payload { const BYTE* data; size_t size; };
 std::wstring ErrorText(DWORD error);
 std::wstring Join(const std::wstring& directory, const std::wstring& file);
+
+// Paths and companion shortcuts (SetupCore.cpp).
 Result GetPaths(Paths& paths);
 Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder);
 Result AddCompanionProgram(const Paths& paths, const std::wstring& program);
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output);
+
+// Text conversion only; no file writes or process launches (SetupArguments.cpp).
 std::wstring QuoteArgument(const std::wstring& value);
 Result BuildArguments(const Options& options, std::wstring& arguments);
 Result ParseArguments(const std::wstring& arguments, Options& options);
+
+// Deployment owns file validation, commit and rollback (SetupCore.cpp).
 Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = false);
 Result Load(const Paths& paths, Loaded& loaded);
 Result Apply(const Paths& paths, const Options& options, Payload payload,

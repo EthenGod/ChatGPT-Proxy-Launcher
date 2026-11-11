@@ -190,6 +190,9 @@ struct App {
     void FinishPortDetection();
     void RestoreOptions(const setup::Loaded& loaded);
     void Command(int id, int notification);
+    void BeginSave();
+    void FinishSave(std::unique_ptr<Completion> done);
+    void ShowStartupReminder(const Completion& done, bool preferenceSaved);
     void Paint(HWND target);
     void DrawSurface(HWND target, HDC dc);
     void DrawControl(HWND control, HDC dc);
@@ -651,51 +654,101 @@ void App::Command(int id, int notification) {
         return;
     }
     if (id == CloseButton && notification == BN_CLICKED) { SendMessageW(window, WM_CLOSE, 0, 0); return; }
-    if (id == ApplyButton && notification == BN_CLICKED && !fatal) {
-        if (savedThisSession && !dirty) {
-            Set(Footer, L"配置已保存，可以点击「完成」关闭本工具，无需再次部署。"); return;
-        }
-        const setup::Options options = Options();
-        std::wstring unused;
-        if (!setup::BuildArguments(options, unused) || !setup::NormalizeDirectory(options.directory, unused)) { Refresh(false); return; }
-        try {
-            auto completion = std::make_unique<Completion>();
-            completion->previous = savedTarget;
-            completion->checkStartup = options.startup && !startupReminderShown;
-            completion->codexEnv = options.codexEnv;
-            completion->wroteCodexEnv = options.proxy && options.codexEnv;
-            worker = std::thread([this, options, completion = std::move(completion)]() mutable {
-                const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-                if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
-                else {
-                    try {
-                        completion->result = setup::Apply(paths, options, payload, completion->target);
-                    }
-                    catch (...) { completion->result = { ERROR_NOT_ENOUGH_MEMORY, L"保存未完成。请重新打开工具检查配置后重试。" }; }
-                    if (completion->result && completion->checkStartup) {
-                        try { completion->startupReport = setup::TryDisableOfficialStartup(); }
-                        catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
-                    }
-                    if (completion->result && completion->wroteCodexEnv) {
-                        try { completion->closeResult = setup::TryCloseChatGPT(); }
-                        catch (...) { completion->closeResult = setup::ChatGPTCloseResult::NeedsManualExit; }
-                    }
-                    CoUninitialize();
-                }
-                if (PostMessageW(window, SavedMessage, 0, reinterpret_cast<LPARAM>(completion.get()))) completion.release();
-            });
-        } catch (...) {
-            Set(Footer, L"未能开始保存。设置仍在，请重试。");
-            return;
-        }
-        busy = true;
-        for (const auto& control : controls) EnableWindow(control.window, FALSE);
-        Refresh(false); UpdateWindow(window);
-        return;
-    }
+    if (id == ApplyButton && notification == BN_CLICKED) { BeginSave(); return; }
     if (notification == EN_CHANGE || notification == BN_CLICKED) {
         if (id != Preview) Refresh(true);
     }
+}
+
+void App::BeginSave() {
+    if (busy || fatal) return;
+    if (savedThisSession && !dirty) {
+        Set(Footer, L"配置已保存，可以点击「完成」关闭本工具，无需再次部署。"); return;
+    }
+    const setup::Options options = Options();
+    std::wstring unused;
+    if (!setup::BuildArguments(options, unused) || !setup::NormalizeDirectory(options.directory, unused)) { Refresh(false); return; }
+    try {
+        auto completion = std::make_unique<Completion>();
+        completion->previous = savedTarget;
+        completion->checkStartup = options.startup && !startupReminderShown;
+        completion->codexEnv = options.codexEnv;
+        completion->wroteCodexEnv = options.proxy && options.codexEnv;
+        // System operations run here; only FinishSave updates controls after completion.
+        worker = std::thread([this, options, completion = std::move(completion)]() mutable {
+            const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
+            else {
+                try {
+                    completion->result = setup::Apply(paths, options, payload, completion->target);
+                }
+                catch (...) { completion->result = { ERROR_NOT_ENOUGH_MEMORY, L"保存未完成。请重新打开工具检查配置后重试。" }; }
+                if (completion->result && completion->checkStartup) {
+                    try { completion->startupReport = setup::TryDisableOfficialStartup(); }
+                    catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
+                }
+                if (completion->result && completion->wroteCodexEnv) {
+                    try { completion->closeResult = setup::TryCloseChatGPT(); }
+                    catch (...) { completion->closeResult = setup::ChatGPTCloseResult::NeedsManualExit; }
+                }
+                CoUninitialize();
+            }
+            if (PostMessageW(window, SavedMessage, 0, reinterpret_cast<LPARAM>(completion.get()))) completion.release();
+        });
+    } catch (...) {
+        Set(Footer, L"未能开始保存。设置仍在，请重试。");
+        return;
+    }
+    busy = true;
+    for (const auto& control : controls) EnableWindow(control.window, FALSE);
+    Refresh(false); UpdateWindow(window);
+}
+
+void App::FinishSave(std::unique_ptr<Completion> done) {
+    if (worker.joinable()) worker.join();
+    busy = false;
+    for (const auto& control : controls) EnableWindow(control.window, TRUE);
+    if (done->result) {
+        const bool preferenceSaved = SaveCodexEnvPreference(done->codexEnv);
+        setup::Loaded loaded;
+        const setup::Result result = setup::Load(paths, loaded);
+        if (result) RestoreOptions(loaded);
+        else {
+            dirty = false; savedTarget = done->target;
+            Set(State, L"已保存，无法重新读取部署信息");
+        }
+        Check(CodexEnv, done->codexEnv);
+        savedThisSession = true;
+        Refresh(false);
+        const bool moved = !done->previous.empty() && _wcsicmp(done->previous.c_str(), done->target.c_str()) != 0;
+        Set(Footer, moved ? L"已保存。旧目录中的文件已保留。" : L"已保存。下次启动时使用这些选项。");
+        if (done->wroteCodexEnv) Set(Footer, ChatGPTCloseMessage(done->closeResult));
+        if (!preferenceSaved) Set(Footer,
+            std::wstring(done->wroteCodexEnv ? ChatGPTCloseMessage(done->closeResult) : L"配置已保存。") + L"未能记住 .env 选项，下次打开时请核对。");
+        if (done->checkStartup) ShowStartupReminder(*done, preferenceSaved);
+    } else {
+        Refresh(false);
+        ShowSetupError(window, done->result, L"保存未完成");
+    }
+    SetFocus(Get(done->result ? CloseButton : ApplyButton));
+}
+
+void App::ShowStartupReminder(const Completion& done, bool preferenceSaved) {
+    startupReminderShown = true;
+    std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
+        L"接下来请按这几步操作：\n"
+        L"1. 点击本提示的「确定」，打开 Windows「启动应用」设置。\n"
+        L"2. 找到「ChatGPT」，确认开关为「关」；如果已经关闭，不用再改。\n"
+        L"3. 保持「ChatGPT Proxy Launcher」（本工具的启动项）开启，不要一起关闭。\n"
+        L"4. 核对后回到部署器，点击右下方「完成」即可退出。\n\n"
+        L"这样可以避免 ChatGPT 自带自启先运行，导致本工具配置的启动参数无法生效。\n\n"
+        L"自动处理结果：\n" + done.startupReport.Message();
+    if (done.wroteCodexEnv) reminder += L"\n\n" + std::wstring(ChatGPTCloseMessage(done.closeResult));
+    if (!done.wroteCodexEnv && preferenceSaved)
+        Set(Footer, L"已保存，可关闭本工具。请在 Windows 设置中核对自带自启。");
+    MessageBoxW(window, reminder.c_str(), L"部署已完成", MB_OK | MB_ICONINFORMATION);
+    const setup::Result opened = setup::OpenStartupSettings(window);
+    if (!opened) MessageBoxW(window, (L"配置已保存。\n\n" + opened.message).c_str(), L"请手动打开启动设置", MB_OK | MB_ICONINFORMATION);
 }
 
 void App::DrawSurface(HWND target, HDC dc) {
@@ -1102,51 +1155,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     case WM_MOUSEWHEEL: return SendMessageW(app->body, message, wparam, lparam);
     case DetectPortMessage: app->DetectPort(); return 0;
     case PortDetectedMessage: app->FinishPortDetection(); return 0;
-    case SavedMessage: {
-        std::unique_ptr<Completion> done(reinterpret_cast<Completion*>(lparam));
-        if (app->worker.joinable()) app->worker.join();
-        app->busy = false;
-        for (const auto& control : app->controls) EnableWindow(control.window, TRUE);
-        if (done->result) {
-            const bool preferenceSaved = SaveCodexEnvPreference(done->codexEnv);
-            setup::Loaded loaded;
-            const setup::Result result = setup::Load(app->paths, loaded);
-            if (result) app->RestoreOptions(loaded);
-            else {
-                app->dirty = false; app->savedTarget = done->target;
-                app->Set(State, L"已保存，无法重新读取部署信息");
-            }
-            app->Check(CodexEnv, done->codexEnv);
-            app->savedThisSession = true;
-            app->Refresh(false);
-            const bool moved = !done->previous.empty() && _wcsicmp(done->previous.c_str(), done->target.c_str()) != 0;
-            app->Set(Footer, moved ? L"已保存。旧目录中的文件已保留。" : L"已保存。下次启动时使用这些选项。");
-            if (done->wroteCodexEnv) app->Set(Footer, ChatGPTCloseMessage(done->closeResult));
-            if (!preferenceSaved) app->Set(Footer,
-                std::wstring(done->wroteCodexEnv ? ChatGPTCloseMessage(done->closeResult) : L"配置已保存。") + L"未能记住 .env 选项，下次打开时请核对。");
-            if (done->checkStartup) {
-                app->startupReminderShown = true;
-                std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
-                    L"接下来请按这几步操作：\n"
-                    L"1. 点击本提示的「确定」，打开 Windows「启动应用」设置。\n"
-                    L"2. 找到「ChatGPT」，确认开关为「关」；如果已经关闭，不用再改。\n"
-                    L"3. 保持「ChatGPT Proxy Launcher」（本工具的启动项）开启，不要一起关闭。\n"
-                    L"4. 核对后回到部署器，点击右下方「完成」即可退出。\n\n"
-                    L"这样可以避免 ChatGPT 自带自启先运行，导致本工具配置的启动参数无法生效。\n\n"
-                    L"自动处理结果：\n" + done->startupReport.Message();
-                if (done->wroteCodexEnv) reminder += L"\n\n" + std::wstring(ChatGPTCloseMessage(done->closeResult));
-                if (!done->wroteCodexEnv && preferenceSaved)
-                    app->Set(Footer, L"已保存，可关闭本工具。请在 Windows 设置中核对自带自启。");
-                MessageBoxW(window, reminder.c_str(), L"部署已完成", MB_OK | MB_ICONINFORMATION);
-                const setup::Result opened = setup::OpenStartupSettings(window);
-                if (!opened) MessageBoxW(window, (L"配置已保存。\n\n" + opened.message).c_str(), L"请手动打开启动设置", MB_OK | MB_ICONINFORMATION);
-            }
-        } else {
-            app->Refresh(false);
-            ShowSetupError(window, done->result, L"保存未完成");
-        }
-        SetFocus(app->Get(ApplyButton)); return 0;
-    }
+    case SavedMessage:
+        app->FinishSave(std::unique_ptr<Completion>(reinterpret_cast<Completion*>(lparam)));
+        return 0;
     case WM_CLOSE:
         if (app->busy) return 0;
         if (app->dirty && MessageBoxW(window, L"还有尚未保存的更改。要放弃这些更改并关闭吗？",

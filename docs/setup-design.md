@@ -7,6 +7,7 @@
 ## 方案
 
 - 原生 C++ / Win32，静态运行库。界面、参数处理、文件部署和 Shell 快捷方式操作分离。
+- `SetupArguments.cpp` 处理参数生成与解析，`CodexEnv.cpp` 合并配置文本；`SetupCore.cpp` 负责文件操作及回滚。界面的保存请求和完成处理分别放在 `BeginSave`、`FinishSave`，自启提醒单独处理。
 - 默认目录为 `%LOCALAPPDATA%\ChatGPTProxyLauncher`；自启目录通过 Known Folder API 查询，不拼接用户名或系统目录。
 - 在默认目录保存 `Launcher settings.lnk` 作为配置记录，记录实际部署目标和完整参数。即使关闭自启也能恢复设置；实际自启状态以启动目录中的快捷方式为准。
 - 快捷方式用 `IShellLinkW` / `IPersistFile` 读写，目标、参数、工作目录分开保存。未知参数保留原文，常用参数由界面生成；拒绝重复受管选项和诊断专用参数。
