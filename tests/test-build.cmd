@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0.."
 call build.cmd
 if errorlevel 1 exit /b %errorlevel%
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+call tools\msvc-env.cmd
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-tests.obj /Fe:work\launcher-tests.exe tests\launcher-tests.cpp /link /SUBSYSTEM:CONSOLE kernel32.lib
 if errorlevel 1 exit /b %errorlevel%

@@ -111,7 +111,7 @@ bool SaveDarkPreference(bool dark) {
         &light, sizeof(light)) == ERROR_SUCCESS;
 }
 void Rounded(HDC dc, const RECT& rect, int radius, COLORREF fill, COLORREF border, float thickness = 1.0f) {
-    if (rect.right <= rect.left || rect.bottom <= rect.top) return;
+    if (rect.right <= rect.left || rect.bottom <= rect.top || !RectVisible(dc, &rect)) return;
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     const float inset = thickness / 2;
@@ -731,7 +731,7 @@ void App::DrawSurface(HWND target, HDC dc) {
 }
 void App::Paint(HWND target) {
     PAINTSTRUCT ps{}; HDC output = BeginPaint(target, &ps);
-    RECT rect{}; GetClientRect(target, &rect);
+    const RECT& rect = ps.rcPaint;
     HDC dc = nullptr;
     HPAINTBUFFER buffer = BeginBufferedPaint(output, &rect, BPBF_COMPATIBLEBITMAP, nullptr, &dc);
     DrawSurface(target, buffer ? dc : output);

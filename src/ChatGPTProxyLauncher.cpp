@@ -111,23 +111,29 @@ static DWORD StartApplication(PCWSTR executable, PCWSTR arguments, PCWSTR cwd = 
     const size_t required = CommandCapacity(executable, arguments);
     if (!required) return ERROR_FILENAME_EXCED_RANGE;
     const size_t length = wcslen(executable);
-    Buffer command(required * sizeof(wchar_t)), directory((length + 1) * sizeof(wchar_t));
-    if (!command.get() || !directory.get()) return ERROR_NOT_ENOUGH_MEMORY;
-    DWORD result = BuildCommand(executable, arguments, static_cast<PWSTR>(command.get()), required);
-    if (result) return result;
-    CopyMemory(directory.get(), executable, (length + 1) * sizeof(wchar_t));
-    PWSTR separator = wcsrchr(static_cast<PWSTR>(directory.get()), L'\\');
+    PCWSTR separator = wcsrchr(executable, L'\\');
     if (!separator) return ERROR_BAD_PATHNAME;
-    // Preserve the slash of a drive root: C:\app.exe must use C:\, not C:.
-    if (separator == static_cast<PWSTR>(directory.get()) + 2
-        && static_cast<PCWSTR>(directory.get())[1] == L':') ++separator;
-    *separator = L'\0';
+    // Command and optional working directory share one short-lived allocation.
+    Buffer storage((required + (cwd ? 0 : length + 1)) * sizeof(wchar_t));
+    if (!storage.get()) return ERROR_NOT_ENOUGH_MEMORY;
+    PWSTR command = static_cast<PWSTR>(storage.get());
+    DWORD result = BuildCommand(executable, arguments, command, required);
+    if (result) return result;
+    if (!cwd) {
+        PWSTR directory = command + required;
+        size_t directoryLength = static_cast<size_t>(separator - executable);
+        // Preserve the slash of a drive root: C:\app.exe must use C:\, not C:.
+        if (directoryLength == 2 && executable[1] == L':') ++directoryLength;
+        CopyMemory(directory, executable, directoryLength * sizeof(wchar_t));
+        directory[directoryLength] = L'\0';
+        cwd = directory;
+    }
     STARTUPINFOW startup = {};
     startup.cb = sizeof(startup);
     if (show >= 0) { startup.dwFlags = STARTF_USESHOWWINDOW; startup.wShowWindow = static_cast<WORD>(show); }
     PROCESS_INFORMATION process = {};
-    if (!CreateProcessW(executable, static_cast<PWSTR>(command.get()), nullptr, nullptr, FALSE,
-        0, nullptr, cwd ? cwd : static_cast<PCWSTR>(directory.get()), &startup, &process)) return GetLastError();
+    if (!CreateProcessW(executable, command, nullptr, nullptr, FALSE,
+        0, nullptr, cwd, &startup, &process)) return GetLastError();
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     return ERROR_SUCCESS;

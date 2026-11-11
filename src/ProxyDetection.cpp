@@ -13,12 +13,18 @@
 #include "ProxyDetection.h"
 #include <algorithm>
 #include <sstream>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace setup {
 namespace {
 struct Listener { unsigned port; DWORD process; };
 struct Candidate { unsigned port; std::wstring source; };
+struct Handle {
+    HANDLE value;
+    ~Handle() { if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+};
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Wrappers::HString;
 using Microsoft::WRL::Wrappers::HStringReference;
@@ -98,12 +104,13 @@ std::vector<unsigned> JsonPorts(const std::string& text, const std::wstring& pro
     }
     return {}; // Unreasonably large inbound arrays need manual confirmation.
 }
-std::string Trim(std::string value) {
+std::string_view TrimView(std::string_view value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) return {};
     return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
 }
-unsigned PortNumber(const std::string& text) {
+std::string Trim(std::string value) { return std::string(TrimView(value)); }
+unsigned PortNumber(std::string_view text) {
     if (text.empty() || text.size() > 5) return 0;
     unsigned port = 0;
     for (char c : text) {
@@ -113,26 +120,28 @@ unsigned PortNumber(const std::string& text) {
     return port <= 65535 ? port : 0;
 }
 // Deliberately accepts only simple top-level port scalars, never node/controller ports.
-unsigned ConfigPort(std::string text, const std::wstring& protocol) {
-    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
+unsigned ConfigPort(std::string_view text, const std::wstring& protocol) {
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.remove_prefix(3);
     unsigned ports[3]{};
     bool seen[3]{};
-    std::istringstream lines(text);
-    std::string line;
-    while (std::getline(lines, line)) {
-        if (Trim(line) == "---" || Trim(line) == "...") return 0; // No multi-document YAML.
+    while (!text.empty()) {
+        const auto end = text.find('\n');
+        const auto line = text.substr(0, end);
+        text.remove_prefix(end == text.npos ? text.size() : end + 1);
+        const auto trimmed = TrimView(line);
+        if (trimmed == "---" || trimmed == "...") return 0; // No multi-document YAML.
         const auto colon = line.find(':');
         if (colon == std::string::npos || line.empty() || line[0] == ' ' || line[0] == '\t') continue;
-        const std::string key = Trim(line.substr(0, colon));
+        const auto key = TrimView(line.substr(0, colon));
         const int index = key == "mixed-port" ? 0 : key == "port" ? 1 : key == "socks-port" ? 2 : -1;
         if (index < 0) continue;
         if (seen[index]) return 0;
         seen[index] = true;
-        std::string value = Trim(line.substr(colon + 1));
+        auto value = TrimView(line.substr(colon + 1));
         const auto comment = value.find('#');
         if (comment != std::string::npos) {
             if (!comment || (value[comment - 1] != ' ' && value[comment - 1] != '\t')) return 0;
-            value = Trim(value.substr(0, comment));
+            value = TrimView(value.substr(0, comment));
         }
         if (value.size() >= 2 && ((value.front() == '\'' && value.back() == '\'') || (value.front() == '"' && value.back() == '"')))
             value = value.substr(1, value.size() - 2);
@@ -142,17 +151,16 @@ unsigned ConfigPort(std::string text, const std::wstring& protocol) {
     return ports[0] ? ports[0] : ports[protocol == L"http" ? 1 : 2];
 }
 std::string ReadConfig(const std::wstring& path) {
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return {};
+    Handle file{CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr)};
+    if (file.value == INVALID_HANDLE_VALUE) return {};
     LARGE_INTEGER size{};
     std::string text;
-    if (GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
+    if (GetFileSizeEx(file.value, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
         text.resize(static_cast<size_t>(size.QuadPart));
         DWORD count = 0;
-        if (!ReadFile(file, text.data(), static_cast<DWORD>(text.size()), &count, nullptr) || count != text.size()) text.clear();
+        if (!ReadFile(file.value, text.data(), static_cast<DWORD>(text.size()), &count, nullptr) || count != text.size()) text.clear();
     }
-    CloseHandle(file);
     return text;
 }
 std::vector<Listener> Listeners() {
@@ -176,16 +184,20 @@ std::vector<Listener> Listeners() {
     }
     return {};
 }
-std::vector<DWORD> CoreProcesses(PCWSTR name) {
-    std::vector<DWORD> ids;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return ids;
+struct ProcessEntry { std::wstring name; DWORD id; };
+std::vector<ProcessEntry> ReadProcesses() {
+    std::vector<ProcessEntry> processes;
+    Handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
+    if (snapshot.value == INVALID_HANDLE_VALUE) return processes;
     PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
-    if (Process32FirstW(snapshot, &entry)) do {
-        if (!_wcsicmp(entry.szExeFile, name)) ids.push_back(entry.th32ProcessID);
-    } while (Process32NextW(snapshot, &entry));
-    CloseHandle(snapshot);
-    return ids;
+    if (Process32FirstW(snapshot.value, &entry)) do {
+        for (PCWSTR name : {L"clash-win64.exe", L"clash-win64-n.exe", L"clash-win32.exe", L"Clash for Windows.exe",
+            L"v2rayN.exe", L"xray.exe", L"v2ray.exe", L"sing-box.exe", L"verge-mihomo.exe", L"FlClashCore.exe"}) {
+            if (!_wcsicmp(entry.szExeFile, name)) { processes.push_back({entry.szExeFile, entry.th32ProcessID}); break; }
+        }
+    } while (Process32NextW(snapshot.value, &entry));
+    if (GetLastError() != ERROR_NO_MORE_FILES) processes.clear();
+    return processes;
 }
 bool Listening(unsigned port, const std::vector<Listener>& listeners, const std::vector<DWORD>* ids = nullptr) {
     return port && std::any_of(listeners.begin(), listeners.end(), [&](const Listener& item) {
@@ -198,11 +210,10 @@ std::wstring KnownFolder(REFKNOWNFOLDERID id) {
     std::wstring result(path); CoTaskMemFree(path); return result;
 }
 std::wstring ProcessImage(DWORD id) {
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id);
-    if (!process) return {};
+    Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id)};
+    if (!process.value) return {};
     std::wstring image(32768, L'\0'); DWORD size = static_cast<DWORD>(image.size());
-    const BOOL found = QueryFullProcessImageNameW(process, 0, image.data(), &size);
-    CloseHandle(process);
+    const BOOL found = QueryFullProcessImageNameW(process.value, 0, image.data(), &size);
     if (!found) return {};
     image.resize(size); return image;
 }
@@ -230,9 +241,23 @@ bool RegularFile(const std::wstring& path) {
 }
 // Discovery I/O is replaceable so tests never consult the user's tools or configuration.
 struct Discovery {
+    // This object belongs to one detection attempt; never retain PIDs across clicks.
+    mutable bool processesLoaded = false;
+    mutable std::vector<ProcessEntry> processList;
+    mutable std::vector<std::pair<DWORD, std::wstring>> images;
     virtual ~Discovery() = default;
-    virtual std::vector<DWORD> Processes(PCWSTR name) const { return CoreProcesses(name); }
-    virtual std::wstring Image(DWORD id) const { return ProcessImage(id); }
+    virtual std::vector<ProcessEntry> Snapshot() const { return ReadProcesses(); }
+    virtual std::wstring ReadImage(DWORD id) const { return ProcessImage(id); }
+    virtual std::vector<DWORD> Processes(PCWSTR name) const {
+        if (!processesLoaded) { processList = Snapshot(); processesLoaded = true; }
+        std::vector<DWORD> ids;
+        for (const auto& process : processList) if (!_wcsicmp(process.name.c_str(), name)) ids.push_back(process.id);
+        return ids;
+    }
+    virtual std::wstring Image(DWORD id) const {
+        for (const auto& entry : images) if (entry.first == id) return entry.second;
+        return images.emplace_back(id, ReadImage(id)).second;
+    }
     virtual std::wstring Folder(REFKNOWNFOLDERID id) const { return KnownFolder(id); }
     virtual bool File(const std::wstring& path) const { return RegularFile(path); }
     virtual std::string Read(const std::wstring& path) const { return ReadConfig(path); }
@@ -268,7 +293,7 @@ void DiscoverV2rayN(std::vector<Candidate>& candidates, const std::wstring& prot
             const bool localCore = !local.empty() && !_wcsicmp(root.c_str(), (local + L"\\v2rayN").c_str()) && runningGui;
             if (root.empty() || (!io.File(root + L"\\v2rayN.exe") && !localCore)) continue;
             std::vector<std::wstring> roots = {root};
-            if (!local.empty()) roots.push_back(local + L"\\v2rayN");
+            if (!local.empty() && _wcsicmp(root.c_str(), (local + L"\\v2rayN").c_str())) roots.push_back(local + L"\\v2rayN");
             const std::vector<DWORD> owner = {id};
             for (const auto& directory : roots) {
                 const auto modern = directory + L"\\binConfigs\\config.json";
@@ -318,6 +343,7 @@ ProxyDetection DetectProxyPort(const std::wstring& protocol, const std::wstring&
     if (protocol != L"http" && protocol != L"socks5")
         return {L"", L"HTTPS 代理端口需要手动确认。请查看代理工具「端口设置」；混合端口通常请选择 HTTP 或 SOCKS5。"};
     const auto listeners = Listeners();
+    if (listeners.empty()) return {}; // No candidate can be verified; skip configuration I/O.
     std::vector<Candidate> candidates;
     const Discovery io;
     DiscoverCfw(candidates, protocol, listeners, io);
@@ -331,7 +357,7 @@ ProxyDetection DetectProxyPort(const std::wstring& protocol, const std::wstring&
             {L"\\com.follow\\flclash\\config.yaml", L"FlClashCore.exe", L"FlClash"}
         };
         for (const auto& source : sources) {
-            const auto ids = CoreProcesses(source.process);
+            const auto ids = io.Processes(source.process);
             if (ids.empty()) continue;
             const unsigned port = ConfigPort(ReadConfig(root + source.path), protocol);
             if (Listening(port, listeners, &ids)) candidates.push_back({port, source.name});

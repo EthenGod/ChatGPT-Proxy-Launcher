@@ -2,10 +2,12 @@
 #include "../src/ProxyDetection.cpp"
 #include <stdio.h>
 #include <map>
+#include <chrono>
 struct FakeDiscovery : setup::Discovery {
     std::map<std::wstring, std::vector<DWORD>> processes;
     std::map<DWORD, std::wstring> images;
     std::map<std::wstring, std::string> files;
+    mutable unsigned configReads = 0;
     std::vector<DWORD> Processes(PCWSTR name) const override {
         const auto item = processes.find(name); return item == processes.end() ? std::vector<DWORD>{} : item->second;
     }
@@ -17,13 +19,45 @@ struct FakeDiscovery : setup::Discovery {
     }
     bool File(const std::wstring& path) const override { return files.count(path) != 0; }
     std::string Read(const std::wstring& path) const override {
+        ++configReads;
         const auto item = files.find(path); return item == files.end() ? "" : item->second;
     }
 };
+struct SnapshotDiscovery : setup::Discovery {
+    mutable unsigned snapshots = 0, imageReads = 0;
+    std::vector<setup::ProcessEntry> fixture = {{L"FlClashCore.exe", 42}, {L"XRAY.EXE", 43}};
+    std::vector<setup::ProcessEntry> Snapshot() const override { ++snapshots; return fixture; }
+    std::wstring ReadImage(DWORD id) const override {
+        ++imageReads; return id == 42 ? L"C:\\Fixture\\FlClashCore.exe" : L"";
+    }
+};
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
-int main() {
+int main(int argc, char** argv) {
     using namespace setup;
+    if (argc == 2 && !strcmp(argv[1], "--benchmark")) {
+        std::string config = "mixed-port: 12345\nproxies:\n";
+        while (config.size() < 4 * 1024 * 1024 - 80)
+            config += "  - name: synthetic-node\n    server: example.invalid\n    port: 443\n";
+        unsigned total = 0;
+        const auto begin = std::chrono::steady_clock::now();
+        for (int i = 0; i < 20; ++i) total += ConfigPort(config, L"http");
+        REQUIRE(total == 20 * 12345);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+        printf("YAML benchmark: %.3f ms/parse, %zu synthetic bytes, 20 parses (no user files)\n", ms / 20, config.size());
+        return 0;
+    }
     REQUIRE(PortNumber("65535") == 65535 && !PortNumber("65536") && !PortNumber("-1"));
+    SnapshotDiscovery scan;
+    REQUIRE(scan.Processes(L"flclashcore.exe") == std::vector<DWORD>{42});
+    REQUIRE(scan.Processes(L"xray.exe") == std::vector<DWORD>{43});
+    REQUIRE(scan.Processes(L"missing.exe").empty() && scan.snapshots == 1);
+    REQUIRE(scan.Image(42) == scan.Image(42) && scan.imageReads == 1);
+    REQUIRE(scan.Image(99).empty() && scan.Image(99).empty() && scan.imageReads == 2);
+    scan.fixture.clear();
+    REQUIRE(scan.Processes(L"xray.exe") == std::vector<DWORD>{43});
+    SnapshotDiscovery next; next.fixture.clear();
+    REQUIRE(next.Processes(L"xray.exe").empty() && next.snapshots == 1);
+    REQUIRE(next.Processes(L"xray.exe").empty() && next.snapshots == 1);
     REQUIRE(!PortNumber("7890abc") && !PortNumber("0") && !PortNumber("99999999999"));
     REQUIRE(ConfigPort("mixed-port: 12345\nexternal-controller: 127.0.0.1:9090\n", L"http") == 12345);
     REQUIRE(ConfigPort("\xEF\xBB\xBFmixed-port: '23456' # comment\r\n", L"socks5") == 23456);
@@ -36,6 +70,8 @@ int main() {
     for (const auto* invalid : {"65536", "-1", "true", "12abc", "[7890]", "&port 7890", "7890#bad"})
         REQUIRE(!ConfigPort(std::string("mixed-port: ") + invalid, L"http"));
     REQUIRE(!ConfigPort("mixed-port: 12345\n---\nmixed-port: 23456\n", L"http"));
+    REQUIRE(ConfigPort("# comment\r\n\t\r\nport: \"12345\" # end", L"http") == 12345);
+    REQUIRE(ConfigPort("\xef\xbb\xbf", L"http") == 0 && ConfigPort("", L"http") == 0);
     const std::string legacy = R"({"inbounds":[
         {"protocol":"socks","port":12345,"listen":"127.0.0.1","settings":{"auth":"noauth"}},
         {"protocol":"http","port":23456,"listen":"0.0.0.0"},
@@ -130,8 +166,9 @@ int main() {
     v2.images[42] = L"C:\\Example\\Local\\v2rayN\\bin\\xray\\xray.exe";
     v2.processes[L"v2rayN.exe"] = {1};
     v2.files[L"C:\\Example\\Local\\v2rayN\\binConfigs\\config.json"] = modernXray;
+    v2.configReads = 0;
     DiscoverV2rayN(found, L"http", listeners, v2);
-    REQUIRE(Select(found).port == L"12345");
+    REQUIRE(Select(found).port == L"12345" && v2.configReads == 1);
     REQUIRE(Select({}).port.empty());
     REQUIRE(Select({{12345, L"Clash Verge Rev"}, {12345, L"Windows"}}).port == L"12345");
     REQUIRE(Select({{12345, L"Clash Verge Rev"}, {23456, L"FlClash"}}).port.empty());
@@ -140,5 +177,6 @@ int main() {
     REQUIRE(DetectProxyPort(L"http", L"proxy.example.com").port.empty());
     REQUIRE(DetectProxyPort(L"socks5", L"[::1]").port.empty());
     puts("Proxy detection tests passed (synthetic inputs, no user configuration accessed).");
+    puts("PASS detection lifetime: one process snapshot, image lookup caching, fresh next request and unique config roots");
     return 0;
 }

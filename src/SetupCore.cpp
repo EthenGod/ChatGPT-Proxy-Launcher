@@ -519,12 +519,19 @@ Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget) {
     Com<IPersistFile> persist;
     if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))
         || FAILED(hr = persist->Load(path.c_str(), STGM_READ))) return Hr(hr, L"无法读取快捷方式：" + path);
-    std::vector<wchar_t> target(32768), arguments(32768), directory(32768), description(1024);
-    if (FAILED(hr = link->GetPath(target.data(), 32768, nullptr, expandedTarget ? 0 : SLGP_RAWPATH))
-        || FAILED(hr = link->GetArguments(arguments.data(), 32768))
-        || FAILED(hr = link->GetWorkingDirectory(directory.data(), 32768))
-        || FAILED(hr = link->GetDescription(description.data(), 1024))) return Hr(hr, L"无法读取快捷方式属性。");
-    value = { target.data(), arguments.data(), directory.data(), description.data() };
+    std::vector<wchar_t> text(32768);
+    Link read;
+    auto field = [&](HRESULT status, std::wstring& destination) {
+        hr = status;
+        if (SUCCEEDED(hr)) destination = text.data();
+        text[0] = 0;
+        return SUCCEEDED(hr);
+    };
+    if (!field(link->GetPath(text.data(), 32768, nullptr, expandedTarget ? 0 : SLGP_RAWPATH), read.target)
+        || !field(link->GetArguments(text.data(), 32768), read.arguments)
+        || !field(link->GetWorkingDirectory(text.data(), 32768), read.directory)
+        || !field(link->GetDescription(text.data(), 1024), read.description)) return Hr(hr, L"无法读取快捷方式属性。");
+    value = std::move(read);
     return {};
 }
 Result Load(const Paths& paths, Loaded& loaded) {

@@ -2,7 +2,7 @@
 rem SPDX-License-Identifier: GPL-3.0-only
 setlocal
 cd /d "%~dp0"
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+call tools\msvc-env.cmd
 if errorlevel 1 exit /b %errorlevel%
 if not exist outputs mkdir outputs
 if not exist work mkdir work

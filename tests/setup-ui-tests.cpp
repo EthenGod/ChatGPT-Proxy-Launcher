@@ -5,6 +5,14 @@
 #include <stdio.h>
 #include <chrono>
 #include <shellapi.h>
+#include <uxtheme.h>
+static bool trackPaintBuffer = false;
+static RECT paintBufferBounds{};
+static HPAINTBUFFER WINAPI TestPaintBuffer(HDC target, const RECT* bounds, BP_BUFFERFORMAT format,
+    BP_PAINTPARAMS* parameters, HDC* output) {
+    if (trackPaintBuffer) paintBufferBounds = *bounds;
+    return BeginBufferedPaint(target, bounds, format, parameters, output);
+}
 static unsigned disableCalls = 0, settingsCalls = 0, reminderCalls = 0;
 static unsigned folderCalls = 0;
 static bool openFolderSucceeds = true, folderRequestValid = false;
@@ -79,6 +87,7 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #define ShellExecuteExW TestShellExecute
 #define RegGetValueW TestThemeRead
 #define RegSetKeyValueW TestThemeWrite
+#define BeginBufferedPaint TestPaintBuffer
 #define wWinMain SetupEntryForTest
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
@@ -86,6 +95,7 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #undef ShellExecuteExW
 #undef RegGetValueW
 #undef RegSetKeyValueW
+#undef BeginBufferedPaint
 
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
 struct ButtonPaintProbe { unsigned paints = 0, captions = 0; };
@@ -173,6 +183,47 @@ static bool Capture(App& app, PCWSTR filename) {
     DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(app.window, screen);
     return saved;
 }
+static bool PartialSurfaceMatches(App& app, HWND target) {
+    RECT rect{}; GetClientRect(target, &rect);
+    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = rect.right; info.bmiHeader.biHeight = -rect.bottom;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
+    HDC screen = GetDC(target), dc[2]{};
+    HBITMAP bitmap[2]{}; HGDIOBJ previous[2]{}; DWORD* pixels[2]{};
+    bool matches = screen != nullptr && rect.right > 0 && rect.bottom > 0;
+    for (int i = 0; matches && i < 2; ++i) {
+        dc[i] = CreateCompatibleDC(screen);
+        bitmap[i] = CreateDIBSection(screen, &info, DIB_RGB_COLORS, reinterpret_cast<void**>(&pixels[i]), nullptr, 0);
+        if (!dc[i] || !bitmap[i]) { matches = false; break; }
+        previous[i] = SelectObject(dc[i], bitmap[i]);
+        PatBlt(dc[i], 0, 0, rect.right, rect.bottom, WHITENESS);
+    }
+    if (matches) {
+        app.DrawSurface(target, dc[0]);
+        // Tile boundaries deliberately cross card corners, input outlines and the footer.
+        for (LONG y = 0; matches && y < rect.bottom; y += 137) {
+            for (LONG x = 0; matches && x < rect.right; x += 173) {
+                const RECT part{x, y, (std::min)(x + 173, rect.right), (std::min)(y + 137, rect.bottom)};
+                HDC buffered = nullptr;
+                HPAINTBUFFER paint = BeginBufferedPaint(dc[1], &part, BPBF_COMPATIBLEBITMAP, nullptr, &buffered);
+                if (!paint) { matches = false; break; }
+                app.DrawSurface(target, buffered);
+                matches = SUCCEEDED(EndBufferedPaint(paint, TRUE));
+            }
+        }
+        GdiFlush();
+        const size_t count = static_cast<size_t>(rect.right) * rect.bottom;
+        for (size_t i = 0; matches && i < count; ++i)
+            matches = (pixels[0][i] & 0xffffff) == (pixels[1][i] & 0xffffff);
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (previous[i]) SelectObject(dc[i], previous[i]);
+        if (bitmap[i]) DeleteObject(bitmap[i]);
+        if (dc[i]) DeleteDC(dc[i]);
+    }
+    if (screen) ReleaseDC(target, screen);
+    return matches;
+}
 static bool LabelsFit(App& app) {
     for (const auto& item : app.controls) {
         if (!IsWindowVisible(item.window) || IsField(item.id) || item.id == Footer || item.id == ThemeToggle || IsHelp(item.id)) continue;
@@ -229,6 +280,15 @@ static int RunTests(PCWSTR folder) {
         -20000, -20000, 720, 812, nullptr, nullptr, app.instance, &app));
     ShowWindow(app.window, SW_SHOWNOACTIVATE);
     UpdateWindow(app.window);
+    // Partial surface invalidation must not allocate a whole-window backing buffer.
+    ValidateRect(app.body, nullptr);
+    RECT repaint{2, 2, 18, 18};
+    InvalidateRect(app.body, &repaint, FALSE);
+    trackPaintBuffer = true;
+    app.Paint(app.body);
+    trackPaintBuffer = false;
+    REQUIRE(EqualRect(&repaint, &paintBufferBounds));
+    REQUIRE(PartialSurfaceMatches(app, app.window) && PartialSurfaceMatches(app, app.body));
     REQUIRE(app.preferredDark && (app.contrast || app.dark));
     REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_VERSION_TEXT);
     const auto initialArguments = app.Text(Preview);
@@ -441,6 +501,7 @@ static int RunTests(PCWSTR folder) {
             REQUIRE((GetWindowLongPtrW(app.Get(id), GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW);
         }
         SetFocus(app.body);
+        REQUIRE(PartialSurfaceMatches(app, app.body));
         REQUIRE(Capture(app, setup::Join(folder, mode == 0 ? L"setup-protocol-light.png"
             : mode == 1 ? L"setup-protocol-dark.png" : L"setup-protocol-contrast.png").c_str()));
     }
@@ -507,6 +568,7 @@ static int RunTests(PCWSTR folder) {
     SetWindowPos(app.window, nullptr, 0, 0, 1080, 1218, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     app.Layout();
     REQUIRE(FooterAligned(app));
+    REQUIRE(PartialSurfaceMatches(app, app.body));
     REQUIRE(Capture(app, setup::Join(folder, L"setup-dark-150.png").c_str()));
     for (UINT scale : {96u, 120u, 144u, 192u}) {
         app.dpi = scale; app.Theme(0); app.motionEnabled = false;
@@ -519,6 +581,7 @@ static int RunTests(PCWSTR folder) {
         const bool proxyEnabled = app.Checked(Proxy);
         app.Check(Proxy, true); app.Refresh(false);
         REQUIRE(LabelsFit(app));
+        REQUIRE(PartialSurfaceMatches(app, app.body));
         RECT row{}, question{};
         GetWindowRect(app.Get(CodexEnv), &row); GetWindowRect(app.Get(CodexEnvHelp), &question);
         HDC measure = GetDC(app.Get(CodexEnv)); HGDIOBJ previousFont = SelectObject(measure, app.fonts[0]); SIZE label{};
@@ -548,6 +611,7 @@ static int RunTests(PCWSTR folder) {
     app.ScrollTo(160); GetWindowRect(app.Get(Preview), &after);
     REQUIRE(app.layoutPasses == layouts && before.top - after.top == 160);
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    REQUIRE(PartialSurfaceMatches(app, app.body));
     REQUIRE(Capture(app, setup::Join(folder, L"setup-scroll.png").c_str()));
     const std::wstring savedFooter = app.Text(Footer);
     app.Set(Footer, L"当前部署目录无法写入。请在高级设置中选择另一个目录，原文件不会被覆盖。");
@@ -671,6 +735,7 @@ static int RunTests(PCWSTR folder) {
     app.Command(CloseButton, BN_CLICKED);
     REQUIRE(!IsWindow(app.window) && reminderCalls == finalReminders);
     printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
+    puts("PASS dirty-region buffers and pixel-identical partial/full surface painting across themes, scaling and scrolling");
     puts("PASS unavailable silent switch stays disabled across edits, restore and save success/failure; Tab skips it and saved values are retained");
     puts("PASS three font sizes, interruptible 150 ms motion, stopped idle timer, reduced motion and high contrast");
     puts("PASS dark default, independent theme preference and write failure (mock registry); owner-drawn protocol selection, arrows, Space, Tab stops and rendering");

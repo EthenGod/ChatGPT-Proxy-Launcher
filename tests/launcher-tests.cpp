@@ -304,16 +304,19 @@ int wmain(int argc, wchar_t** argv) {
     REQUIRE(BuildCommand(executable, L"", command, wcslen(executable) + 3) == 0);
     REQUIRE(StartApplication(L"missing.exe", L"") == ERROR_BAD_PATHNAME);
     fakeCreate = true;
-    for (unsigned failure = 1; failure <= 2; ++failure) {
-        allocationCalls = 0; failAllocation = failure;
-        REQUIRE(StartApplication(L"C:\\child.exe", L"") == ERROR_NOT_ENOUGH_MEMORY);
-    }
+    allocationCalls = 0; failAllocation = 1;
+    REQUIRE(StartApplication(L"C:\\child.exe", L"") == ERROR_NOT_ENOUGH_MEMORY);
     failAllocation = 0;
+    allocationCalls = 0;
     REQUIRE(StartApplication(L"C:\\child.exe", L"--value=\"中文 空格\"") == ERROR_ACCESS_DENIED);
+    REQUIRE(allocationCalls == 1 && liveAllocations == 0);
     REQUIRE(workingDirectory == L"C:\\" && application == L"C:\\child.exe");
     REQUIRE(forwarded == L"\"C:\\child.exe\" --value=\"中文 空格\"");
     REQUIRE(StartApplication(L"C:\\test folder\\child.exe", L"") == ERROR_ACCESS_DENIED);
     REQUIRE(workingDirectory == L"C:\\test folder");
+    allocationCalls = 0;
+    REQUIRE(StartApplication(L"C:\\child.exe", L"", L"D:\\working folder") == ERROR_ACCESS_DENIED);
+    REQUIRE(workingDirectory == L"D:\\working folder" && allocationCalls == 1 && liveAllocations == 0);
     fakeCreate = false;
     DWORD missing = StartApplication(L"C:\\nonexistent-launcher-test-123\\missing.exe", L"");
     if (missing != ERROR_FILE_NOT_FOUND && missing != ERROR_PATH_NOT_FOUND && missing != ERROR_DIRECTORY) {

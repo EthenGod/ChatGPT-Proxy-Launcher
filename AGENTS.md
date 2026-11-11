@@ -4,8 +4,10 @@
 - 这是 Windows x64 原生 C++ ChatGPT 启动器，不是 OpenAI 官方产品。
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法。
 - 图形配置工具入口为 `src/ChatGPTLauncherSetup.cpp`，部署与参数逻辑在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
-- 构建：根目录运行 `cmd /c build.cmd`，需要 VS 2022 Build Tools 的 C++ 工具；产物在 `outputs/`。
+- 构建：根目录运行 `cmd /c build.cmd`，需要 Visual Studio / Build Tools 的 C++ 桌面开发组件和 Windows SDK；产物在 `outputs/`。
+- `tools/msvc-env.cmd` 是共用工具链入口，优先复用 x64 开发者终端，否则用 Visual Studio Installer 的 `vswhere` 定位带 C++ 工具的安装。
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；只启动隔离测试子进程，不启动 ChatGPT。
+- 静态分析：根目录运行 `cmd /c tests\analyze.cmd`。性能方案与复测方法见 `docs/performance-review.md`；`work\proxy-tests.exe --benchmark` 只解析合成配置，不读取本机代理。
 - `setup.ps1` 是 PowerShell 下载入口；`tests/download-tests.ps1` 替换网络和启动操作，验证下载与校验。
 - `tests/preview-download.ps1` 用本机限速数据预览真实下载进度条，不访问 GitHub 或启动配置器。
 - 发布文件：根目录运行 `cmd /c release.cmd`，重新构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。两个 EXE 的版本统一维护在 `src/AppVersion.h`，升级时同步 `src/Setup.manifest`。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
