@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "后台部署请求 v1（待确认草案）",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "base": {"enum": ["preserve", "defaults"], "default": "preserve"},
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "directory": {"type": "string", "minLength": 3, "maxLength": 32767},
+        "startup": {"type": "boolean"},
+        "desktop": {"type": "boolean"},
+        "proxy": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled"],
+              "properties": {"enabled": {"const": false}}
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled", "protocol", "host", "port"],
+              "properties": {
+                "enabled": {"const": true},
+                "protocol": {"enum": ["http", "https", "socks5"]},
+                "host": {"type": "string", "minLength": 1, "maxLength": 253},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+              }
+            }
+          ]
+        },
+        "bypass": {"type": "string", "maxLength": 8192},
+        "extraArguments": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"type": "string", "maxLength": 8192}
+        }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codexEnv": {"enum": ["update", "leave"], "default": "leave"},
+        "officialStartup": {"enum": ["disable", "leave"], "default": "leave"}
+      }
+    }
+  },
+  "$comment": "此 Schema 只校验结构。绝对路径、主机格式、NUL、最终 Windows 命令行长度、重复 JSON 键和合并后的代理状态必须由原生代码校验。default 为文档说明，校验器不负责填充。"
+}

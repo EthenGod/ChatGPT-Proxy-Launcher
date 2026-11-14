@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.assistant-addon",
+  "name": "示例扩展",
+  "version": "1.2.0",
+  "requires": ["ready-file-v1", "tracked-retry-v1"],
+  "entry": {
+    "runtime": "exe",
+    "path": "Addon.exe",
+    "workingDirectory": ".",
+    "arguments": ["--profile", "default"],
+    "window": "normal"
+  },
+  "dependsOn": [],
+  "readiness": {
+    "mode": "signal",
+    "timeoutMs": 15000
+  },
+  "retry": {
+    "maxAttempts": 2,
+    "delayMs": 1000,
+    "safe": true
+  },
+  "config": {}
+}

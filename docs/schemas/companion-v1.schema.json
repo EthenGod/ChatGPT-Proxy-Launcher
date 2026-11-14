@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "链式启动清单 v1（待确认草案）",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "version", "requires", "entry", "readiness"],
+  "$defs": {
+    "id": {"type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$"},
+    "version": {"type": "string", "maxLength": 32, "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "relativePath": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "arguments": {"type": "array", "maxItems": 128, "items": {"type": "string", "maxLength": 8192}}
+  },
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "id": {"$ref": "#/$defs/id"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 80},
+    "version": {"$ref": "#/$defs/version"},
+    "requires": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9-]*-v[1-9][0-9]*$"}
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "path"],
+      "properties": {
+        "runtime": {"enum": ["exe", "powershell", "wscript", "python", "pythonw", "node", "java", "batch"]},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "workingDirectory": {"$ref": "#/$defs/relativePath", "default": "."},
+        "hostPath": {"type": "string", "minLength": 3, "maxLength": 32767},
+        "arguments": {"$ref": "#/$defs/arguments", "default": []},
+        "window": {"enum": ["normal", "hidden"], "default": "normal"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"runtime": {"enum": ["exe", "batch"]}}, "required": ["runtime"]},
+          "then": {"not": {"required": ["hostPath"]}}
+        }
+      ]
+    },
+    "dependsOn": {
+      "type": "array",
+      "maxItems": 31,
+      "uniqueItems": true,
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {"id": {"$ref": "#/$defs/id"}, "minimumVersion": {"$ref": "#/$defs/version"}}
+      }
+    },
+    "readiness": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": {"const": "signal"},
+            "timeoutMs": {"type": "integer", "minimum": 1000, "maximum": 30000, "default": 15000}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": {"const": "exit-code"},
+            "timeoutMs": {"type": "integer", "minimum": 1000, "maximum": 30000, "default": 15000},
+            "successExitCodes": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "integer", "minimum": 0, "maximum": 4294967295}, "default": [0]}
+          }
+        }
+      ]
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 3, "default": 1},
+        "delayMs": {"type": "integer", "minimum": 250, "maximum": 5000, "default": 1000},
+        "safe": {"type": "boolean", "default": false}
+      }
+    },
+    "config": {"type": "object", "default": {}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"readiness": {"properties": {"mode": {"const": "signal"}}, "required": ["mode"]}}, "required": ["readiness"]},
+      "then": {"properties": {"requires": {"contains": {"const": "ready-file-v1"}}}}
+    },
+    {
+      "if": {"properties": {"retry": {"properties": {"maxAttempts": {"minimum": 2}}, "required": ["maxAttempts"]}}, "required": ["retry"]},
+      "then": {
+        "properties": {
+          "retry": {"required": ["safe"], "properties": {"safe": {"const": true}}},
+          "requires": {"contains": {"const": "tracked-retry-v1"}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"retry": {"properties": {"safe": {"const": true}}, "required": ["safe"]}}, "required": ["retry"]},
+      "then": {"properties": {"requires": {"contains": {"const": "tracked-retry-v1"}}}}
+    }
+  ],
+  "$comment": "结构校验不能替代语义校验。运行时还需检查路径边界与文件类型、依赖 ID 唯一性和环、已知能力、数值版本溢出、UTF-8 字节大小、NUL 和最终 Windows 命令行长度。用户覆盖后的有效配置须重新校验。"
+}
