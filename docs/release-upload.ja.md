@@ -1,5 +1,7 @@
 [简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/master/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/master/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/master/docs/release-upload.ja.md)
 
+> この文書には機械翻訳による内容が含まれる場合があります。内容に相違がある場合は、[中国語原版](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/master/docs/release-upload.md)を優先してください。
+
 # v1.1.1 多言語対応と画面表示の改善
 
 [![クイックスタート：手順を見る](https://img.shields.io/badge/First_time-Quick_start-11775B?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/master/README.ja.md#クイックスタート) [![ChatGPTLauncherSetup.exe をダウンロード（Windows x64）](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.1.1/ChatGPTLauncherSetup.exe)

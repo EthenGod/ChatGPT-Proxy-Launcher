@@ -1,5 +1,7 @@
 [简体中文](translating.md) | [English](translating.en.md) | [日本語](translating.ja.md)
 
+> This document may include machine-translated content. In case of discrepancies, the [Chinese original](translating.md) takes precedence.
+
 # Community translation guide
 
 Chinese is the source language. English can be used as a reference. UI text, help, errors, launcher notifications and PowerShell download messages live in `locales/`; no C++ edits are needed. Translations ship with the program, so users do not need separate language packs.

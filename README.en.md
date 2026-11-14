@@ -1,5 +1,7 @@
 [简体中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
 
+> This document may include machine-translated content. In case of discrepancies, the [Chinese original](README.md) takes precedence.
+
 # ChatGPT Lightweight Launcher
 
 An unofficial launcher for ChatGPT on Windows x64. Choose a proxy for ChatGPT, create a desktop shortcut, and start it when you sign in. The launcher exits after starting the app and does not change your system proxy.

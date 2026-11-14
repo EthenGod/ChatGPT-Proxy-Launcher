@@ -1,5 +1,7 @@
 [简体中文](taskbar-repair.md) | [English](taskbar-repair.en.md) | [日本語](taskbar-repair.ja.md)
 
+> This document may include machine-translated content. In case of discrepancies, the [Chinese original](taskbar-repair.md) takes precedence.
+
 # Repairing the taskbar icon after an update
 
 The launcher can repair a Start menu shortcut before launching ChatGPT when it confirms that the shortcut still points to an old app version. This avoids having to repair it manually after each update.
