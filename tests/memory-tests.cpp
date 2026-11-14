@@ -60,5 +60,48 @@ int main() {
     }
     REQUIRE(failedPaths && succeededPaths && failedErrors);
     printf("PASS system memory ownership: 56 allocation-failure positions, zero outstanding API buffers, no user paths accessed\n");
+    // Reading existing fields must still work when no further heap allocation is possible.
+    auto value = automation::Json::Object();
+    constexpr wchar_t key[] = L"long-existing-json-field";
+    value[key] = automation::Json(true);
+    size_t lookupAllocations = 0;
+    bool lookupCorrect = true;
+    {
+        memory_fault::Scope count;
+        for (unsigned i = 0; i < 1000; ++i) {
+            lookupCorrect = lookupCorrect && value.Has(key) && !value.Has(L"long-missing-json-field")
+                && value.At(key).Bool() && value[key].Bool();
+        }
+        lookupAllocations = memory_fault::calls;
+    }
+    printf("JSON field lookup: %zu allocations in 1000 rounds\n", lookupAllocations);
+    REQUIRE(lookupCorrect && lookupAllocations == 0 && value.object.size() == 1);
+    {
+        memory_fault::Scope fault(0);
+        REQUIRE(value.Has(key) && !value.Has(L"missing-field") && value.At(key).Bool() && value[key].Bool());
+    }
+    bool missing = false;
+    try { value.At(L"long-missing-json-field"); } catch (const automation::Invalid&) { missing = true; }
+    REQUIRE(missing && value.object.size() == 1);
+    value[L"new-field"] = automation::Json(false);
+    REQUIRE(!value.At(L"new-field").Bool() && value.object.size() == 2);
+    const auto roundTrip = automation::ParseJson(automation::WriteJson(value));
+    REQUIRE(roundTrip.At(key).Bool() && !roundTrip.At(L"new-field").Bool());
+    const std::wstring text(200, L'x');
+    size_t literalAllocations = 0, stringAllocations = 0;
+    {
+        memory_fault::Scope count;
+        const automation::Json literal(text.c_str());
+        REQUIRE(literal.String() == text);
+        literalAllocations = memory_fault::calls;
+    }
+    {
+        memory_fault::Scope count;
+        const automation::Json string(text);
+        REQUIRE(string.String() == text);
+        stringAllocations = memory_fault::calls;
+    }
+    REQUIRE(literalAllocations == stringAllocations);
+    puts("PASS JSON lookup: no temporary allocations, missing fields unchanged and insertion/round trip preserved");
     return 0;
 }

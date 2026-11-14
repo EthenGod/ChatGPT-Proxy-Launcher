@@ -15,11 +15,12 @@ struct Json {
     bool boolean = false;
     std::wstring text;
     std::vector<Json> array;
-    std::map<std::wstring, Json> object;
+    // Transparent lookup accepts field literals without allocating a temporary string.
+    std::map<std::wstring, Json, std::less<>> object;
     Json() = default;
     explicit Json(bool value) : type(Type::Boolean), boolean(value) {}
     explicit Json(const std::wstring& value) : type(Type::String), text(value) {}
-    explicit Json(const wchar_t* value) : Json(std::wstring(value)) {}
+    explicit Json(const wchar_t* value) : type(Type::String), text(value) {}
     static Json Number(long long value);
     static Json Object();
     static Json Array();

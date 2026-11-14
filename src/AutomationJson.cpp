@@ -10,14 +10,19 @@ namespace automation {
 Json Json::Number(long long value) { Json j; j.type = Type::Number; j.text = std::to_wstring(value); return j; }
 Json Json::Object() { Json j; j.type = Type::Object; return j; }
 Json Json::Array() { Json j; j.type = Type::Array; return j; }
-bool Json::Has(const wchar_t* key) const { return type == Type::Object && object.count(key) != 0; }
+bool Json::Has(const wchar_t* key) const { return type == Type::Object && object.find(key) != object.end(); }
 const Json& Json::At(const wchar_t* key) const {
-    if (!Has(key)) throw Invalid("missing-field");
-    return object.at(key);
+    if (type == Type::Object) {
+        const auto found = object.find(key);
+        if (found != object.end()) return found->second;
+    }
+    throw Invalid("missing-field");
 }
 Json& Json::operator[](const wchar_t* key) {
     if (type != Type::Object) throw Invalid("expected-object");
-    return object[key];
+    const auto found = object.lower_bound(key);
+    if (found != object.end() && found->first == key) return found->second;
+    return object.try_emplace(found, key)->second;
 }
 const std::wstring& Json::String(size_t maximum) const {
     if (type != Type::String || text.size() > maximum || text.find(L'\0') != text.npos) throw Invalid("invalid-string");
