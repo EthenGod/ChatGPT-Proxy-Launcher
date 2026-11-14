@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "AutomationIO.h"
 #include <shellapi.h>
 #include <cwchar>
 
@@ -59,17 +60,7 @@ void Append(std::wstring& text, const std::wstring& item) {
 } // namespace
 
 std::wstring QuoteArgument(const std::wstring& value) {
-    if (!value.empty() && value.find_first_of(L" \t\"") == std::wstring::npos) return value;
-    std::wstring out = L"\"";
-    size_t slashes = 0;
-    for (wchar_t c : value) {
-        if (c == L'\\') { ++slashes; continue; }
-        out.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
-        slashes = 0;
-        out += c;
-    }
-    out.append(slashes * 2, L'\\');
-    return out + L'"';
+    return automation::Quote(value);
 }
 Result BuildArguments(const Options& options, std::wstring& arguments) {
     arguments.clear();
@@ -102,8 +93,8 @@ Result BuildArguments(const Options& options, std::wstring& arguments) {
         const ManagedOption kind = ManagedKind(token.value);
         if (kind != Other && ++counts[kind] > 1)
             return Fail(ERROR_INVALID_PARAMETER, L"同一启动选项出现了两次，请检查额外参数与界面设置。");
-        if (token.value == L"--launcher-check")
-            return Fail(ERROR_INVALID_PARAMETER, L"--launcher-check 只用于诊断，不能保存为启动选项。");
+        if (token.value == L"--launcher-check" || token.value == L"--launcher-info" || token.value == L"--launcher-chain")
+            return Fail(ERROR_INVALID_PARAMETER, L"启动器的诊断和自动化命令不能保存为 ChatGPT 启动选项。");
     }
     return {};
 }

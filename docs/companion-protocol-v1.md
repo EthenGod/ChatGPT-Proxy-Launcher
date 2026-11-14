@@ -1,6 +1,6 @@
 # 链式启动规范 v1
 
-状态：待确认草案。尚未实现。与[后台部署设计](automation-design.md)一起评审。
+状态：开发版 v1.0.7 已实现，尚未发布。后台接口见[部署设计](automation-design.md)，操作示例见[自动化接入](automation-usage.md)。
 
 本规范用于本机、当前用户主动注册的程序和脚本。它定义启动、参数、就绪确认、有限重试及发现接口。它不负责下载扩展、自动更新扩展、权限提升或持续监控。
 
@@ -33,7 +33,7 @@ ChatGPT 进程创建成功也不代表其界面、登录或网络已经就绪。
   companion-policy.json               用户的全链设置
 ```
 
-上述位置不随启动器 EXE 的自定义部署目录改变。普通启动没有注册项时不创建目录，也不初始化 JSON、回执或进程跟踪功能。显式查询或请求结果文件时按需序列化结果。
+上述位置不随启动器 EXE 的自定义部署目录改变。普通启动没有注册项时不创建目录或协议文件，不做进程族跟踪。两个启动目录均不存在时直接返回；已建空目录仍检查全链设置。结果只在调用者明确要求时写入文件。
 
 ### 作者清单
 
@@ -97,7 +97,7 @@ ChatGPT 进程创建成功也不代表其界面、登录或网络已经就绪。
 
 ### 注册接口
 
-以下命令均为拟实现接口，使用后台部署的结果结构和本用户写锁。无界面命令不执行扩展。
+以下命令使用后台部署的结果结构和本用户写锁。结果路径必须是新 `.json` 文件。无界面命令不执行扩展。
 
 ```text
 ChatGPTLauncherSetup.exe --headless companion register --manifest <绝对路径> --result <新文件>
@@ -114,11 +114,11 @@ ChatGPTLauncherSetup.exe --headless companion list --result <新文件>
 
 注册记录不是信任凭证。不会从下载目录自动发现并执行清单，不会按清单中的 URL 下载代码。作者更新已受信任目录内的入口，属于该扩展自身的更新责任。
 
-注册应验证全图依赖。批量安装依赖时先注册被依赖项。注册记录损坏时不能覆盖猜测；返回明确文件路径供调用方处理。
+注册验证全图依赖。安装多个依赖时先注册被依赖项。注册记录损坏时不能覆盖猜测；可用 `list` 查看对应 ID，再检查 `CompanionRegistry\<ID>.json`。
 
-停用或移除被依赖项时，不级联修改其他扩展。操作结果以警告列出受影响 ID，提交成功仍保留 `committed=true`；下次启动按 `skipped-dependency` 处理这些依赖项。
+停用、移除或降级被依赖项时，不级联修改其他扩展。操作结果以警告列出无法满足依赖的 ID，提交成功仍保留 `committed=true`；下次启动按 `skipped-dependency` 处理这些依赖项。
 
-从旧目录迁移时，先停用同一入口的旧快捷方式，再启用注册项。能解析并确认同一入口时，注册返回 `legacy-entry-conflict`。不能识别的包装脚本由用户核对，不按名称猜测或删除。一次启动分别处理普通目录和注册项，不能承诺自动识别所有重复程序。
+从旧目录迁移时，先移出同一入口的旧快捷方式，再启用注册项。能解析并确认同一入口时，注册返回 `legacy-entry-conflict`。注册后又添加同一旧入口时，本轮跳过旧入口并报告冲突。不能识别的包装脚本由用户核对，不按名称猜测或删除。
 
 ## 3. 入口与参数
 
@@ -215,7 +215,7 @@ BAT/CMD 不拼接任意参数到 cmd 命令。原数组放在上下文 `input.ar
 ### 两种确认方式
 
 - `signal`：要求 `ready-file-v1`。收到 `ready` 后继续观察根进程 1 秒；收到 `already-running` 后观察已核对的实例 1 秒。若期间退出则失败。该 1 秒计入本次超时。
-- `exit-code`：用于执行完即退出的短任务。等待根进程结束，退出码命中 `readiness.successExitCodes` 才记为 `completed`，默认 `[0]`。任务必须自己等待其实际工作结束；创建后台子进程后立即返回 0 不能代表工作完成。
+- `exit-code`：用于执行完即退出的短任务。等待根进程结束，退出码命中 `readiness.successExitCodes` 才记为 `completed`，默认 `[0]`。启用 Job 跟踪时还等待进程族归零；超过期限仍有子进程则失败。任务必须自己等待其实际工作结束；未跟踪的入口返回 0 不能证明后台工作完成。
 
 `exit-code` 入口也获得上下文，但没有回执路径，不写回执。其上下文省略 `replyPath`，其余字段相同。不支持 JSON 的 VBS 或批处理可使用短任务模式，或由作者提供轻量适配器。
 
@@ -240,7 +240,7 @@ BAT/CMD 不拼接任意参数到 cmd 命令。原数组放在上下文 `input.ar
 
 每项超时默认 15000 ms，上限 30000 ms。重试间隔默认 1000 ms，范围 250–5000 ms。全链最多 32 个注册项。总预算覆盖旧目录派发、注册图读取、就绪观察及重试间隔；每项有效等待时间取其超时与剩余总预算的较小值。旧目录不等就绪，但派发前也检查剩余预算。
 
-超过 32 个注册文件时停止读取注册图并报告 `entry-limit`，不能按目录枚举顺序截取部分项。两个启动目录都为空时，普通启动直接跳过整个调度；显式结果入口写入空 `entries`。
+超过 32 个注册文件时停止读取注册图并报告 `entry-limit`，不能按目录枚举顺序截取部分项。没有待启动项时不创建上下文；显式结果入口返回空 `entries`。
 
 预算使用单调时钟。它限制主动等待，无法保证磁盘或系统 API 在相同时间内返回。不承诺硬实时截止。
 
@@ -263,7 +263,7 @@ BAT/CMD 不拼接任意参数到 cmd 命令。原数组放在上下文 `input.ar
 
 允许重试的入口在进程创建时加入独立 Job Object。使用 `PROC_THREAD_ATTRIBUTE_JOB_LIST`，避免先运行再附加导致漏掉早期子进程。不设置 `KILL_ON_JOB_CLOSE`、终止限制或允许脱离的标志。关闭启动器不终止扩展。[创建时附加 Job 的接口](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)、[Job Object 行为](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。
 
-进程族是否为空通过 Job 计数和通知确认，不把等待 Job 句柄当作普通“所有进程退出”检测。跟踪创建或附加失败时返回 `tracking-unavailable`，不悄悄改成不跟踪的重试。
+进程族是否为空通过 Job 的 `ActiveProcesses` 计数确认，不把等待 Job 句柄当作普通“所有进程退出”检测。根进程已退出但进程族尚未归零时，最多每 250 ms 复查一次，并受截止时间约束。跟踪创建或附加失败时报告错误，不悄悄改成不跟踪的重试。
 
 Job 不能追踪所有服务、WMI 或外部代理代为创建的进程。声明 `safe=true` 的扩展不得通过这些途径脱离跟踪后再请求重试。需要这类行为的扩展只能尝试一次，并自行去重。[跟踪范围与例外](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。
 
@@ -279,7 +279,7 @@ Job 不能追踪所有服务、WMI 或外部代理代为创建的进程。声明
 
 ### 显式取得本轮结果
 
-自动化调用方可使用独立入口。以下接口尚未实现：
+自动化调用方可使用独立入口：
 
 ```text
 ChatGPTProxyLauncher.exe --launcher-chain --result <新文件绝对路径> --feedback quiet -- <ChatGPT 原始参数>
@@ -297,7 +297,7 @@ ChatGPTProxyLauncher.exe --launcher-chain --result <新文件绝对路径> --fee
 
 ## 7. 对外发现与兼容
 
-发现信息使用后台设计中的 `discovery.json` 和 `--launcher-info`。至少区分 `managed`、`legacy`、`missing`、`invalid`、`unknown`。`info` 查询成功只是取得状态，不等于启动器已部署。
+发现信息使用后台设计中的 `discovery.json` 和 `--launcher-info`。区分 `not-deployed`、`managed`、`legacy`、`missing`、`invalid`、`unknown`。`info` 查询成功只是取得状态，不等于启动器已部署。
 
 能力名按行为版本固定：`headless-deploy-v1`、`companion-registry-v1`、`ready-file-v1`、`tracked-retry-v1`、`chain-run-result-v1`。扩展先检查 `chainProtocolVersions` 和必需能力，再决定是否注册。只检查 EXE 文件名或版本大小不足以证明能力存在。
 
@@ -305,7 +305,7 @@ ChatGPTProxyLauncher.exe --launcher-chain --result <新文件绝对路径> --fee
 
 规范 v1 不提供自动更新、持续心跳、远程健康 URL、服务安装或下载执行。扩展更新由作者负责。稳定清单路径、固定 ID 和独立用户覆盖项用于避免更新时重配参数。
 
-## 8. 实现时必须通过的测试
+## 8. 测试要求
 
 | 场景 | 预期 |
 | --- | --- |

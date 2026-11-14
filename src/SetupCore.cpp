@@ -2,6 +2,8 @@
 #include "SetupCore.h"
 #include "CodexEnv.h"
 #include "StartupApps.h"
+#include "AutomationIO.h"
+#include "AppVersion.h"
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <utility>
@@ -345,6 +347,7 @@ Result Load(const Paths& paths, Loaded& loaded) {
         loaded.options.desktop = true;
     if (loaded.hasSettings) {
         Result parsed = ParseArguments(saved.arguments, loaded.options);
+        loaded.validArguments = static_cast<bool>(parsed);
         if (!parsed) loaded.notice = parsed.message;
         const DWORD a = GetFileAttributesW(loaded.managedTarget.c_str());
         loaded.deployed = a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
@@ -356,7 +359,7 @@ Result Load(const Paths& paths, Loaded& loaded) {
     }
     return {};
 }
-Result Apply(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget) {
+static Result ApplyFiles(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget, bool preflight) {
     deployedTarget.clear();
     std::wstring directory, arguments;
     Result result = NormalizeDirectory(options.directory, directory);
@@ -379,7 +382,22 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
     result = Load(paths, previous);
     if (!result) return result;
     const std::wstring target = Join(directory, LauncherName);
-    Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv;
+    Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv, oldDiscovery;
+    const auto discoveryPath = Join(paths.defaultDirectory, L"discovery.json");
+    try {
+        for (const auto& path : {directory, paths.settingsLink, paths.startupLink, discoveryPath}) automation::CheckPlainPath(path);
+        if (options.desktop && !paths.desktopLink.empty()) automation::CheckPlainPath(paths.desktopLink);
+        if (options.proxy && options.codexEnv && !paths.codexEnvFile.empty()) automation::CheckPlainPath(paths.codexEnvFile);
+    } catch (const automation::Invalid&) { return Fail(ERROR_BAD_PATHNAME, L"部署路径包含无效名称或目录链接。"); }
+    catch (const automation::IoError& e) { return Fail(e.code, L"无法检查部署路径。"); }
+    result = ReadFileBytes(discoveryPath, oldDiscovery); if (!result) return result;
+    if (oldDiscovery.exists) {
+        try {
+            const auto record = automation::ParseJson(std::string(oldDiscovery.data.begin(), oldDiscovery.data.end()));
+            if (record.At(L"schemaVersion").Integer(1, 1) != 1 || record.At(L"managedBy").String() != L"ChatGPTProxyLauncher")
+                return Conflict(L"发现信息文件不属于本工具。", paths.defaultDirectory);
+        } catch (...) { return Conflict(L"发现信息文件无法安全读取，未覆盖。", paths.defaultDirectory); }
+    }
     std::vector<BYTE> envBytes;
     const bool touchEnv = options.proxy && options.codexEnv;
     if (touchEnv) {
@@ -413,25 +431,28 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
         if (!Owned(existing) || !Same(existing.target, previous.managedTarget))
             return Conflict(L"启动文件夹中已有其他同名快捷方式。请先手动移走或重命名，原文件未修改。", Parent(paths.startupLink));
     }
+    if (preflight) return {};
     result = EnsureDirectory(directory); if (!result) return result;
     result = EnsureDirectory(Parent(paths.settingsLink)); if (!result) return result;
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
     if (options.desktop) { result = EnsureDirectory(Parent(paths.desktopLink)); if (!result) return result; }
     if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
-    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false;
+    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false, discoveryChanged = false;
     auto rollback = [&](Result failure) {
         std::wstring restoreErrors;
         auto note = [&](const Result& restored) { if (!restored) restoreErrors += L"\n" + restored.message; };
+        if (discoveryChanged) note(Restore(discoveryPath, oldDiscovery));
         if (envChanged) note(Restore(paths.codexEnvFile, oldEnv));
         if (desktopChanged) note(Restore(paths.desktopLink, oldDesktop));
         if (startupChanged) note(Restore(paths.startupLink, oldStartup));
         if (settingsChanged) note(Restore(paths.settingsLink, oldSettings));
         if (exeChanged) note(Restore(target, oldExe));
         failure.message += restoreErrors.empty() ? L"\n本次文件更改已撤销。" : L"\n部分更改未能恢复，请重新运行工具检查：" + restoreErrors;
+        failure.commit = restoreErrors.empty() ? CommitState::RolledBack : CommitState::Incomplete;
         return failure;
     };
     if (!oldExe.exists || oldExe.data != bytes) {
-        result = WriteAtomic(target, bytes, oldExe.exists); if (!result) return result;
+        result = WriteAtomic(target, bytes, oldExe.exists); if (!result) return rollback(result);
         exeChanged = true;
     }
     Snapshot check;
@@ -470,7 +491,41 @@ Result Apply(const Paths& paths, const Options& options, Payload payload, std::w
         result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
         if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, L"Codex 的 .env 保存校验失败。"));
     }
+    try {
+        auto record = automation::Json::Object();
+        record[L"schemaVersion"] = automation::Json::Number(1);
+        record[L"managedBy"] = automation::Json(L"ChatGPTProxyLauncher");
+        record[L"launcherPath"] = automation::Json(target);
+        record[L"launcherVersion"] = automation::Json(automation::FromUtf8(APP_VERSION_TEXT));
+        auto versions = automation::Json::Array(); versions.array.push_back(automation::Json::Number(1));
+        record[L"setupApiVersions"] = versions;
+        record[L"chainProtocolVersions"] = versions;
+        auto capabilities = automation::Json::Array();
+        for (const auto capability : {L"headless-deploy-v1", L"companion-registry-v1", L"ready-file-v1", L"tracked-retry-v1", L"chain-run-result-v1"}) capabilities.array.emplace_back(capability);
+        record[L"capabilities"] = capabilities;
+        const auto text = automation::WriteJson(record);
+        const std::vector<BYTE> discoveryBytes(text.begin(), text.end());
+        result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);
+        if (check.exists != oldDiscovery.exists || check.data != oldDiscovery.data)
+            return rollback(Fail(ERROR_RETRY, L"保存期间发现信息文件发生变化。"));
+        if (!oldDiscovery.exists || discoveryBytes != oldDiscovery.data) {
+            result = WriteAtomic(discoveryPath, discoveryBytes, oldDiscovery.exists); if (!result) return rollback(result);
+            discoveryChanged = true;
+            result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);
+            if (!check.exists || check.data != discoveryBytes) return rollback(Fail(ERROR_CRC, L"发现信息保存校验失败。"));
+        }
+    } catch (...) { return rollback(Fail(ERROR_INVALID_DATA, L"无法生成部署发现信息。")); }
     deployedTarget = target;
-    return {};
+    Result success; success.commit = CommitState::Committed; return success;
+}
+Result Apply(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget) {
+    automation::UserLock lock;
+    const DWORD error = lock.Acquire(paths.settingsLink);
+    if (error) return Fail(error, L"其他操作正在保存配置，请稍后重试。");
+    return ApplyFiles(paths, options, payload, deployedTarget, false);
+}
+Result Preflight(const Paths& paths, const Options& options, Payload payload) {
+    std::wstring unused;
+    return ApplyFiles(paths, options, payload, unused, true);
 }
 } // namespace setup

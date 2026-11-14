@@ -11,11 +11,13 @@
 - 静态分析：根目录运行 `cmd /c tests\analyze.cmd`。性能方案与复测方法见 `docs/performance-review.md`；`work\proxy-tests.exe --benchmark` 只解析合成配置，不读取本机代理。
 - `setup.ps1` 是 PowerShell 下载入口；`tests/download-tests.ps1` 替换网络和启动操作，验证下载与校验。
 - `tests/preview-download.ps1` 用本机限速数据预览真实下载进度条，不访问 GitHub 或启动配置器。
-- 发布文件：根目录运行 `cmd /c release.cmd`，重新构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。两个 EXE 的版本统一维护在 `src/AppVersion.h`，升级时同步 `src/Setup.manifest`。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
+- 发布文件：根目录运行 `cmd /c release.cmd`，重新构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。两个 EXE 的版本统一维护在 `src/AppVersion.h`，升级时同步 `src/Setup.manifest` 和 `src/Launcher.manifest`。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
 - 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
 - `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。
-- 后台部署和规范扩展启动的待确认设计在 `docs/automation-design.md`、`docs/companion-protocol-v1.md`；配套结构与示例在 `docs/schemas/`、`docs/examples/`。这些接口尚未实现。
+- `src/SetupCommandLine.cpp` 是后台部署及扩展注册入口。`AutomationJson` / `AutomationIO` 提供有界 JSON、路径、结果文件和用户锁；GUI 与后台共用 `SetupCore::Preflight/Apply`。
+- `src/CompanionManifest.cpp` 校验清单和依赖；`CompanionRegistry.cpp` 保存注册及覆盖项；`CompanionRunner.cpp` 管理有限时长的就绪检查和重试；`LauncherAutomation.cpp` 提供发现查询、显式结果和限时提示。
+- 自动化用法见 `docs/automation-usage.md`，接口见 `docs/automation-design.md`、`docs/companion-protocol-v1.md`；Schema、示例位于 `docs/schemas/`、`docs/examples/`。隔离验证在 `tests/automation-tests.cpp`、`tests/chain-tests.cpp`、`tests/headless-download-tests.ps1`、`tests/protocol-example-tests.ps1`。性能复测为 `work\chain-tests.exe "%CD%\work" --benchmark`。
 - `src/CodexClose.cpp` 在 `.env` 保存成功后请求整个 ChatGPT 桌面应用退出，并检查附属后台进程。只调用主窗口的应用退出入口，不向辅助窗口发送关闭消息。`tests/codex-close-tests.cpp` 替换进程、窗口、键盘输入、焦点和等待调用，不关闭真实应用。
 
 ## 工作方式
@@ -23,6 +25,8 @@
 - 小改动在任务说明里写清计划即可；复杂改动在 `docs/` 留下简短的目标、方案、风险和验证记录，变更时同步更新。
 - 保持原生、轻量、启动后退出；不新增常驻进程、自动日志、系统代理修改或强制结束 ChatGPT 的行为。
 - 保留参数原样传递、显式程序路径和 `CreateProcessW` 调用；不经命令解释器转发用户参数，不硬编码个人代理或版本目录。
+- 后台模式不得回退 GUI，不自动退出 ChatGPT，不打开设置、文件夹或网页。结果文件必须新建，调用者等待进程退出后读取。PowerShell 执行前检查 EXE 最低支持版本，不能用新参数探测旧版。
+- 扩展重试须有安全声明、可恢复错误和上一轮完整进程族已退出的证据。不强杀、不设置 Job 的退出即终止标志。根进程句柄已触发不等于 Job 计数已归零。
 - 修改程序行为后运行构建和相关测试；涉及参数传递时检查空参数、空格、引号、中文、长度边界和错误返回。
 - 自绘操作按钮使用 `BS_OWNERDRAW` 和 `WM_DRAWITEM`，不能只在原生绘制后补刷；默认按钮样式切换须保留自绘，并验证 Tab、回车和空格行为，防止原生矩形闪现回归。
 - 日常验收以源码审查、构建和相关测试为准；不要自行加入杀毒软件检查流程。

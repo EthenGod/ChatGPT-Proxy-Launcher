@@ -9,10 +9,10 @@
 #include <algorithm>
 
 // Fault injection exists only in this translation unit, never in the release binary.
-static unsigned moveCalls = 0, failMoveAt = 0;
+static unsigned moveCalls = 0, failMoveAt = 0, failSecondMoveAt = 0;
 static PCWSTR collisionTarget = nullptr;
 static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
-    if (++moveCalls == failMoveAt) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
+    if (++moveCalls == failMoveAt || moveCalls == failSecondMoveAt) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
     if (collisionTarget && !_wcsicmp(to, collisionTarget)) {
         collisionTarget = nullptr;
         HANDLE h = CreateFileW(to, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -292,12 +292,23 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         REQUIRE(WriteAtomic(paths.codexEnvFile, envBefore.data));
         // The EXE and all three shortcuts committed before the final env write fails.
         moveCalls = 0; failMoveAt = 5;
-        REQUIRE(!Apply(paths, changed, payload, target)); failMoveAt = 0;
+        const auto envFailure = Apply(paths, changed, payload, target); failMoveAt = 0;
+        REQUIRE(!envFailure && envFailure.commit == CommitState::RolledBack);
         REQUIRE(!Exists(Join(changed.directory, LauncherName)));
         REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
         REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
         REQUIRE(ReadFileBytes(paths.desktopLink, file) && file.data == desktop.data);
         REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
+        // Discovery is the last commit. Its failure must restore the env and links too.
+        Snapshot discoveryBefore; const auto discoveryPath = Join(paths.defaultDirectory, L"discovery.json");
+        REQUIRE(ReadFileBytes(discoveryPath, discoveryBefore));
+        moveCalls = 0; failMoveAt = 6;
+        const auto discoveryFailure = Apply(paths, changed, payload, target); failMoveAt = 0;
+        REQUIRE(!discoveryFailure && discoveryFailure.commit == CommitState::RolledBack);
+        REQUIRE(ReadFileBytes(discoveryPath, file) && file.data == discoveryBefore.data);
+        REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
+        REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
+        REQUIRE(!Exists(Join(changed.directory, LauncherName)));
         // A read lock permits preflight but blocks atomic replacement: all link changes roll back.
         changed.directory = options.directory;
         HANDLE envLock = CreateFileW(paths.codexEnvFile.c_str(), GENERIC_READ, FILE_SHARE_READ,
@@ -360,6 +371,11 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     REQUIRE(!Apply(paths, options, payload, target)); failMoveAt = 0;
     REQUIRE(ReadFileBytes(paths.settingsLink, disk) && disk.data == settingsBefore.data);
     REQUIRE(ReadFileBytes(paths.startupLink, disk) && disk.data == startupBefore.data);
+    // A rollback write failure must be distinct from a complete rollback.
+    moveCalls = 0; failMoveAt = 2; failSecondMoveAt = 3;
+    const auto incomplete = Apply(paths, options, payload, target); failMoveAt = 0; failSecondMoveAt = 0;
+    REQUIRE(!incomplete && incomplete.commit == CommitState::Incomplete);
+    REQUIRE(WriteAtomic(paths.settingsLink, settingsBefore.data));
     REQUIRE(Load(paths, state) && state.options.silent);
     // New destination copied, settings committed, then shortcut failure: both preceding changes roll back.
     options.directory = Join(root, L"rollback-new");

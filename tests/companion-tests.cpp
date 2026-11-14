@@ -7,6 +7,12 @@
 
 // Exercise the production dispatch and CreateProcess functions in isolated folders.
 void RepairTaskbarShortcut(PCWSTR) noexcept {}
+// This suite imports the launcher's process builder, not its automation entry points.
+std::wstring chain::RootDirectory() { return {}; }
+automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) noexcept { return {}; }
+int chain::Invocation::Parse(PCWSTR raw) noexcept { forwarded = raw; return 0; }
+int chain::Invocation::Info() noexcept { return 20; }
+int chain::Invocation::Finish(DWORD, const automation::Json&) noexcept { return 70; }
 #define REQUIRE(c) do { if (!(c)) { printf("FAIL companion line %d: %s\n", __LINE__, #c); return 1; } } while (0)
 static unsigned attempts = 0, started = 0;
 static DWORD CountStart(PCWSTR exe, PCWSTR args, PCWSTR cwd, int show) {

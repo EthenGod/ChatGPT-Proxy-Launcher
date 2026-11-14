@@ -6,6 +6,7 @@
 #include <wchar.h>
 #include "TaskbarShortcut.h"
 #include "StartupApps.h"
+#include "LauncherAutomation.h"
 
 // Local tool, not an OpenAI product. No proxy settings are compiled in.
 static const wchar_t Family[] = L"OpenAI.Codex_2p2nqsd0c76g0";
@@ -171,19 +172,26 @@ static int ReportError(DWORD error) {
 }
 
 int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int) {
-    // The only reserved option is an opt-in, read-only diagnostic, without any window.
+    chain::Invocation invocation;
+    const int parsed = invocation.Parse(arguments);
+    if (parsed) return parsed;
+    if (invocation.mode == chain::Invocation::Mode::Info) return invocation.Info();
+    arguments = const_cast<PWSTR>(invocation.forwarded);
+    const bool explicitChain = invocation.mode == chain::Invocation::Mode::Chain;
+    auto error = [&](DWORD code) { return explicitChain ? invocation.Finish(code, automation::Json{}) : ReportError(code); };
+    // The original diagnostic remains read-only and bypasses all extension work.
     const wchar_t checkOption[] = L"--launcher-check";
     const size_t checkLength = sizeof(checkOption) / sizeof(wchar_t) - 1;
-    bool check = wcsncmp(arguments, checkOption, checkLength) == 0
+    bool check = !explicitChain && wcsncmp(arguments, checkOption, checkLength) == 0
         && (!arguments[checkLength] || arguments[checkLength] == L' ' || arguments[checkLength] == L'\t');
     if (check) {
         arguments += checkLength;
         while (*arguments == L' ' || *arguments == L'\t') ++arguments;
     }
     Buffer executable(PathCapacity * sizeof(wchar_t));
-    if (!executable.get()) return ReportError(ERROR_NOT_ENOUGH_MEMORY);
+    if (!executable.get()) return error(ERROR_NOT_ENOUGH_MEMORY);
     DWORD result = FindExecutable(static_cast<PWSTR>(executable.get()), PathCapacity);
-    if (result) return ReportError(result);
+    if (result) return error(result);
     if (check) {
         if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), arguments))
             return ReportError(ERROR_FILENAME_EXCED_RANGE);
@@ -195,10 +203,21 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _I
         return 0;
     }
     if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), arguments))
-        return ReportError(ERROR_FILENAME_EXCED_RANGE);
+        return error(ERROR_FILENAME_EXCED_RANGE);
     RepairTaskbarShortcut(static_cast<PCWSTR>(executable.get()));
     const PCWSTR chat = static_cast<PCWSTR>(executable.get());
     result = StartApplication(chat, arguments);
-    if (!result) companions::Run(chat, StartApplication);
-    return ReportError(result);
+    if (result) return error(result);
+    try {
+        if (invocation.options.root.empty()) invocation.options.root = chain::RootDirectory();
+        const auto report = chain::Run(invocation.options, chat, StartApplication);
+        return explicitChain ? invocation.Finish(0, report) : 0;
+    } catch (...) {
+        if (explicitChain) {
+            auto report = automation::Json::Object(); report[L"entries"] = automation::Json::Array();
+            report[L"exitCode"] = automation::Json::Number(10); report[L"chainStatus"] = automation::Json(L"partial");
+            return invocation.Finish(0, report);
+        }
+        return 0; // An optional extension failure must not change the ChatGPT launch result.
+    }
 }

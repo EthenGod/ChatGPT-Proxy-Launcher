@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "后台部署请求 v1（待确认草案）",
+  "title": "后台部署请求 v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion"],

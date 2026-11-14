@@ -23,16 +23,19 @@ struct Options {
 };
 struct Paths { std::wstring defaultDirectory, startupLink, settingsLink, desktopLink, codexEnvFile; };
 struct Link { std::wstring target, arguments, directory, description; };
+enum class CommitState { NotStarted, Committed, RolledBack, Incomplete };
 struct Result {
     DWORD code = 0;
     std::wstring message;
     std::wstring conflictDirectory{}; // Only ownership conflicts offer an Explorer location.
+    CommitState commit = CommitState::NotStarted;
     explicit operator bool() const { return code == 0; }
 };
 struct Loaded {
     Options options;
     std::wstring managedTarget, notice, deployedVersion;
     bool deployed = false, hasSettings = false;
+    bool validArguments = true;
 };
 struct Payload { const BYTE* data; size_t size; };
 std::wstring ErrorText(DWORD error);
@@ -54,4 +57,5 @@ Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = fals
 Result Load(const Paths& paths, Loaded& loaded);
 Result Apply(const Paths& paths, const Options& options, Payload payload,
     std::wstring& deployedTarget);
+Result Preflight(const Paths& paths, const Options& options, Payload payload);
 } // namespace setup

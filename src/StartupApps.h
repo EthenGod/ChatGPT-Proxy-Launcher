@@ -82,5 +82,8 @@ inline std::wstring FindHost(Kind kind) {
     return HostFile(host) ? host : std::wstring{};
 }
 using Start = DWORD (*)(PCWSTR exe, PCWSTR args, PCWSTR workingDirectory, int show);
+using Observe = void (*)(PCWSTR entry, DWORD error);
+using Allow = bool (*)(PCWSTR target);
+void RunFolder(const std::wstring& folder, PCWSTR chatExecutable, Start start, Observe observe, ULONGLONG deadline, Allow allow = nullptr);
 void Run(PCWSTR chatExecutable, Start start) noexcept;
 }

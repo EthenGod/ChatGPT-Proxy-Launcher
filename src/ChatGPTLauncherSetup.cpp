@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "SetupCommandLine.h"
 #include "StartupApps.h"
 #include "SetupResources.h"
 #include "StartupIntegration.h"
@@ -679,8 +680,11 @@ void App::BeginSave() {
             const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
             else {
+                automation::UserLock operation;
                 try {
-                    completion->result = setup::Apply(paths, options, payload, completion->target);
+                    const DWORD locked = operation.Acquire(paths.settingsLink);
+                    completion->result = locked ? setup::Result{locked, L"其他操作正在保存配置，请稍后重试。"}
+                        : setup::Apply(paths, options, payload, completion->target);
                 }
                 catch (...) { completion->result = { ERROR_NOT_ENOUGH_MEMORY, L"保存未完成。请重新打开工具检查配置后重试。" }; }
                 if (completion->result && completion->checkStartup) {
@@ -1169,7 +1173,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 } // namespace
 
-int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int show) {
+int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int show) {
+    // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
+    if (arguments && *arguments) return setup::RunSetupCommandLine(instance, arguments);
     HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\Community.ChatGPTLauncherSetup.v1");
     if (!mutex) return static_cast<int>(GetLastError());
     if (GetLastError() == ERROR_ALREADY_EXISTS) {

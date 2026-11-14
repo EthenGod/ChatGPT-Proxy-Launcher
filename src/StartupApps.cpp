@@ -37,10 +37,10 @@ struct HostCache {
         return item.path;
     }
 };
-void StartTarget(Kind kind, PCWSTR target, PCWSTR args, PCWSTR cwd, int show, Start start, HostCache& hosts) {
-    if (kind == Kind::Exe) { start(target, args, cwd, show); return; }
+DWORD StartTarget(Kind kind, PCWSTR target, PCWSTR args, PCWSTR cwd, int show, Start start, HostCache& hosts) {
+    if (kind == Kind::Exe) return start(target, args, cwd, show);
     const auto& host = hosts.Get(kind);
-    if (host.empty()) return;
+    if (host.empty()) return ERROR_FILE_NOT_FOUND;
     std::wstring parent;
     if (!cwd) {
         const auto split = wcsrchr(target, L'\\') - target;
@@ -52,18 +52,20 @@ void StartTarget(Kind kind, PCWSTR target, PCWSTR args, PCWSTR cwd, int show, St
             kind == Kind::Jar ? L"-jar " : kind == Kind::Wsh ? L"//Nologo " : L"";
         std::wstring tail = std::wstring(prefix) + L"\"" + target + L"\"";
         if (*args) { tail += L' '; tail += args; }
-        start(host.c_str(), tail.c_str(), cwd, show);
+        return start(host.c_str(), tail.c_str(), cwd, show);
     } else {
         // Fixed command only. Expand the quoted path once, with delayed expansion and AutoRun off.
         // Never append a shortcut's user-supplied argument tail to cmd /c.
         constexpr wchar_t var[] = L"CHATGPT_PROXY_LAUNCHER_BATCH_PATH";
         if (SetEnvironmentVariableW(var, target)) {
-            start(host.c_str(), L"/d /v:off /s /c \"\"%CHATGPT_PROXY_LAUNCHER_BATCH_PATH%\"\"", cwd, show);
+            const DWORD result = start(host.c_str(), L"/d /v:off /s /c \"\"%CHATGPT_PROXY_LAUNCHER_BATCH_PATH%\"\"", cwd, show);
             SetEnvironmentVariableW(var, nullptr);
+            return result;
         }
+        return GetLastError();
     }
 }
-void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
+void Dispatch(const std::wstring& folder, PCWSTR chat, Start start, Observe observe = nullptr, ULONGLONG deadline = MAXULONGLONG, Allow allow = nullptr) {
     if (!LocalPath(folder.c_str())) return;
     wchar_t flag[2];
     if (GetEnvironmentVariableW(Guard, flag, 2)) return;
@@ -78,6 +80,7 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
     // Allocate shortcut buffers once, and only when there is a shortcut to read.
     std::vector<wchar_t> buffers;
     do {
+        if (GetTickCount64() >= deadline) { if (observe) observe(L"budget", ERROR_TIMEOUT); break; }
         if (file.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
         auto kind = FileKind(file.cFileName);
         if (kind == Kind::Unknown) continue;
@@ -101,6 +104,7 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
             exe = target; args = tail; directory = *cwd ? cwd : nullptr; kind = FileKind(target);
         }
         if (!_wcsicmp(exe, chat) || !ValidTarget(exe, args, directory ? directory : L"")) continue;
+        if (allow && !allow(exe)) { if (observe) observe(path.c_str(), ERROR_ALREADY_EXISTS); continue; }
         // CreateProcess validates EXEs, but for scripts it only validates the interpreter.
         if (fromShortcut && kind != Kind::Exe) {
             const DWORD targetAttrs = GetFileAttributesW(exe);
@@ -108,9 +112,13 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start) {
         }
         // Descendants must not run the companion list again, including renamed copies of this launcher.
         if (!guard.set && !(guard.set = SetEnvironmentVariableW(Guard, L"1") != FALSE)) return;
-        StartTarget(kind, exe, args, directory, show, start, hosts); // A broken entry does not block the next one.
+        const DWORD error = StartTarget(kind, exe, args, directory, show, start, hosts);
+        if (observe) observe(path.c_str(), error); // A broken entry does not block the next one.
     } while (FindNextFileW(search.h, &file));
 }
+}
+void RunFolder(const std::wstring& folder, PCWSTR chat, Start start, Observe observe, ULONGLONG deadline, Allow allow) {
+    Dispatch(folder, chat, start, observe, deadline, allow);
 }
 void Run(PCWSTR chat, Start start) noexcept {
     try {

@@ -8,8 +8,14 @@
 #include <vector>
 #include "../src/TaskbarShortcut.h"
 #include "../src/StartupApps.h"
+#include "../src/CompanionRunner.h"
 static unsigned companionCalls = 0;
 void companions::Run(PCWSTR, Start) noexcept { ++companionCalls; }
+automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) noexcept {
+    ++companionCalls; auto result = automation::Json::Object(); result[L"entries"] = automation::Json::Array();
+    result[L"chainStatus"] = automation::Json(L"completed"); result[L"exitCode"] = automation::Json::Number(0); return result;
+}
+std::wstring chain::RootDirectory() { return L"C:\\isolated-chain-tests"; }
 static unsigned repairCalls = 0;
 void RepairTaskbarShortcut(PCWSTR) noexcept { ++repairCalls; }
 
