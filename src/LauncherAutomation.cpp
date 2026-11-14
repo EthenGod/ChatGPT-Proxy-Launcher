@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "LauncherAutomation.h"
+#include "Localization.h"
 #include "AppVersion.h"
 #include "DeploymentDiscovery.h"
 #include "NativeMemory.h"
@@ -80,20 +81,21 @@ int Invocation::Finish(DWORD nativeError, const Json& report) noexcept {
 }
 void NotifyFailures(const Json& report) noexcept {
     try {
+        l10n::Initialize();
         USEROBJECTFLAGS flags{}; DWORD needed = 0;
         if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_FLAGS, &flags, sizeof(flags), &needed) || !(flags.dwFlags & WSF_VISIBLE)) return;
         std::wstring text; unsigned shown = 0;
         for (const auto& item : report.At(L"entries").array) {
             const auto status = item.At(L"status").String();
             if (automation::contract::ItemSucceeded(status)) continue;
-            if (shown++ == 4) { text += L"\n还有其他扩展未完成启动。"; break; }
-            text += item.At(L"id").String(160) + L"：";
-            text += status == L"timeout-running" ? L"等待超时，进程仍在运行。" : status == L"skipped-dependency" ? L"依赖未就绪。" : status == L"skipped-budget" ? L"本轮等待时间已用完。" : L"启动未完成，请检查扩展配置。";
+            if (shown++ == 4) { text += l10n::Text("chain.more"); break; }
+            text += item.At(L"id").String(160) + L": ";
+            text += status == L"timeout-running" ? l10n::Text("chain.timeout") : status == L"skipped-dependency" ? l10n::Text("chain.dependency") : status == L"skipped-budget" ? l10n::Text("chain.budget") : l10n::Text("chain.failed");
             text += L"\n";
         }
         TASKDIALOGCONFIG config{sizeof(config)}; config.dwFlags = TDF_CALLBACK_TIMER | TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
-        config.dwCommonButtons = TDCBF_CLOSE_BUTTON; config.pszWindowTitle = L"ChatGPT 启动器"; config.pszMainInstruction = L"部分扩展未能启动";
-        config.pszContent = text.c_str(); config.pszFooter = L"此提示将在 10 秒后关闭。"; config.pfCallback = NotifyCallback;
+        config.dwCommonButtons = TDCBF_CLOSE_BUTTON; config.pszWindowTitle = l10n::Text("common.launcher"); config.pszMainInstruction = l10n::Text("chain.title");
+        config.pszContent = text.c_str(); config.pszFooter = l10n::Text("chain.autoclose"); config.pfCallback = NotifyCallback;
         TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
     } catch (...) {}
 }

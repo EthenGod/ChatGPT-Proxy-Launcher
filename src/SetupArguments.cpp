@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "Localization.h"
 #include "AutomationIO.h"
 #include <shellapi.h>
 #include <cwchar>
@@ -21,7 +22,7 @@ Result Tokens(const std::wstring& arguments, std::vector<Token>& tokens) {
     tokens.clear();
     if (arguments.find_first_of(L"\r\n") != std::wstring::npos
         || arguments.find(L'\0') != std::wstring::npos)
-        return Fail(ERROR_INVALID_PARAMETER, L"启动参数不能包含换行或空字符。");
+        return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.characters"));
     size_t i = 0;
     while (i < arguments.size()) {
         if (arguments[i] == L' ' || arguments[i] == L'\t') { ++i; continue; }
@@ -34,12 +35,12 @@ Result Tokens(const std::wstring& arguments, std::vector<Token>& tokens) {
             if (c == L'"' && slashes % 2 == 0) quoted = !quoted;
             slashes = c == L'\\' ? slashes + 1 : 0;
         }
-        if (quoted) return Fail(ERROR_INVALID_PARAMETER, L"额外启动参数中有未闭合的双引号。");
+        if (quoted) return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.quote"));
         const std::wstring raw = arguments.substr(start, i - start);
         int count = 0;
         const LocalArguments argv(CommandLineToArgvW((L"program " + raw).c_str(), &count));
-        if (!argv.values) return Fail(GetLastError(), L"无法解析启动参数。");
-        if (count != 2) return Fail(ERROR_INVALID_DATA, L"启动参数格式无效。");
+        if (!argv.values) return Fail(GetLastError(), l10n::Text("error.arguments.parse"));
+        if (count != 2) return Fail(ERROR_INVALID_DATA, l10n::Text("error.arguments.format"));
         tokens.push_back({ argv.values[1], raw, i });
     }
     return {};
@@ -66,24 +67,24 @@ Result BuildArguments(const Options& options, std::wstring& arguments) {
     arguments.clear();
     if (options.proxy) {
         if (options.protocol != L"http" && options.protocol != L"https" && options.protocol != L"socks5")
-            return Fail(ERROR_INVALID_PARAMETER, L"请选择有效的代理协议。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.proxy.protocol"));
         if (options.host.empty() || options.host.find_first_of(L" \t\r\n/\\\"@;=?#") != std::wstring::npos
             || options.host.find(L'\0') != std::wstring::npos)
-            return Fail(ERROR_INVALID_PARAMETER, L"代理地址只填写主机名或 IP，不包含协议、端口或账号密码。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.proxy.host"));
         if (options.host.find(L':') != std::wstring::npos
             && (options.host.front() != L'[' || options.host.back() != L']'))
-            return Fail(ERROR_INVALID_PARAMETER, L"IPv6 地址请放在方括号中，例如 [::1]。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.proxy.ipv6"));
         if (options.port.empty() || options.port.size() > 5
             || options.port.find_first_not_of(L"0123456789") != std::wstring::npos)
-            return Fail(ERROR_INVALID_PARAMETER, L"代理端口应为 1 到 65535 的数字。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.proxy.portnumber"));
         const unsigned long port = wcstoul(options.port.c_str(), nullptr, 10);
-        if (!port || port > 65535) return Fail(ERROR_INVALID_PARAMETER, L"代理端口应为 1 到 65535。");
+        if (!port || port > 65535) return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.proxy.portrange"));
         Append(arguments, QuoteArgument(L"--proxy-server=" + options.protocol + L"://" + options.host + L":" + options.port));
     }
     if (options.silent) Append(arguments, L"--no-startup-window");
     if (!options.bypass.empty()) Append(arguments, QuoteArgument(L"--proxy-bypass-list=" + options.bypass));
     Append(arguments, options.extra);
-    if (arguments.size() > MaxArguments) return Fail(ERROR_FILENAME_EXCED_RANGE, L"启动参数过长（最多 8191 个字符）。");
+    if (arguments.size() > MaxArguments) return Fail(ERROR_FILENAME_EXCED_RANGE, l10n::Text("error.arguments.length"));
     std::vector<Token> tokens;
     Result result = Tokens(arguments, tokens);
     if (!result) return result;
@@ -92,9 +93,9 @@ Result BuildArguments(const Options& options, std::wstring& arguments) {
         if (token.value == L"--") break;
         const ManagedOption kind = ManagedKind(token.value);
         if (kind != Other && ++counts[kind] > 1)
-            return Fail(ERROR_INVALID_PARAMETER, L"同一启动选项出现了两次，请检查额外参数与界面设置。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.duplicate"));
         if (token.value == L"--launcher-check" || token.value == L"--launcher-info" || token.value == L"--launcher-chain")
-            return Fail(ERROR_INVALID_PARAMETER, L"启动器的诊断和自动化命令不能保存为 ChatGPT 启动选项。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.reserved"));
     }
     return {};
 }

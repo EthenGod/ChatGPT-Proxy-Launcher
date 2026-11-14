@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "Localization.h"
 #include "SetupCommandLine.h"
 #include "StartupApps.h"
 #include "SetupResources.h"
@@ -29,7 +30,7 @@ constexpr int FooterHeight = 96;
 constexpr UINT_PTR MotionTimer = 1;
 constexpr UINT_PTR WorkerTimer = 2;
 enum ControlId {
-    Title = 1000, SetupVersion, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
+    Title = 1000, SetupVersion, ThemeToggle, LanguageButton, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, PortHelp, Port,
     PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
     DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Footer, ApplyButton, CloseButton
@@ -71,28 +72,16 @@ bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == P
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
 bool IsHelp(int id) { return id == CodexEnvHelp || id == ProtocolHelp || id == HostHelp || id == PortHelp; }
 bool IsButton(int id) {
-    return IsSwitch(id) || IsSegment(id) || IsHelp(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == AddProgram || id == OpenCompanions;
+    return IsSwitch(id) || IsSegment(id) || IsHelp(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == LanguageButton || id == AddProgram || id == OpenCompanions;
 }
 bool IsActionButton(int id) { return IsButton(id) && !IsSwitch(id) && !IsSegment(id); }
 bool IsOwnerDrawButton(int id) { return IsActionButton(id) || IsSegment(id); }
 constexpr wchar_t AppearanceKey[] = L"Software\\Community\\ChatGPTLauncherSetup";
-constexpr wchar_t CodexEnvHelpText[] =
-    L"配置 .env 后，可无需开启系统代理使用 Codex 对话（即使未使用本工具启动或未开启“使用指定代理”）。注意：.env 不作用于 Chat。"
-    L"将向 .env 写入下面的协议、地址和端口。\n\n"
-    L"这可能能够解决 Codex 的“重新连接 (5/5)”：\n"
-    L"Codex 默认优先使用 WebSocket，这在理想环境下很不错，但 Codex 的 WebSocket 似乎没有正常走系统代理。"
-    L"尝试重新连接未果后，会回退到传统连接。通过配置 .env 文件，可以让 Codex 的 WebSocket 走代理。\n\n"
-    L"WebSocket 对代理不是很友好，所以“重新连接 (5/5)”也有小概率是单纯由于代理不稳定。\n\n"
-    L"保存后会尝试退出整个 ChatGPT 桌面应用，请先保存工作。重新打开后 Codex 使用新配置。";
-constexpr wchar_t ProxyHelpText[] = L"不要更改，除非你知道自己在做什么";
-constexpr wchar_t PortHelpText[] =
-    L"后台保持打开平时用的代理软件，点击空白的端口输入框时会尝试自动填入检测到的端口，注意手动核对是否正确。\n"
-    L"如果识别错误或识别失败，打开代理软件的设置，找到端口设置或类似设置，把那串数字填回这里。";
-PCWSTR HelpText(int id) { return id == CodexEnvHelp ? CodexEnvHelpText : id == PortHelp ? PortHelpText : ProxyHelpText; }
+PCWSTR HelpText(int id) { return l10n::Text(id == CodexEnvHelp ? "help.codex" : id == PortHelp ? "help.port" : "help.protocol"); }
 PCWSTR ChatGPTCloseMessage(setup::ChatGPTCloseResult result) {
-    if (result == setup::ChatGPTCloseResult::Closed) return L"已保存 .env，并已退出 ChatGPT。请重新打开 ChatGPT。";
-    if (result == setup::ChatGPTCloseResult::NotRunning) return L"已保存 .env。下次打开 ChatGPT 后，Codex 使用新配置。";
-    return L"已保存 .env，未能确认 ChatGPT 已完全退出。请手动退出后重新打开。";
+    if (result == setup::ChatGPTCloseResult::Closed) return l10n::Text("setup.quit.closed");
+    if (result == setup::ChatGPTCloseResult::NotRunning) return l10n::Text("setup.quit.absent");
+    return l10n::Text("setup.quit.manual");
 }
 bool ReadCodexEnvPreference() {
     DWORD enabled = 1, size = sizeof(enabled);
@@ -113,6 +102,16 @@ bool SaveDarkPreference(bool dark) {
     const DWORD light = dark ? 0 : 1;
     return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", REG_DWORD,
         &light, sizeof(light)) == ERROR_SUCCESS;
+}
+bool SaveLanguagePreference() {
+    PCWSTR value = l10n::FollowsSystem() ? L"auto" : l10n::Current().tag;
+    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"Language", REG_SZ,
+        value, static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+}
+constexpr UINT LanguageMenuBase = 40000;
+PCWSTR LanguageMenuText(size_t index) { return index == 0 ? l10n::Text("setup.language.system") : l10n::At(index - 1).name; }
+bool LanguageMenuSelected(size_t index) {
+    return index == 0 ? l10n::FollowsSystem() : !l10n::FollowsSystem() && !wcscmp(l10n::Current().tag, l10n::At(index - 1).tag);
 }
 void Rounded(HDC dc, const RECT& rect, int radius, COLORREF fill, COLORREF border, float thickness = 1.0f) {
     if (rect.right <= rect.left || rect.bottom <= rect.top || !RectVisible(dc, &rect)) return;
@@ -147,12 +146,15 @@ struct App {
     int scrollGrab = 0, wheelRemainder = 0;
     unsigned layoutPasses = 0;
     int scroll = 0, contentHeight = 0;
+    int headerOffset = 0;
+    std::string completionKey;
+    bool envPreferenceWarning = false;
     std::wstring savedTarget;
     setup::Paths paths;
     setup::Payload payload{};
     Palette colors{};
     HBRUSH background = nullptr, surface = nullptr, field = nullptr;
-    HFONT fonts[5]{};
+    HFONT fonts[6]{};
     std::vector<Control> controls;
     std::thread worker;
     std::thread portWorker;
@@ -188,6 +190,13 @@ struct App {
     bool Checked(int id) const { return SendMessageW(Get(id), BM_GETCHECK, 0, 0) == BST_CHECKED; }
     void Check(int id, bool value) { SendMessageW(Get(id), BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0); }
     void Theme(int mode = -1);
+    int CaptionWidth(int id, int font) const;
+    int CaptionHeight(int id, int font, int width) const;
+    void LanguageMenu();
+    void ChangeLanguage(size_t menuIndex);
+    void TranslateControls();
+    void UpdateState(const setup::Loaded& loaded);
+    void DrawLanguageItem(const DRAWITEMSTRUCT& item);
     void SelectProtocol(int id);
     void CreateControls();
     void UpdateTooltip();
@@ -217,7 +226,7 @@ App* StateOf(HWND window) { return reinterpret_cast<App*>(GetWindowLongPtrW(wind
 void ShowSetupError(HWND window, const setup::Result& result, PCWSTR title) {
     std::wstring message = result.message;
     if (!result.conflictDirectory.empty())
-        message += L"\n\n关闭此提示后，将打开冲突文件所在的文件夹：\n" + result.conflictDirectory;
+        message += l10n::Format("setup.error.conflictlocation", {{"path", result.conflictDirectory}});
     MessageBoxW(window, message.c_str(), title, MB_OK | MB_ICONERROR);
     if (result.conflictDirectory.empty()) return;
     SHELLEXECUTEINFOW info{};
@@ -226,8 +235,8 @@ void ShowSetupError(HWND window, const setup::Result& result, PCWSTR title) {
     info.lpFile = result.conflictDirectory.c_str(); info.nShow = SW_SHOWNORMAL;
     if (!ShellExecuteExW(&info)) {
         const DWORD error = GetLastError();
-        const std::wstring failure = L"无法打开文件夹，请手动查看：\n" + result.conflictDirectory + L"\n\n" + setup::ErrorText(error);
-        MessageBoxW(window, failure.c_str(), L"无法打开文件夹", MB_OK | MB_ICONERROR);
+        const std::wstring failure = l10n::Format("setup.error.openfolderdetails", {{"path", result.conflictDirectory}, {"error", setup::ErrorText(error)}});
+        MessageBoxW(window, failure.c_str(), l10n::Text("setup.error.openfolder"), MB_OK | MB_ICONERROR);
     }
 }
 
@@ -257,24 +266,26 @@ void App::Theme(int mode) {
     if (field) DeleteObject(field);
     background = CreateSolidBrush(colors.background); surface = CreateSolidBrush(colors.surface);
     field = CreateSolidBrush(FieldColor());
-    const int sizes[] = { 14, 14, 24, 12, 12 };
-    for (int i = 0; i < 5; ++i) {
+    const int sizes[] = { 14, 14, 24, 12, 12, 14 };
+    for (int i = 0; i < static_cast<int>(std::size(fonts)); ++i) {
         if (fonts[i]) DeleteObject(fonts[i]);
         fonts[i] = CreateFontW(-S(sizes[i]), 0, 0, 0, i == 1 || i == 2 ? FW_SEMIBOLD : FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+            CLEARTYPE_QUALITY, DEFAULT_PITCH, i == 5 ? L"Segoe UI" : l10n::Current().font);
     }
     for (const auto& item : controls) {
         SendMessageW(item.window, WM_SETFONT, reinterpret_cast<WPARAM>(fonts[item.font]), TRUE);
-        SetWindowTheme(item.window, L"", L"");
+        // Checkbox custom-draw notifications require the v6 themed control path.
+        SetWindowTheme(item.window, IsSwitch(item.id) ? nullptr : L"", IsSwitch(item.id) ? nullptr : L"");
     }
     for (auto& item : controls) {
         item.hover = {};
         item.toggle.from = item.toggle.to = Checked(item.id) ? 1.0f : 0.0f;
     }
     KillTimer(window, MotionTimer);
-    Set(ThemeToggle, dark ? L"切换为浅色" : L"切换为深色");
+    Set(ThemeToggle, dark ? l10n::Text("setup.theme.light") : l10n::Text("setup.theme.dark"));
     EnableWindow(Get(ThemeToggle), !contrast && !busy);
+    EnableWindow(Get(LanguageButton), !busy && !detectingPort);
     const BOOL useDark = dark;
     DwmSetWindowAttribute(window, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &useDark, sizeof(useDark));
     UpdateTooltip();
@@ -284,6 +295,7 @@ void App::Theme(int mode) {
 
 void App::CreateControls() {
     auto add = [&](int id, PCWSTR type, PCWSTR text, DWORD style, int font = 0, bool footer = false) {
+        if (IsField(id)) font = 5; // Keep literal backslashes readable in paths, including Japanese Windows.
         if (IsOwnerDrawButton(id)) style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
         HWND h = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0,
             footer ? window : body, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
@@ -294,57 +306,58 @@ void App::CreateControls() {
     };
     const DWORD label = SS_LEFT | SS_NOPREFIX;
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
-    add(Title, L"STATIC", L"ChatGPT 启动器", label, 2);
-    add(SetupVersion, L"STATIC", L"配置器 v" APP_VERSION_TEXT, label, 3);
-    add(ThemeToggle, L"BUTTON", L"切换为浅色", WS_TABSTOP | BS_OWNERDRAW);
-    add(State, L"STATIC", L"尚未部署，仅对当前 Windows 用户生效", label, 3);
-    add(StartTitle, L"STATIC", L"启动设置", label, 1);
-    add(Startup, L"BUTTON", L"登录 Windows 后自动启动", WS_TABSTOP | BS_AUTOCHECKBOX);
-    add(Desktop, L"BUTTON", L"创建桌面快捷方式", WS_TABSTOP | BS_AUTOCHECKBOX);
-    add(Silent, L"BUTTON", L"启动时不显示主窗口（暂不可用）", WS_DISABLED | WS_TABSTOP | BS_AUTOCHECKBOX);
-    add(SilentHint, L"STATIC", L"保存时尝试关闭 ChatGPT 自带自启。", label, 3);
-    add(ProxyTitle, L"STATIC", L"代理连接", label, 1);
-    add(Proxy, L"BUTTON", L"使用指定代理", WS_TABSTOP | BS_AUTOCHECKBOX);
-    add(CodexEnv, L"BUTTON", L"同时配置 Codex 的 .env 文件（推荐）", WS_TABSTOP | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX);
-    add(CodexEnvHelp, L"BUTTON", L"Codex .env 配置说明", WS_TABSTOP | BS_OWNERDRAW);
+    add(Title, L"STATIC", l10n::Text("common.launcher"), label, 2);
+    add(SetupVersion, L"STATIC", l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}).c_str(), label, 3);
+    add(LanguageButton, L"BUTTON", l10n::Current().name, WS_TABSTOP | BS_OWNERDRAW, 3);
+    add(ThemeToggle, L"BUTTON", l10n::Text("setup.theme.light"), WS_TABSTOP | BS_OWNERDRAW);
+    add(State, L"STATIC", l10n::Text("setup.state.initial"), label, 3);
+    add(StartTitle, L"STATIC", l10n::Text("setup.section.startup"), label, 1);
+    add(Startup, L"BUTTON", l10n::Text("setup.option.startup"), WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(Desktop, L"BUTTON", l10n::Text("setup.option.desktop"), WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(Silent, L"BUTTON", l10n::Text("setup.option.silent"), WS_DISABLED | WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(SilentHint, L"STATIC", l10n::Text("setup.hint.startup"), label, 3);
+    add(ProxyTitle, L"STATIC", l10n::Text("setup.section.proxy"), label, 1);
+    add(Proxy, L"BUTTON", l10n::Text("setup.option.proxy"), WS_TABSTOP | BS_AUTOCHECKBOX);
+    add(CodexEnv, L"BUTTON", l10n::Text("setup.option.codex"), WS_TABSTOP | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX);
+    add(CodexEnvHelp, L"BUTTON", l10n::Text("setup.help.codex"), WS_TABSTOP | BS_OWNERDRAW);
     // The help button sits above the full-width switch, next to its label.
     SetWindowPos(Get(CodexEnvHelp), Get(Proxy), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     Check(CodexEnv, ReadCodexEnvPreference());
-    add(ProtocolLabel, L"STATIC", L"协议", label, 3);
-    add(ProtocolHelp, L"BUTTON", L"协议设置说明", WS_TABSTOP | BS_OWNERDRAW);
+    add(ProtocolLabel, L"STATIC", l10n::Text("setup.label.protocol"), label, 3);
+    add(ProtocolHelp, L"BUTTON", l10n::Text("setup.help.protocol"), WS_TABSTOP | BS_OWNERDRAW);
     add(Protocol, L"BUTTON", L"HTTP", WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON, 3);
     add(ProtocolHttps, L"BUTTON", L"HTTPS", WS_TABSTOP | BS_AUTORADIOBUTTON, 3);
     add(ProtocolSocks, L"BUTTON", L"SOCKS5", WS_TABSTOP | BS_AUTORADIOBUTTON, 3);
     Check(Protocol, true);
-    add(HostLabel, L"STATIC", L"地址", label, 3);
-    add(HostHelp, L"BUTTON", L"地址设置说明", WS_TABSTOP | BS_OWNERDRAW);
+    add(HostLabel, L"STATIC", l10n::Text("setup.label.host"), label, 3);
+    add(HostHelp, L"BUTTON", l10n::Text("setup.help.host"), WS_TABSTOP | BS_OWNERDRAW);
     add(Host, L"EDIT", L"127.0.0.1", edit | WS_GROUP);
-    add(PortLabel, L"STATIC", L"端口", label, 3);
-    add(PortHelp, L"BUTTON", L"端口设置说明", WS_TABSTOP | BS_OWNERDRAW);
+    add(PortLabel, L"STATIC", l10n::Text("setup.label.port"), label, 3);
+    add(PortHelp, L"BUTTON", l10n::Text("setup.help.port"), WS_TABSTOP | BS_OWNERDRAW);
     add(Port, L"EDIT", L"", edit);
-    SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"点击检测"));
+    SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.port")));
     SendMessageW(Get(Port), EM_SETLIMITTEXT, 5, 0);
-    add(PreviewTitle, L"STATIC", L"启动参数预览", label, 1);
+    add(PreviewTitle, L"STATIC", l10n::Text("setup.section.preview"), label, 1);
     add(Preview, L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
     SendMessageW(Get(Preview), EM_SETLIMITTEXT, 32767, 0);
-    add(Advanced, L"BUTTON", L"高级", WS_TABSTOP | BS_OWNERDRAW, 4, true);
-    add(DirectoryLabel, L"STATIC", L"部署目录", label, 1);
+    add(Advanced, L"BUTTON", l10n::Text("setup.action.advanced"), WS_TABSTOP | BS_OWNERDRAW, 4, true);
+    add(DirectoryLabel, L"STATIC", l10n::Text("setup.label.directory"), label, 1);
     add(Directory, L"EDIT", L"", edit);
-    add(Browse, L"BUTTON", L"浏览…", WS_TABSTOP | BS_PUSHBUTTON);
-    add(Reset, L"BUTTON", L"恢复默认", WS_TABSTOP | BS_PUSHBUTTON);
-    add(DirectoryHint, L"STATIC", L"更改位置会更新快捷方式，旧文件保留。", label, 3);
-    add(BypassLabel, L"STATIC", L"不走代理的地址（选填）", label, 1);
+    add(Browse, L"BUTTON", l10n::Text("setup.action.browse"), WS_TABSTOP | BS_PUSHBUTTON);
+    add(Reset, L"BUTTON", l10n::Text("setup.action.reset"), WS_TABSTOP | BS_PUSHBUTTON);
+    add(DirectoryHint, L"STATIC", l10n::Text("setup.hint.directory"), label, 3);
+    add(BypassLabel, L"STATIC", l10n::Text("setup.label.bypass"), label, 1);
     add(Bypass, L"EDIT", L"", edit);
-    SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"用分号分隔，例如 localhost;*.example.com"));
-    add(ExtraLabel, L"STATIC", L"额外启动参数（选填）", label, 1);
+    SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.bypass")));
+    add(ExtraLabel, L"STATIC", l10n::Text("setup.label.extra"), label, 1);
     add(Extra, L"EDIT", L"", edit);
-    add(CompanionLabel, L"STATIC", L"启动 ChatGPT 后打开", label, 1);
-    add(AddProgram, L"BUTTON", L"添加程序…", WS_TABSTOP | BS_PUSHBUTTON);
-    add(OpenCompanions, L"BUTTON", L"打开启动目录", WS_TABSTOP | BS_PUSHBUTTON);
+    add(CompanionLabel, L"STATIC", l10n::Text("setup.label.companions"), label, 1);
+    add(AddProgram, L"BUTTON", l10n::Text("setup.action.add"), WS_TABSTOP | BS_PUSHBUTTON);
+    add(OpenCompanions, L"BUTTON", l10n::Text("setup.action.openstartup"), WS_TABSTOP | BS_PUSHBUTTON);
     SendMessageW(Get(Extra), EM_SETLIMITTEXT, static_cast<WPARAM>(setup::MaxArguments), 0);
-    add(Footer, L"STATIC", L"保存后即可使用", SS_OWNERDRAW, 4, true);
-    add(CloseButton, L"BUTTON", L"关闭", WS_TABSTOP | BS_PUSHBUTTON, 0, true);
-    add(ApplyButton, L"BUTTON", L"部署并保存", WS_TABSTOP | BS_PUSHBUTTON, 1, true);
+    add(Footer, L"STATIC", l10n::Text("setup.status.savefirst"), SS_OWNERDRAW, 4, true);
+    add(CloseButton, L"BUTTON", l10n::Text("common.close"), WS_TABSTOP | BS_PUSHBUTTON, 0, true);
+    add(ApplyButton, L"BUTTON", l10n::Text("setup.action.deploy"), WS_TABSTOP | BS_PUSHBUTTON, 1, true);
     INITCOMMONCONTROLSEX tipClasses{ sizeof(tipClasses), ICC_BAR_CLASSES };
     InitCommonControlsEx(&tipClasses);
     tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
@@ -367,6 +380,104 @@ void App::UpdateTooltip() {
     SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, S(460));
     SendMessageW(tooltip, TTM_SETTIPBKCOLOR, colors.surface, 0);
     SendMessageW(tooltip, TTM_SETTIPTEXTCOLOR, colors.text, 0);
+    for (int id : {CodexEnvHelp, ProtocolHelp, HostHelp, PortHelp}) {
+        TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = body;
+        tip.uId = reinterpret_cast<UINT_PTR>(Get(id)); tip.lpszText = const_cast<PWSTR>(HelpText(id));
+        SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tip));
+    }
+}
+
+int App::CaptionWidth(int id, int font) const {
+    HDC dc = GetDC(body); const auto old = SelectObject(dc, fonts[font]); SIZE size{};
+    const auto caption = Text(id);
+    GetTextExtentPoint32W(dc, caption.c_str(), static_cast<int>(caption.size()), &size);
+    SelectObject(dc, old); ReleaseDC(body, dc);
+    return MulDiv(size.cx, 96, static_cast<int>(dpi)) + 2;
+}
+int App::CaptionHeight(int id, int font, int width) const {
+    HDC dc = GetDC(body); const auto old = SelectObject(dc, fonts[font]);
+    RECT bounds{0, 0, S(width), 0}; const auto caption = Text(id);
+    DrawTextW(dc, caption.c_str(), -1, &bounds, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, old); ReleaseDC(body, dc);
+    return MulDiv(bounds.bottom, 96, static_cast<int>(dpi)) + 1;
+}
+void App::LanguageMenu() {
+    if (busy || detectingPort) return;
+    HMENU menu = CreatePopupMenu(); if (!menu) return;
+    // WM_THEMECHANGED may replace App::surface while the native menu runs its message loop.
+    HBRUSH menuBackground = CreateSolidBrush(colors.surface);
+    MENUINFO style{sizeof(style)}; style.fMask = MIM_BACKGROUND; style.hbrBack = menuBackground; SetMenuInfo(menu, &style);
+    for (size_t i = 0; i <= l10n::Count(); ++i) {
+        MENUITEMINFOW item{sizeof(item)};
+        item.fMask = MIIM_ID | MIIM_FTYPE | MIIM_DATA | MIIM_STRING | MIIM_STATE;
+        item.fType = MFT_OWNERDRAW; item.wID = LanguageMenuBase + static_cast<UINT>(i); item.dwItemData = i;
+        item.dwTypeData = const_cast<PWSTR>(LanguageMenuText(i));
+        item.fState = LanguageMenuSelected(i) ? MFS_CHECKED : MFS_UNCHECKED;
+        InsertMenuItemW(menu, static_cast<UINT>(i), TRUE, &item);
+    }
+    RECT bounds{}; GetWindowRect(Get(LanguageButton), &bounds);
+    const UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN,
+        bounds.right, bounds.bottom + S(6), window, nullptr);
+    DestroyMenu(menu);
+    if (menuBackground) DeleteObject(menuBackground);
+    if (command >= LanguageMenuBase && command <= LanguageMenuBase + l10n::Count()) ChangeLanguage(command - LanguageMenuBase);
+}
+void App::DrawLanguageItem(const DRAWITEMSTRUCT& item) {
+    const bool hover = (item.itemState & ODS_SELECTED) != 0;
+    const COLORREF fill = hover ? colors.selected : colors.surface;
+    HBRUSH brush = CreateSolidBrush(fill); FillRect(item.hDC, &item.rcItem, brush); DeleteObject(brush);
+    SetBkMode(item.hDC, TRANSPARENT); SetTextColor(item.hDC, hover ? colors.selectedText : colors.text);
+    // Use the entry's font so language names remain readable from any active language.
+    LOGFONTW info{}; GetObjectW(fonts[0], sizeof(info), &info);
+    wcscpy_s(info.lfFaceName, item.itemData ? l10n::At(item.itemData - 1).font : l10n::Current().font);
+    HFONT font = CreateFontIndirectW(&info); const auto old = SelectObject(item.hDC, font ? font : fonts[0]);
+    RECT text = item.rcItem; text.left += S(36); text.right -= S(16);
+    DrawTextW(item.hDC, LanguageMenuText(item.itemData), -1, &text, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+    if (LanguageMenuSelected(item.itemData)) {
+        HPEN pen = CreatePen(PS_SOLID, S(2), hover ? colors.selectedText : colors.accent);
+        const auto oldPen = SelectObject(item.hDC, pen);
+        const int x = item.rcItem.left + S(14), y = (item.rcItem.top + item.rcItem.bottom) / 2;
+        MoveToEx(item.hDC, x, y, nullptr); LineTo(item.hDC, x + S(3), y + S(3)); LineTo(item.hDC, x + S(10), y - S(4));
+        SelectObject(item.hDC, oldPen); DeleteObject(pen);
+    }
+    SelectObject(item.hDC, old); if (font) DeleteObject(font);
+}
+void App::ChangeLanguage(size_t menuIndex) {
+    if (busy || detectingPort || menuIndex > l10n::Count()) return;
+    if (!menuIndex) l10n::UseSystem(); else l10n::Select(l10n::At(menuIndex - 1).tag);
+    TranslateControls();
+    if (!SaveLanguagePreference()) Set(Footer, l10n::Text("setup.language.unsaved"));
+}
+void App::TranslateControls() {
+    // Change captions only. Do not restore options, overwrite edits or reset dirty state.
+    const bool wasLoading = loading; loading = true;
+    const struct { int id; const char* key; } labels[] = {
+        {StartTitle,"setup.section.startup"}, {Startup,"setup.option.startup"}, {Desktop,"setup.option.desktop"},
+        {Silent,"setup.option.silent"}, {SilentHint,"setup.hint.startup"}, {ProxyTitle,"setup.section.proxy"},
+        {Proxy,"setup.option.proxy"}, {CodexEnv,"setup.option.codex"}, {CodexEnvHelp,"setup.help.codex"},
+        {ProtocolLabel,"setup.label.protocol"}, {ProtocolHelp,"setup.help.protocol"}, {HostLabel,"setup.label.host"},
+        {HostHelp,"setup.help.host"}, {PortLabel,"setup.label.port"}, {PortHelp,"setup.help.port"},
+        {PreviewTitle,"setup.section.preview"}, {DirectoryLabel,"setup.label.directory"}, {Browse,"setup.action.browse"},
+        {Reset,"setup.action.reset"}, {DirectoryHint,"setup.hint.directory"}, {BypassLabel,"setup.label.bypass"},
+        {ExtraLabel,"setup.label.extra"}, {CompanionLabel,"setup.label.companions"}, {AddProgram,"setup.action.add"},
+        {OpenCompanions,"setup.action.openstartup"}
+    };
+    for (const auto& label : labels) Set(label.id, l10n::Text(label.key));
+    Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
+    Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced"));
+    Set(SetupVersion, l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}));
+    Set(LanguageButton, l10n::Current().name);
+    SetWindowTextW(window, l10n::Text("setup.window")); SetWindowTextW(body, l10n::Text("setup.body"));
+    SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.port")));
+    SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.bypass")));
+    // A single read on explicit switching refreshes localized deployment warnings, never the form.
+    setup::Loaded loaded;
+    if (setup::Load(paths, loaded)) UpdateState(loaded);
+    else Set(State, l10n::Text(savedThisSession ? "setup.state.readfailed" : "setup.status.loadfailed"));
+    loading = wasLoading;
+    Theme(); Refresh(false);
+    if (fatal) Set(Footer, l10n::Text("setup.status.loadfailed"));
+    Layout();
 }
 
 void App::Layout() {
@@ -378,26 +489,29 @@ void App::Layout() {
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
     const int envOffset = Checked(Proxy) ? 48 : 0;
-    contentHeight = S(advanced ? 710 : 666 + envOffset);
-    scroll = std::clamp(scroll, 0, std::max(0, contentHeight - static_cast<int>(area.bottom)));
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
+    const int languageWidth = std::clamp(CaptionWidth(LanguageButton, 3) + 40, 96, 180);
+    const int languageLeft = width - 80 - languageWidth;
+    const int titleWidth = CaptionWidth(Title, 2), versionWidth = CaptionWidth(SetupVersion, 3);
+    const int versionOffset = 44 + titleWidth + versionWidth > languageLeft - 16 ? 24 : 0;
+    const int stateHeight = std::max(20, CaptionHeight(State, 3, width - 64));
+    headerOffset = versionOffset + stateHeight - 20;
+    contentHeight = S((advanced ? 710 : 666 + envOffset) + headerOffset);
+    scroll = std::clamp(scroll, 0, std::max(0, contentHeight - static_cast<int>(area.bottom)));
     HDWP batch = BeginDeferWindowPos(static_cast<int>(controls.size()));
     auto place = [&](int id, int x, int y, int w, int h, bool visible = true) {
+        if (y >= 108) y += headerOffset;
         HWND control = Get(id);
         const UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
         if (batch) batch = DeferWindowPos(batch, control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
         else SetWindowPos(control, nullptr, S(x), S(y) - scroll, S(w), S(h), flags);
     };
-    HDC titleDC = GetDC(body); HGDIOBJ titleFont = SelectObject(titleDC, fonts[2]); SIZE titleSize{};
-    const auto title = Text(Title);
-    GetTextExtentPoint32W(titleDC, title.c_str(), static_cast<int>(title.size()), &titleSize);
-    SelectObject(titleDC, titleFont); ReleaseDC(body, titleDC);
-    const int titleWidth = MulDiv(titleSize.cx, 96, static_cast<int>(dpi));
     place(Title, 32, 24, titleWidth + 2, 34);
-    place(SetupVersion, 44 + titleWidth, 39, width - titleWidth - 128, 20);
+    place(SetupVersion, versionOffset ? 32 : 44 + titleWidth, versionOffset ? 64 : 39, versionWidth, 20);
+    place(LanguageButton, languageLeft, 24, languageWidth, 36);
     place(ThemeToggle, width - 68, 24, 36, 36);
-    place(State, 32, 66, width - 64, 20);
+    place(State, 32, 66 + versionOffset, width - 64, stateHeight);
     place(StartTitle, 32, 108, width - 64, 20, !advanced);
     place(Startup, 48, 152, inner, 36, !advanced);
     place(SilentHint, 48, 190, inner, 18, !advanced);
@@ -411,31 +525,37 @@ void App::Layout() {
     GetTextExtentPoint32W(measure, envLabel.c_str(), static_cast<int>(envLabel.size()), &labelSize);
     SelectObject(measure, oldFont); ReleaseDC(body, measure);
     place(CodexEnvHelp, std::min(48 + MulDiv(labelSize.cx, 96, static_cast<int>(dpi)) + 6, width - 128), 438, 24, 24, !advanced && envOffset);
-    place(ProtocolLabel, 48, 432 + envOffset, 28, 18, !advanced);
-    place(ProtocolHelp, 78, 429 + envOffset, 24, 24, !advanced);
+    const auto proxyLabel = [&](int label, int help, int x) {
+        const int labelWidth = CaptionWidth(label, 3);
+        place(label, x, 432 + envOffset, labelWidth, 20, !advanced);
+        place(help, x + labelWidth + 4, 429 + envOffset, 24, 24, !advanced);
+    };
+    proxyLabel(ProtocolLabel, ProtocolHelp, 48);
     place(Protocol, 52, 462 + envOffset, 64, 28, !advanced);
     place(ProtocolHttps, 120, 462 + envOffset, 64, 28, !advanced);
     place(ProtocolSocks, 188, 462 + envOffset, 64, 28, !advanced);
-    place(HostLabel, 272, 432 + envOffset, 28, 18, !advanced);
-    place(HostHelp, 302, 429 + envOffset, 24, 24, !advanced);
+    proxyLabel(HostLabel, HostHelp, 272);
     place(Host, 284, 466 + envOffset, inner - 368, 20, !advanced);
-    place(PortLabel, width - 152, 432 + envOffset, 28, 18, !advanced);
-    place(PortHelp, width - 122, 429 + envOffset, 24, 24, !advanced);
+    proxyLabel(PortLabel, PortHelp, width - 152);
     place(Port, width - 140, 466 + envOffset, 80, 20, !advanced);
     place(PreviewTitle, 32, advanced ? 588 : 542 + envOffset, width - 64, 20);
     place(Preview, 44, advanced ? 632 : 586 + envOffset, width - 88, 44);
     place(DirectoryLabel, 32, 108, width - 64, 20, advanced);
-    place(Directory, 60, 166, inner - 208, 20, advanced);
-    place(Browse, width - 216, 156, 72, 40, advanced);
-    place(Reset, width - 136, 156, 88, 40, advanced);
+    const int browseWidth = std::max(72, CaptionWidth(Browse, 0) + 24);
+    const int resetWidth = std::max(88, CaptionWidth(Reset, 0) + 24);
+    const int resetLeft = width - 48 - resetWidth, browseLeft = resetLeft - 8 - browseWidth;
+    place(Directory, 60, 166, browseLeft - 84, 20, advanced);
+    place(Browse, browseLeft, 156, browseWidth, 40, advanced);
+    place(Reset, resetLeft, 156, resetWidth, 40, advanced);
     place(DirectoryHint, 48, 216, inner, 20, advanced);
     place(BypassLabel, 32, 280, width - 64, 20, advanced);
     place(Bypass, 44, 322, width - 88, 20, advanced);
     place(ExtraLabel, 32, 380, width - 64, 20, advanced);
     place(Extra, 44, 422, width - 88, 20, advanced);
     place(CompanionLabel, 32, 480, width - 64, 20, advanced);
-    place(AddProgram, 32, 512, 112, 40, advanced);
-    place(OpenCompanions, 156, 512, 128, 40, advanced);
+    const int addWidth = std::max(112, CaptionWidth(AddProgram, 0) + 32);
+    place(AddProgram, 32, 512, addWidth, 40, advanced);
+    place(OpenCompanions, 44 + addWidth, 512, std::max(128, CaptionWidth(OpenCompanions, 0) + 32), 40, advanced);
     if (batch) EndDeferWindowPos(batch);
     const int footerTop = root.bottom - footerHeight;
     HDWP footerBatch = BeginDeferWindowPos(4);
@@ -445,9 +565,11 @@ void App::Layout() {
         else SetWindowPos(Get(id), nullptr, x, y, w, h, flags);
     };
     footer(Footer, S(32), footerTop + S(4), root.right - S(64), S(32));
-    footer(Advanced, S(32), footerTop + S(40), S(92), S(40));
-    footer(CloseButton, root.right - S(240), footerTop + S(40), S(80), S(40));
-    footer(ApplyButton, root.right - S(148), footerTop + S(40), S(116), S(40));
+    const int applyWidth = std::max(116, CaptionWidth(ApplyButton, 1) + 40);
+    const int closeWidth = std::max(80, CaptionWidth(CloseButton, 0) + 32);
+    footer(Advanced, S(32), footerTop + S(40), S(std::max(92, CaptionWidth(Advanced, 4) + 40)), S(40));
+    footer(CloseButton, root.right - S(44 + applyWidth + closeWidth), footerTop + S(40), S(closeWidth), S(40));
+    footer(ApplyButton, root.right - S(32 + applyWidth), footerTop + S(40), S(applyWidth), S(40));
     if (footerBatch) EndDeferWindowPos(footerBatch);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
@@ -498,6 +620,7 @@ void App::Refresh(bool edited) {
     // Temporarily unavailable; preserve the saved value but keep the switch locked after saving.
     EnableWindow(Get(Silent), FALSE);
     EnableWindow(Get(ThemeToggle), !contrast && !busy);
+    EnableWindow(Get(LanguageButton), !busy && !detectingPort);
     EnableWindow(Get(Protocol), options.proxy && !busy);
     EnableWindow(Get(ProtocolHttps), options.proxy && !busy);
     EnableWindow(Get(ProtocolSocks), options.proxy && !busy);
@@ -513,23 +636,25 @@ void App::Refresh(bool edited) {
     const setup::Result args = setup::BuildArguments(options, arguments);
     const setup::Result path = setup::NormalizeDirectory(options.directory, directory);
     // Never present a partial command as the command that will actually be saved.
-    Set(Preview, args ? arguments : L"（请修正输入后查看启动参数）");
+    Set(Preview, args ? arguments : l10n::Text("setup.preview.invalid"));
     const bool valid = args && path && !fatal;
     EnableWindow(Get(ApplyButton), valid && !busy && (!savedThisSession || dirty));
     if (!fatal) {
         if (!args) Set(Footer, args.message.substr(0, args.message.find(L'\n')));
         else if (!path) Set(Footer, path.message.substr(0, path.message.find(L'\n')));
-        else Set(Footer, busy ? L"正在保存…" : savedThisSession && !dirty ? L"已保存，可以关闭"
-            : options.proxy && options.codexEnv ? L"保存后会尝试退出整个 ChatGPT，请先保存工作。" : dirty ? L"有更改待保存" : L"保存后即可使用");
+        else Set(Footer, busy ? l10n::Text("setup.status.saving") : savedThisSession && !dirty ?
+            std::wstring(l10n::Text(completionKey.empty() ? "setup.status.saved" : completionKey)) + (envPreferenceWarning ? l10n::Text("setup.status.envunsaved") : L"")
+            : options.proxy && options.codexEnv ? l10n::Text("setup.status.quitwarning") : dirty ? l10n::Text("setup.status.unsaved") : l10n::Text("setup.status.savefirst"));
     }
-    Set(ApplyButton, busy ? L"正在保存…" : savedThisSession && !dirty ? L"已保存" : savedTarget.empty() ? L"部署并保存" : L"保存更改");
-    Set(CloseButton, savedThisSession && !dirty ? L"完成" : L"关闭");
+    Set(ApplyButton, busy ? l10n::Text("setup.status.saving") : savedThisSession && !dirty ? l10n::Text("setup.action.saved") : savedTarget.empty() ? l10n::Text("setup.action.deploy") : l10n::Text("setup.action.save"));
+    Set(CloseButton, savedThisSession && !dirty ? l10n::Text("common.done") : l10n::Text("common.close"));
 }
 void App::DetectPort() {
     if (closing || loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
     const auto options = Options();
     detectingPort = true; detectionRevision = editRevision;
-    Set(Footer, L"正在读取本机代理端口…也可以直接手动填写。");
+    EnableWindow(Get(LanguageButton), FALSE);
+    Set(Footer, l10n::Text("setup.status.detecting"));
     try {
         detectedPort = {}; // Allocate the fallback before starting the worker.
         portFinished.store(false, std::memory_order_relaxed);
@@ -542,6 +667,7 @@ void App::DetectPort() {
         });
     } catch (...) {
         detectingPort = false;
+        EnableWindow(Get(LanguageButton), !busy);
         if (!busy) KillTimer(window, WorkerTimer);
         Set(Footer, setup::ProxyDetection{}.message);
     }
@@ -550,6 +676,7 @@ void App::FinishPortDetection() {
     if (!detectingPort) return;
     if (portWorker.joinable()) portWorker.join();
     detectingPort = false;
+    EnableWindow(Get(LanguageButton), !busy);
     if (!busy) KillTimer(window, WorkerTimer);
     // Editing, loading or saving while discovery runs invalidates that result.
     if (busy || loading || editRevision != detectionRevision || !Checked(Proxy) || !Text(Port).empty()) return;
@@ -590,27 +717,31 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
     Check(ProtocolSocks, loaded.options.protocol == L"socks5");
     Set(Host, loaded.options.host); Set(Port, loaded.options.port);
     Set(Directory, loaded.options.directory); Set(Bypass, loaded.options.bypass); Set(Extra, loaded.options.extra);
-    const std::wstring deployment = loaded.deployed
-        ? loaded.deployedVersion.empty() ? L"已部署，版本无法识别" : L"已部署 v" + loaded.deployedVersion
-        : loaded.hasSettings ? L"启动器缺失，保存可重新部署" : L"尚未部署";
-    Set(State, deployment
-        + std::wstring(!loaded.hasSettings ? L"，选项将在保存后生效" : loaded.options.startup ? L"，登录自启已配置" : L"，登录自启未配置"));
-    if (!loaded.notice.empty()) {
-        Set(State, loaded.notice);
-    }
+    UpdateState(loaded);
     loading = false; dirty = false;
     Refresh(false);
 }
+void App::UpdateState(const setup::Loaded& loaded) {
+    const std::wstring deployment = loaded.deployed
+        ? loaded.deployedVersion.empty() ? l10n::Text("setup.state.unknownversion") : l10n::Format("setup.state.version", {{"version", loaded.deployedVersion}})
+        : loaded.hasSettings ? l10n::Text("setup.state.missing") : l10n::Text("setup.state.absent");
+    Set(State, l10n::Format(!loaded.hasSettings ? "setup.state.pending" : loaded.options.startup ? "setup.state.startupon" : "setup.state.startupoff",
+        {{"deployment", deployment}}));
+    if (!loaded.notice.empty()) {
+        Set(State, loaded.notice);
+    }
+}
 void App::Command(int id, int notification) {
     if (loading || busy) return;
+    if (id == LanguageButton && notification == BN_CLICKED) { LanguageMenu(); return; }
     if (IsHelp(id) && notification == BN_CLICKED) {
-        MessageBoxW(window, HelpText(id), id == CodexEnvHelp ? L"Codex 代理配置" : L"代理设置说明", MB_OK | MB_ICONINFORMATION); return;
+        MessageBoxW(window, HelpText(id), id == CodexEnvHelp ? l10n::Text("setup.dialog.codex") : l10n::Text("setup.dialog.proxy"), MB_OK | MB_ICONINFORMATION); return;
     }
     if (id == ThemeToggle && notification == BN_CLICKED) {
         if (contrast) return;
         preferredDark = !dark;
         Theme(); Layout();
-        if (!SaveDarkPreference(preferredDark)) Set(Footer, L"外观已切换，但未能记住选择。");
+        if (!SaveDarkPreference(preferredDark)) Set(Footer, l10n::Text("setup.status.themeunsaved"));
         return;
     }
     if (IsSegment(id) && notification == BN_CLICKED) {
@@ -620,8 +751,8 @@ void App::Command(int id, int notification) {
     if (id == Port && notification == EN_SETFOCUS) { DetectPort(); return; }
     if (id == Advanced && notification == BN_CLICKED) {
         advanced = !advanced; scroll = 0;
-        Set(Advanced, advanced ? L"返回" : L"高级");
-        Set(Title, advanced ? L"高级设置" : L"ChatGPT 启动器");
+        Set(Advanced, advanced ? l10n::Text("common.back") : l10n::Text("setup.action.advanced"));
+        Set(Title, advanced ? l10n::Text("setup.section.advanced") : l10n::Text("common.launcher"));
         Layout(); SetFocus(Get(Advanced)); return;
     }
     if (id == Reset && notification == BN_CLICKED) { Set(Directory, paths.defaultDirectory); return; }
@@ -634,7 +765,7 @@ void App::Command(int id, int notification) {
             info.lpFile = folder.c_str(); info.nShow = SW_SHOWNORMAL;
             if (!ShellExecuteExW(&info)) { const DWORD error = GetLastError(); result = {error, setup::ErrorText(error)}; }
         }
-        if (!result) ShowSetupError(window, result, L"无法打开启动目录");
+        if (!result) ShowSetupError(window, result, l10n::Text("setup.error.openstartup"));
         return;
     }
     if ((id == Browse || id == AddProgram) && notification == BN_CLICKED) {
@@ -652,14 +783,14 @@ void App::Command(int id, int notification) {
                 supported += L'*'; supported += format.ext;
             }
             const COMDLG_FILTERSPEC filters[] = {
-                {L"所有支持的入口", supported.c_str()},
-                {L"快捷方式", L"*.lnk"}, {L"批处理脚本", L"*.bat;*.cmd"},
-                {L"PowerShell 脚本", L"*.ps1"}, {L"Windows 脚本 (VBScript / JScript / WSF)", L"*.vbs;*.js;*.wsf"},
-                {L"Python 脚本", L"*.py;*.pyw"}, {L"Node.js 模块", L"*.cjs;*.mjs"},
-                {L"可执行 Java 包", L"*.jar"}, {L"应用程序", L"*.exe"}
+                {l10n::Text("setup.filter.supported"), supported.c_str()},
+                {l10n::Text("setup.filter.shortcuts"), L"*.lnk"}, {l10n::Text("setup.filter.batch"), L"*.bat;*.cmd"},
+                {l10n::Text("setup.filter.powershell"), L"*.ps1"}, {l10n::Text("setup.filter.windows"), L"*.vbs;*.js;*.wsf"},
+                {l10n::Text("setup.filter.python"), L"*.py;*.pyw"}, {l10n::Text("setup.filter.node"), L"*.cjs;*.mjs"},
+                {l10n::Text("setup.filter.java"), L"*.jar"}, {l10n::Text("setup.filter.apps"), L"*.exe"}
             };
             if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
-            dialog->SetTitle(selectProgram ? L"选择要随 ChatGPT 启动的程序" : L"选择启动器部署目录");
+            dialog->SetTitle(selectProgram ? l10n::Text("setup.dialog.program") : l10n::Text("setup.dialog.directory"));
             IShellItem* initial = nullptr;
             if (!selectProgram && SUCCEEDED(SHCreateItemFromParsingName(Text(Directory).c_str(), nullptr, IID_PPV_ARGS(&initial)))) {
                 dialog->SetFolder(initial); initial->Release();
@@ -675,16 +806,16 @@ void App::Command(int id, int notification) {
                     if (SUCCEEDED(hr)) {
                         if (selectProgram) {
                             const auto added = setup::AddCompanionProgram(paths, path);
-                            if (!added) ShowSetupError(window, added, L"无法添加程序");
-                            else Set(Footer, savedThisSession ? L"已添加，下次通过启动器打开 ChatGPT 时生效。"
-                                : L"已添加。请部署并保存新版启动器。");
+                            if (!added) ShowSetupError(window, added, l10n::Text("setup.error.add"));
+                            else Set(Footer, savedThisSession ? l10n::Text("setup.status.added")
+                                : l10n::Text("setup.status.addeddeploy"));
                         } else Set(Directory, path);
                     }
                 }
             }
         }
         if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED))
-            MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), selectProgram ? L"无法选择程序" : L"无法选择目录", MB_OK | MB_ICONERROR);
+            MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), selectProgram ? l10n::Text("setup.error.program") : l10n::Text("setup.error.directory"), MB_OK | MB_ICONERROR);
         return;
     }
     if (id == CloseButton && notification == BN_CLICKED) { SendMessageW(window, WM_CLOSE, 0, 0); return; }
@@ -697,7 +828,7 @@ void App::Command(int id, int notification) {
 void App::BeginSave() {
     if (closing || busy || fatal) return;
     if (savedThisSession && !dirty) {
-        Set(Footer, L"配置已保存，可以点击「完成」关闭本工具，无需再次部署。"); return;
+        Set(Footer, l10n::Text("setup.status.completed")); return;
     }
     const setup::Options options = Options();
     std::wstring unused;
@@ -708,7 +839,7 @@ void App::BeginSave() {
         completion->checkStartup = options.startup && !startupReminderShown;
         completion->codexEnv = options.codexEnv;
         completion->wroteCodexEnv = options.proxy && options.codexEnv;
-        std::wstring failureMessage = L"保存未完成。请重新打开工具检查配置后重试。";
+        std::wstring failureMessage = l10n::Text("setup.error.saveinterrupted");
         pendingSave = std::move(completion);
         saveFinished.store(false, std::memory_order_relaxed);
         if (!SetTimer(window, WorkerTimer, 100, nullptr)) throw std::bad_alloc();
@@ -723,7 +854,7 @@ void App::BeginSave() {
                 automation::UserLock operation;
                 try {
                     const DWORD locked = operation.Acquire(paths.settingsLink);
-                    completion->result = locked ? setup::Result{locked, L"其他操作正在保存配置，请稍后重试。"}
+                    completion->result = locked ? setup::Result{locked, l10n::Text("error.busy")}
                         : setup::Apply(paths, options, payload, completion->target);
                 }
                 catch (...) {
@@ -746,7 +877,7 @@ void App::BeginSave() {
     } catch (...) {
         pendingSave.reset();
         if (!detectingPort) KillTimer(window, WorkerTimer);
-        Set(Footer, L"未能开始保存。设置仍在，请重试。");
+        Set(Footer, l10n::Text("setup.error.savestart"));
         return;
     }
     busy = true;
@@ -766,40 +897,35 @@ void App::FinishSave(std::unique_ptr<Completion> done) {
         if (result) RestoreOptions(loaded);
         else {
             dirty = false; savedTarget = done->target;
-            Set(State, L"已保存，无法重新读取部署信息");
+            Set(State, l10n::Text("setup.state.readfailed"));
         }
         Check(CodexEnv, done->codexEnv);
         savedThisSession = true;
-        Refresh(false);
         const bool moved = !done->previous.empty() && _wcsicmp(done->previous.c_str(), done->target.c_str()) != 0;
-        Set(Footer, moved ? L"已保存。旧目录中的文件已保留。" : L"已保存。下次启动时使用这些选项。");
-        if (done->wroteCodexEnv) Set(Footer, ChatGPTCloseMessage(done->closeResult));
-        if (!preferenceSaved) Set(Footer,
-            std::wstring(done->wroteCodexEnv ? ChatGPTCloseMessage(done->closeResult) : L"配置已保存。") + L"未能记住 .env 选项，下次打开时请核对。");
+        completionKey = done->wroteCodexEnv ? done->closeResult == setup::ChatGPTCloseResult::Closed ? "setup.quit.closed"
+            : done->closeResult == setup::ChatGPTCloseResult::NotRunning ? "setup.quit.absent" : "setup.quit.manual"
+            : !preferenceSaved ? "setup.status.configsaved" : moved ? "setup.status.keptold" : "setup.status.nextlaunch";
+        envPreferenceWarning = !preferenceSaved;
+        Refresh(false);
         if (done->checkStartup) ShowStartupReminder(*done, preferenceSaved);
     } else {
         Refresh(false);
-        ShowSetupError(window, done->result, L"保存未完成");
+        ShowSetupError(window, done->result, l10n::Text("setup.error.saving"));
     }
     SetFocus(Get(done->result ? CloseButton : ApplyButton));
 }
 
 void App::ShowStartupReminder(const Completion& done, bool preferenceSaved) {
     startupReminderShown = true;
-    std::wstring reminder = L"启动器、启动参数和登录自启快捷方式已保存，不需要再次部署。\n\n"
-        L"接下来请按这几步操作：\n"
-        L"1. 点击本提示的「确定」，打开 Windows「启动应用」设置。\n"
-        L"2. 找到「ChatGPT」，确认开关为「关」；如果已经关闭，不用再改。\n"
-        L"3. 保持「ChatGPT Proxy Launcher」（本工具的启动项）开启，不要一起关闭。\n"
-        L"4. 核对后回到部署器，点击右下方「完成」即可退出。\n\n"
-        L"这样可以避免 ChatGPT 自带自启先运行，导致本工具配置的启动参数无法生效。\n\n"
-        L"自动处理结果：\n" + done.startupReport.Message();
+    std::wstring reminder = l10n::Format("setup.dialog.startupsteps", {{"result", done.startupReport.Message()}});
     if (done.wroteCodexEnv) reminder += L"\n\n" + std::wstring(ChatGPTCloseMessage(done.closeResult));
-    if (!done.wroteCodexEnv && preferenceSaved)
-        Set(Footer, L"已保存，可关闭本工具。请在 Windows 设置中核对自带自启。");
-    MessageBoxW(window, reminder.c_str(), L"部署已完成", MB_OK | MB_ICONINFORMATION);
+    if (!done.wroteCodexEnv && preferenceSaved) {
+        completionKey = "setup.status.checkstartup";
+        Set(Footer, l10n::Text("setup.status.checkstartup"));
+    }
+    MessageBoxW(window, reminder.c_str(), l10n::Text("setup.dialog.deployed"), MB_OK | MB_ICONINFORMATION);
     const setup::Result opened = setup::OpenStartupSettings(window);
-    if (!opened) MessageBoxW(window, (L"配置已保存。\n\n" + opened.message).c_str(), L"请手动打开启动设置", MB_OK | MB_ICONINFORMATION);
+    if (!opened) MessageBoxW(window, l10n::Format("setup.dialog.savedprefix", {{"error", opened.message}}).c_str(), l10n::Text("setup.dialog.manualstartup"), MB_OK | MB_ICONINFORMATION);
 }
 
 void App::DrawSurface(HWND target, HDC dc) {
@@ -807,14 +933,14 @@ void App::DrawSurface(HWND target, HDC dc) {
     FillRect(dc, &rect, target == body ? background : surface);
     if (target == body) {
         auto card = [&](int top, int bottom) {
-            const RECT r{ S(32), S(top) - scroll, rect.right - S(32), S(bottom) - scroll };
+            const RECT r{ S(32), S(top + headerOffset) - scroll, rect.right - S(32), S(bottom + headerOffset) - scroll };
             Rounded(dc, r, S(16), colors.surface, colors.divider);
         };
         if (advanced) card(140, 256);
         else {
             const int offset = Checked(Proxy) ? 48 : 0;
             card(140, 316); card(372, 518 + offset);
-            RECT segments{S(48), S(458 + offset) - scroll, S(256), S(494 + offset) - scroll};
+            RECT segments{S(48), S(458 + offset + headerOffset) - scroll, S(256), S(494 + offset + headerOffset) - scroll};
             Rounded(dc, segments, S(10), colors.field, colors.border);
         }
         for (const auto& item : controls) {
@@ -889,7 +1015,7 @@ void App::DrawControl(HWND control, HDC dc) {
     const int id = GetDlgCtrlID(control);
     const bool enabled = IsWindowEnabled(control) != FALSE;
     const bool focus = GetFocus() == control;
-    const bool focusVisible = focus && (SendMessageW(control, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) == 0;
+    const bool focusVisible = enabled && focus && (SendMessageW(control, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) == 0;
     const bool pressed = (SendMessageW(control, BM_GETSTATE, 0, 0) & BST_PUSHED) != 0;
     const bool checked = Checked(id);
     float hover = 0, toggle = checked ? 1.0f : 0.0f;
@@ -897,7 +1023,7 @@ void App::DrawControl(HWND control, HDC dc) {
     for (const auto& item : controls) if (item.window == control) {
         hover = item.hover.Value(now); toggle = item.toggle.Value(now); break;
     }
-    FillRect(dc, &rect, id == ThemeToggle || id == AddProgram || id == OpenCompanions ? background : IsSegment(id) ? field : surface);
+    FillRect(dc, &rect, id == ThemeToggle || id == LanguageButton || id == AddProgram || id == OpenCompanions ? background : IsSegment(id) ? field : surface);
     SetBkMode(dc, TRANSPARENT);
     COLORREF textColor = enabled ? colors.text : colors.secondary;
     RECT text = rect;
@@ -947,11 +1073,23 @@ void App::DrawControl(HWND control, HDC dc) {
             moon.CloseFigure(); graphics.DrawPath(&pen, &moon);
         }
         return; // The window caption remains available to accessibility tools, but is not painted.
+    } else if (id == LanguageButton) {
+        Rounded(dc, rect, S(10), Blend(colors.surface, colors.hover, pressed ? 1.0f : hover),
+            focusVisible ? colors.accent : colors.divider, focusVisible ? 2.0f : 1.0f);
+        text.left += S(12); text.right -= S(28);
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, S(1)), textColor); const auto old = SelectObject(dc, pen);
+        const int x = rect.right - S(16), y = rect.bottom / 2;
+        MoveToEx(dc, x - S(3), y - S(1), nullptr); LineTo(dc, x, y + S(2)); LineTo(dc, x + S(4), y - S(2));
+        SelectObject(dc, old); DeleteObject(pen);
     } else if (IsSwitch(id)) {
-        RECT track{ rect.right - S(46), (rect.bottom - S(26)) / 2, rect.right - S(2), (rect.bottom + S(26)) / 2 };
+        RECT track{ rect.right - S(49), (rect.bottom - S(26)) / 2, rect.right - S(5), (rect.bottom + S(26)) / 2 };
+        if (focusVisible) {
+            RECT ring = track; InflateRect(&ring, S(3), S(3));
+            Rounded(dc, ring, S(16), colors.surface, colors.accent, static_cast<float>(S(2)));
+        }
         const COLORREF trackColor = contrast ? (checked && enabled ? colors.accent : colors.surface)
             : enabled ? Blend(colors.border, colors.accent, toggle) : colors.divider;
-        Rounded(dc, track, S(13), trackColor, focus ? colors.accent : contrast ? (enabled ? colors.text : colors.secondary) : trackColor, focus ? 2.0f : 1.0f);
+        Rounded(dc, track, S(13), trackColor, contrast ? (enabled ? colors.text : colors.secondary) : trackColor);
         const int left = track.left + S(3) + static_cast<int>(S(18) * toggle + 0.5f);
         RECT knob{ left, track.top + S(3), left + S(20), track.bottom - S(3) };
         Rounded(dc, knob, S(10), contrast ? (!enabled ? colors.secondary : checked ? GetSysColor(COLOR_HIGHLIGHTTEXT) : colors.text)
@@ -996,13 +1134,10 @@ void App::DrawControl(HWND control, HDC dc) {
         }
     }
     SetTextColor(dc, textColor);
-    HGDIOBJ old = SelectObject(dc, fonts[id == ApplyButton ? 1 : id == Advanced ? 4 : IsSegment(id) ? 3 : 0]);
+    HGDIOBJ old = SelectObject(dc, fonts[id == ApplyButton ? 1 : id == Advanced ? 4 : IsSegment(id) || id == LanguageButton ? 3 : 0]);
     const std::wstring caption = Text(id);
     DrawTextW(dc, caption.c_str(), -1, &text, textFlags);
     SelectObject(dc, old);
-    if (focusVisible && !IsOwnerDrawButton(id)) {
-        RECT frame = rect; InflateRect(&frame, -S(3), -S(3)); DrawFocusRect(dc, &frame);
-    }
 }
 LRESULT ColorControl(App& app, HDC dc, HWND control) {
     const int id = GetDlgCtrlID(control);
@@ -1021,6 +1156,11 @@ LRESULT ColorControl(App& app, HDC dc, HWND control) {
 LRESULT CALLBACK StyledControl(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
     App& app = *reinterpret_cast<App*>(reference);
     const int id = GetDlgCtrlID(window);
+    if (IsButton(id) && (message == WM_LBUTTONDOWN || message == WM_KEYDOWN)) {
+        // Keep one input-mode state for the whole window; Tab also updates this through IsDialogMessage.
+        SendMessageW(app.window, WM_CHANGEUISTATE,
+            MAKEWPARAM(message == WM_LBUTTONDOWN ? UIS_SET : UIS_CLEAR, UISF_HIDEFOCUS), 0);
+    }
     if (IsSegment(id)) {
         if (message == BM_GETCHECK) return app.selectedProtocol == id ? BST_CHECKED : BST_UNCHECKED;
         if (message == BM_SETCHECK) {
@@ -1084,8 +1224,8 @@ LRESULT CALLBACK StyledControl(HWND window, UINT message, WPARAM wparam, LPARAM 
     const LRESULT result = DefSubclassProc(window, message, wparam, lparam);
     if (message == BM_SETCHECK || message == BM_CLICK || message == WM_LBUTTONUP || message == WM_KEYUP || message == WM_ENABLE)
         app.UpdateMotion(window);
-    // Owner-drawn actions route synchronous drawing through WM_DRAWITEM as well.
-    // Keep deferred invalidation for theme changes and the native checkbox/radio state model.
+    // Synchronous painting uses WM_DRAWITEM for actions/segments and NM_CUSTOMDRAW for native checkboxes.
+    // Keep invalidation for theme, focus and check-state changes; never rely on it to cover native painting.
     if ((IsButton(id) || id == Footer) && (message == WM_SETTEXT || message == WM_UPDATEUISTATE || message == WM_THEMECHANGED
         || (message == BM_SETSTYLE && LOWORD(lparam)) || (message == WM_SETFONT && lparam))) {
         InvalidateRect(window, nullptr, FALSE);
@@ -1109,6 +1249,18 @@ LRESULT CALLBACK BodyProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
     if (!app) return DefWindowProcW(window, message, wparam, lparam);
     switch (message) {
     case WM_COMMAND: app->Command(LOWORD(wparam), HIWORD(wparam)); return 0;
+    case WM_NOTIFY: {
+        const auto header = reinterpret_cast<const NMHDR*>(lparam);
+        if (header && header->code == NM_CUSTOMDRAW && IsSwitch(static_cast<int>(header->idFrom))
+            && app->Get(static_cast<int>(header->idFrom)) == header->hwndFrom) {
+            const auto draw = reinterpret_cast<const NMCUSTOMDRAW*>(lparam);
+            // Preserve native checkbox state, keyboard and accessibility behavior, but own every paint.
+            if (draw->dwDrawStage == CDDS_PREERASE || draw->dwDrawStage == CDDS_PREPAINT) {
+                app->PaintControl(header->hwndFrom, draw->hdc); return CDRF_SKIPDEFAULT;
+            }
+        }
+        break;
+    }
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
         if (item && IsOwnerDrawButton(static_cast<int>(item->CtlID))) { app->PaintControl(item->hwndItem, item->hDC); return TRUE; }
@@ -1158,7 +1310,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     case WM_CREATE: {
         app->preferredDark = ReadDarkPreference();
         app->dpi = GetDpiForWindow(window); app->Theme();
-        app->body = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, L"ChatGPTSetupBody", L"启动配置",
+        app->body = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, L"ChatGPTSetupBody", l10n::Text("setup.body"),
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, window, nullptr, app->instance, app);
         app->CreateControls(); app->Theme();
         setup::Loaded loaded;
@@ -1168,10 +1320,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         if (!result) {
             loaded.options.directory = app->paths.defaultDirectory;
             app->fatal = true;
-            ShowSetupError(window, result, L"无法读取现有配置");
+            ShowSetupError(window, result, l10n::Text("setup.error.load"));
         }
         app->RestoreOptions(loaded);
-        if (app->fatal) app->Set(Footer, L"现有配置读取失败，请处理错误后重新打开。");
+        if (app->fatal) app->Set(Footer, l10n::Text("setup.status.loadfailed"));
         app->Layout(); return 0;
     }
     case WM_GETMINMAXINFO: {
@@ -1193,8 +1345,20 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         break;
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
+        if (item && item->CtlType == ODT_MENU) { app->DrawLanguageItem(*item); return TRUE; }
         if (item && (IsOwnerDrawButton(static_cast<int>(item->CtlID)) || item->CtlID == Footer)) {
             app->PaintControl(item->hwndItem, item->hDC); return TRUE;
+        }
+        break;
+    }
+    case WM_MEASUREITEM: {
+        const auto item = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+        if (item && item->CtlType == ODT_MENU) {
+            HDC dc = GetDC(window); const auto old = SelectObject(dc, app->fonts[0]); SIZE size{};
+            PCWSTR caption = LanguageMenuText(item->itemData);
+            GetTextExtentPoint32W(dc, caption, static_cast<int>(wcslen(caption)), &size);
+            SelectObject(dc, old); ReleaseDC(window, dc);
+            item->itemWidth = static_cast<UINT>(size.cx + app->S(60)); item->itemHeight = app->S(36); return TRUE;
         }
         break;
     }
@@ -1209,8 +1373,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     case PortDetectedMessage: case SavedMessage: app->PollWorkers(); return 0;
     case WM_CLOSE:
         if (app->busy) return 0;
-        if (app->dirty && MessageBoxW(window, L"还有尚未保存的更改。要放弃这些更改并关闭吗？",
-            L"关闭配置工具", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return 0;
+        if (app->dirty && MessageBoxW(window, l10n::Text("setup.dialog.discard"),
+            l10n::Text("setup.dialog.close"), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return 0;
         DestroyWindow(window); return 0;
     case WM_DESTROY: app->StopWorkers(); app->window = nullptr; PostQuitMessage(0); return 0;
     }
@@ -1219,6 +1383,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 } // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int show) {
+    l10n::Initialize();
     // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
     if (arguments && *arguments) return setup::RunSetupCommandLine(instance, arguments);
     HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\Community.ChatGPTLauncherSetup.v1");
@@ -1244,7 +1409,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
         app.payload = { loaded ? static_cast<const BYTE*>(LockResource(loaded)) : nullptr,
             resource ? SizeofResource(instance, resource) : 0 };
         if (!app.payload.data || !app.payload.size) {
-            MessageBoxW(nullptr, L"内置启动器资源缺失，请重新下载完整的配置工具。", L"无法打开", MB_OK | MB_ICONERROR);
+            MessageBoxW(nullptr, l10n::Text("setup.error.payload"), l10n::Text("setup.error.open"), MB_OK | MB_ICONERROR);
             exitCode = ERROR_RESOURCE_DATA_NOT_FOUND;
         } else {
             INITCOMMONCONTROLSEX init{ sizeof(init), ICC_STANDARD_CLASSES }; InitCommonControlsEx(&init);
@@ -1259,7 +1424,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
             RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
             const int width = MulDiv(700, static_cast<int>(dpi), 96);
             const int height = std::min(MulDiv(812, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
-            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", L"ChatGPT 启动器设置",
+            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", l10n::Text("setup.window"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left + (work.right - work.left - width) / 2,
                 work.top + (work.bottom - work.top - height) / 2, width, height, nullptr, nullptr, instance, &app);
             if (!window) exitCode = static_cast<int>(GetLastError());

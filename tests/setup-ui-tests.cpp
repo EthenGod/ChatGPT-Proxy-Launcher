@@ -43,6 +43,21 @@ static DWORD storedLightTheme = 0;
 static LSTATUS themeReadResult = ERROR_FILE_NOT_FOUND, themeWriteResult = ERROR_SUCCESS;
 static unsigned themeWrites = 0;
 static bool themePathValid = true;
+static std::wstring storedLanguage;
+static LSTATUS languageWriteResult = ERROR_SUCCESS;
+static UINT languageMenuResult = 0;
+static unsigned languageMenuCalls = 0;
+static bool languageMenuValid = true;
+static BOOL WINAPI TestLanguageMenu(HMENU menu, UINT flags, int, int, HWND, LPTPMPARAMS) {
+    ++languageMenuCalls;
+    languageMenuValid = languageMenuValid && (flags & TPM_RETURNCMD) && (flags & TPM_NONOTIFY);
+    for (int i = 0; i < GetMenuItemCount(menu); ++i) {
+        MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_FTYPE | MIIM_ID | MIIM_DATA;
+        languageMenuValid = languageMenuValid && GetMenuItemInfoW(menu, i, TRUE, &item)
+            && (item.fType & MFT_OWNERDRAW) && item.wID == 40000 + static_cast<UINT>(i) && item.dwItemData == static_cast<ULONG_PTR>(i);
+    }
+    return static_cast<BOOL>(languageMenuResult);
+}
 static DWORD storedCodexEnv = 1;
 static LSTATUS envReadResult = ERROR_FILE_NOT_FOUND, envWriteResult = ERROR_SUCCESS;
 static LSTATUS WINAPI TestThemeRead(HKEY key, LPCWSTR path, LPCWSTR name, DWORD, LPDWORD, PVOID data, LPDWORD size) {
@@ -59,6 +74,12 @@ static LSTATUS WINAPI TestThemeRead(HKEY key, LPCWSTR path, LPCWSTR name, DWORD,
     *static_cast<DWORD*>(data) = storedLightTheme; *size = sizeof(DWORD); return ERROR_SUCCESS;
 }
 static LSTATUS WINAPI TestThemeWrite(HKEY key, LPCWSTR path, LPCWSTR name, DWORD type, LPCVOID data, DWORD size) {
+    if (name && !wcscmp(name, L"Language")) {
+        if (key != HKEY_CURRENT_USER || !path || wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup")
+            || type != REG_SZ || size < sizeof(wchar_t)) return ERROR_INVALID_DATA;
+        if (languageWriteResult != ERROR_SUCCESS) return languageWriteResult;
+        storedLanguage = static_cast<PCWSTR>(data); return ERROR_SUCCESS;
+    }
     if (name && !wcscmp(name, L"ConfigureCodexEnv")) {
         themePathValid = themePathValid && key == HKEY_CURRENT_USER && path && !wcscmp(path, L"Software\\Community\\ChatGPTLauncherSetup");
         if (type != REG_DWORD || size != sizeof(DWORD)) return ERROR_INVALID_DATA;
@@ -107,8 +128,10 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #define PostMessageW TestPostMessage
 #define SetTimer TestSetTimer
 #define wWinMain SetupEntryForTest
+#define TrackPopupMenuEx TestLanguageMenu
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
+#undef TrackPopupMenuEx
 #undef MessageBoxW
 #undef ShellExecuteExW
 #undef RegGetValueW
@@ -156,6 +179,58 @@ static bool SegmentFillMatches(App& app, int id) {
         ? app.contrast ? app.colors.selected : app.dark ? app.colors.hover : app.colors.surface : app.FieldColor();
     SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(control, screen);
     return fill == expected && corner == app.FieldColor();
+}
+static std::vector<DWORD> ControlPixels(HWND control, bool nativePaint = false) {
+    RECT rect{}; GetClientRect(control, &rect);
+    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = rect.right; info.bmiHeader.biHeight = -rect.bottom;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
+    HDC screen = GetDC(control), dc = CreateCompatibleDC(screen); DWORD* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, reinterpret_cast<void**>(&pixels), nullptr, 0);
+    std::vector<DWORD> result;
+    if (dc && bitmap) {
+        const auto old = SelectObject(dc, bitmap);
+        PatBlt(dc, 0, 0, rect.right, rect.bottom, WHITENESS);
+        bool painted = true;
+        if (nativePaint) {
+            DWORD_PTR context = 0;
+            painted = GetWindowSubclass(control, StyledControl, 1, &context) && RemoveWindowSubclass(control, StyledControl, 1);
+            if (painted) {
+                SendMessageW(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+                painted = SetWindowSubclass(control, StyledControl, 1, context) != FALSE;
+            }
+        } else SendMessageW(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+        GdiFlush();
+        if (painted) result.assign(pixels, pixels + static_cast<size_t>(rect.right) * rect.bottom);
+        for (auto& color : result) color &= 0xffffff; // GDI alpha is not part of the displayed color.
+        SelectObject(dc, old);
+    }
+    if (bitmap) DeleteObject(bitmap);
+    if (dc) DeleteDC(dc);
+    ReleaseDC(control, screen);
+    return result;
+}
+static bool SwitchFocusMatches(App& app, int id) {
+    HWND control = app.Get(id);
+    SendMessageW(app.window, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS), 0);
+    SetFocus(app.body);
+    const auto idle = ControlPixels(control);
+    SetFocus(control);
+    const auto pointer = ControlPixels(control);
+    if (idle.empty() || pointer != idle) { printf("Switch %d: pointer pixels differ (DPI %u, state %lld)\n", id, app.dpi, SendMessageW(control, WM_QUERYUISTATE, 0, 0)); return false; }
+    SendMessageW(app.window, WM_CHANGEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS), 0);
+    const auto keyboard = ControlPixels(control);
+    if (keyboard.size() != idle.size() || keyboard == idle) { printf("Switch %d: keyboard ring absent (DPI %u)\n", id, app.dpi); return false; }
+    RECT rect{}; GetClientRect(control, &rect);
+    // Keyboard focus belongs to the switch, not a rectangular border around the label.
+    for (int y = 0; y < rect.bottom; ++y) for (int x = 0; x < rect.right - app.S(60); ++x) {
+        const auto pixel = static_cast<size_t>(y) * rect.right + x;
+        if (keyboard[pixel] != idle[pixel]) { printf("Switch %d: label pixels differ at %d,%d\n", id, x, y); return false; }
+    }
+    // Exercise native synchronous painting too, bypassing our WM_PAINT/WM_PRINTCLIENT subclass.
+    const bool nativeMatches = ControlPixels(control, true) == keyboard;
+    if (!nativeMatches) printf("Switch %d: native paint differs (DPI %u)\n", id, app.dpi);
+    return nativeMatches;
 }
 static LRESULT CALLBACK ProbeOwnerDraw(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
     if (message == WM_DRAWITEM) ++*reinterpret_cast<unsigned*>(reference);
@@ -254,7 +329,11 @@ static bool LabelsFit(App& app) {
         SIZE measured{};
         GetTextExtentPoint32W(dc, caption.c_str(), static_cast<int>(caption.size()), &measured);
         SelectObject(dc, old); ReleaseDC(item.window, dc);
-        const int allowance = IsSwitch(item.id) ? app.S(64) : item.id == Advanced ? app.S(36) : 0;
+        if (item.id == State) {
+            if (app.S(app.CaptionHeight(State, item.font, MulDiv(bounds.right, 96, app.dpi))) > bounds.bottom) return false;
+            continue;
+        }
+        const int allowance = IsSwitch(item.id) ? app.S(64) : item.id == Advanced ? app.S(36) : item.id == LanguageButton ? app.S(40) : 0;
         if (measured.cx > bounds.right - allowance || measured.cy > bounds.bottom) return false;
     }
     return true;
@@ -267,6 +346,68 @@ static bool WaitForSave(App& app) {
         if (app.busy) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, 0);
     }
     return !app.busy;
+}
+static int LanguageTests(App& app, PCWSTR folder) {
+    const auto originalDpi = app.dpi;
+    app.Check(Proxy, true); app.Check(CodexEnv, true); app.Set(Port, L"12345");
+    app.Set(Extra, L"--label=\"中文 日本語 spaces\""); app.Refresh(true);
+    const auto arguments = app.Text(Preview), directory = app.Text(Directory);
+    const auto revision = app.editRevision;
+    for (size_t i = 0; i < l10n::Count(); ++i) {
+        languageMenuResult = LanguageMenuBase + 1 + static_cast<UINT>(i);
+        // Both native Space and dialog Enter must reach the same menu command.
+        SetFocus(app.Get(LanguageButton));
+        SendMessageW(app.Get(LanguageButton), WM_KEYDOWN, VK_SPACE, 0);
+        SendMessageW(app.Get(LanguageButton), WM_KEYUP, VK_SPACE, 0);
+        REQUIRE(storedLanguage == l10n::At(i).tag && !l10n::FollowsSystem() && LanguageMenuSelected(i + 1));
+        REQUIRE(app.dirty && app.editRevision == revision && app.Text(Preview) == arguments && app.Text(Directory) == directory);
+        REQUIRE(app.Text(Startup) == l10n::Text("setup.option.startup") && app.Text(LanguageButton) == l10n::Current().name);
+        wchar_t tipText[4096]{}; TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = app.body;
+        tip.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); tip.lpszText = tipText;
+        SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(tipText), reinterpret_cast<LPARAM>(&tip));
+        REQUIRE(!wcscmp(tipText, HelpText(CodexEnvHelp)));
+        LOGFONTW fieldFont{}; REQUIRE(GetObjectW(reinterpret_cast<HFONT>(SendMessageW(app.Get(Directory), WM_GETFONT, 0, 0)), sizeof(fieldFont), &fieldFont));
+        REQUIRE(!wcscmp(fieldFont.lfFaceName, L"Segoe UI"));
+        for (UINT dpi : {96u, 144u, 192u}) for (int mode : {0, 1, 2}) {
+            app.dpi = dpi; app.Theme(mode); app.motionEnabled = false;
+            SetWindowPos(app.window, nullptr, 0, 0, app.S(620), app.S(812), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            for (bool advanced : {false, true}) {
+                app.advanced = advanced; app.Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
+                app.Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced")); app.Layout();
+                REQUIRE(LabelsFit(app) && FooterAligned(app) && PartialSurfaceMatches(app, app.body));
+                for (const auto& pair : {std::pair{ProtocolLabel, ProtocolHelp}, {HostLabel, HostHelp}, {PortLabel, PortHelp}}) {
+                    RECT label{}, help{}; GetWindowRect(app.Get(pair.first), &label); GetWindowRect(app.Get(pair.second), &help);
+                    REQUIRE(label.right <= help.left);
+                }
+                RECT title{}, language{}, version{};
+                GetWindowRect(app.Get(Title), &title); GetWindowRect(app.Get(LanguageButton), &language); GetWindowRect(app.Get(SetupVersion), &version);
+                REQUIRE(title.right < language.left && (version.bottom <= language.top || version.top >= language.bottom || version.right < language.left));
+                if (dpi == 96 && mode != 2) {
+                    const std::wstring name = L"setup-" + std::wstring(l10n::Current().tag) + (advanced ? L"-advanced" : L"-main") + (mode ? L"-dark.png" : L"-light.png");
+                    REQUIRE(Capture(app, setup::Join(folder, name).c_str()));
+                }
+            }
+        }
+        const auto normalState = app.Text(State);
+        app.Set(State, l10n::Text("setup.notice.startupconflict")); app.Layout();
+        REQUIRE(LabelsFit(app));
+        app.Set(State, normalState); app.Layout();
+    }
+    REQUIRE(languageMenuValid && languageMenuCalls == l10n::Count());
+    languageMenuResult = LanguageMenuBase;
+    MSG enter{}; enter.hwnd = app.Get(LanguageButton); enter.message = WM_KEYDOWN; enter.wParam = VK_RETURN;
+    SetFocus(enter.hwnd); REQUIRE(IsDialogMessageW(app.window, &enter));
+    REQUIRE(l10n::FollowsSystem() && storedLanguage == L"auto" && LanguageMenuSelected(0));
+    languageWriteResult = ERROR_ACCESS_DENIED; app.ChangeLanguage(1);
+    REQUIRE(app.Text(Footer) == l10n::Text("setup.language.unsaved")); languageWriteResult = ERROR_SUCCESS;
+    app.busy = true; app.Refresh(false); app.ChangeLanguage(2);
+    REQUIRE(!IsWindowEnabled(app.Get(LanguageButton)) && !wcscmp(l10n::Current().tag, L"zh-CN"));
+    app.busy = false; app.detectingPort = true; app.Refresh(false); app.ChangeLanguage(2);
+    REQUIRE(!IsWindowEnabled(app.Get(LanguageButton)) && !wcscmp(l10n::Current().tag, L"zh-CN"));
+    app.detectingPort = false; app.Refresh(false); REQUIRE(IsWindowEnabled(app.Get(LanguageButton)));
+    app.dpi = originalDpi; app.Theme();
+    puts("PASS localization UI: three languages, live captions/tooltips, preserved edits, auto/manual preference, failures, keyboard menu and busy guards; dark/light/contrast at 100/150/200 percent");
+    return 0;
 }
 static int RunTests(PCWSTR folder) {
     REQUIRE(ReadCodexEnvPreference());
@@ -358,11 +499,11 @@ static int RunTests(PCWSTR folder) {
     TOOLINFOW help{TTTOOLINFOW_V2_SIZE}; help.hwnd = app.body;
     help.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); help.lpszText = helpText;
     SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
-    REQUIRE(!wcscmp(helpText, CodexEnvHelpText));
+    REQUIRE(!wcscmp(helpText, HelpText(CodexEnvHelp)));
     for (int id : {ProtocolHelp, HostHelp, PortHelp}) {
         help.uId = reinterpret_cast<UINT_PTR>(app.Get(id));
         SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
-        REQUIRE(!wcscmp(helpText, id == PortHelp ? PortHelpText : L"不要更改，除非你知道自己在做什么"));
+        REQUIRE(!wcscmp(helpText, id == PortHelp ? HelpText(PortHelp) : L"不要更改，除非你知道自己在做什么"));
     }
     RECT helpBounds{}; GetWindowRect(app.Get(CodexEnvHelp), &helpBounds);
     MapWindowPoints(nullptr, app.body, reinterpret_cast<POINT*>(&helpBounds), 2);
@@ -447,6 +588,40 @@ static int RunTests(PCWSTR folder) {
     SetFocus(app.body);
     app.RestoreOptions(initial);
     puts("PASS async proxy fill, preview, manual input preservation, protocol/host/save invalidation, fallback and click retry (mock discovery)");
+    app.Check(Proxy, true); app.Set(Port, L"12345"); app.Refresh(false);
+    const auto switchTestDpi = app.dpi;
+    for (UINT dpi : {96u, 144u, 192u}) for (int mode : {0, 1, 2}) {
+        app.dpi = dpi; app.Theme(mode); app.Layout(); app.motionEnabled = false;
+        for (int id : {Startup, Desktop, Proxy, CodexEnv}) for (bool checked : {false, true}) {
+            app.Check(id, checked);
+            REQUIRE((GetWindowLongPtrW(app.Get(id), GWL_STYLE) & BS_TYPEMASK) == BS_AUTOCHECKBOX);
+            REQUIRE(SwitchFocusMatches(app, id));
+        }
+    }
+    app.dpi = switchTestDpi; app.Theme(1); app.Layout(); app.motionEnabled = false;
+    SetFocus(app.Get(CodexEnv));
+    REQUIRE(Capture(app, setup::Join(folder, L"setup-switch-keyboard-dark.png").c_str()));
+    const bool wasChecked = app.Checked(CodexEnv);
+    const HWND envSwitch = app.Get(CodexEnv);
+    SendMessageW(envSwitch, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(app.S(5), app.S(15)));
+    SendMessageW(envSwitch, WM_LBUTTONUP, 0, MAKELPARAM(app.S(5), app.S(15)));
+    REQUIRE(app.Checked(CodexEnv) != wasChecked);
+    REQUIRE((SendMessageW(envSwitch, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) != 0);
+    REQUIRE(Capture(app, setup::Join(folder, L"setup-switch-pointer-dark.png").c_str()));
+    app.Theme(0); app.motionEnabled = false;
+    REQUIRE(Capture(app, setup::Join(folder, L"setup-switch-pointer-light.png").c_str()));
+    SendMessageW(envSwitch, WM_KEYDOWN, VK_SPACE, 0);
+    SendMessageW(envSwitch, WM_KEYUP, VK_SPACE, 0);
+    REQUIRE(app.Checked(CodexEnv) == wasChecked);
+    REQUIRE((SendMessageW(envSwitch, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) == 0);
+    REQUIRE(Capture(app, setup::Join(folder, L"setup-switch-keyboard-light.png").c_str()));
+    SendMessageW(app.window, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS), 0);
+    MSG switchTab{}; switchTab.hwnd = envSwitch; switchTab.message = WM_KEYDOWN; switchTab.wParam = VK_TAB;
+    REQUIRE(IsDialogMessageW(app.window, &switchTab));
+    REQUIRE(GetFocus() != envSwitch && IsChild(app.window, GetFocus()) && IsWindowEnabled(GetFocus()));
+    REQUIRE((SendMessageW(GetFocus(), WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) == 0);
+    app.RestoreOptions(initial);
+    puts("PASS switch focus: no pointer rectangle, keyboard ring stays around toggle, native paint matches across themes/DPI, mouse/Space retain checkbox behavior");
     unsigned ownerDraws = 0;
     REQUIRE(SetWindowSubclass(app.window, ProbeOwnerDraw, 3, reinterpret_cast<DWORD_PTR>(&ownerDraws)));
     REQUIRE(SetWindowSubclass(app.body, ProbeOwnerDraw, 3, reinterpret_cast<DWORD_PTR>(&ownerDraws)));
@@ -815,6 +990,13 @@ static int RunTests(PCWSTR folder) {
     printf("PASS conflict folder handoff, Unicode/spaces, unrelated errors and Explorer failure fallback (mocked)\n");
     printf("PASS saved state, one startup reminder per session, repeat-save no-op, later edits, Settings-after-reminder and failure recovery\n");
     printf("PASS owner-draw synchronous dispatch, preserved style through Tab/default-button changes, Enter/Space, balanced footer at 100/150 percent and short windows\n");
+    {
+        App localized; localized.instance = app.instance; localized.paths = app.paths;
+        REQUIRE(CreateWindowExW(WS_EX_CONTROLPARENT, L"SetupTestWindow", L"Isolated language test", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+            -20000, -20000, 720, 812, nullptr, nullptr, localized.instance, &localized));
+        ShowWindow(localized.window, SW_SHOWNOACTIVATE);
+        REQUIRE(LanguageTests(localized, folder) == 0);
+    }
     return 0;
 }
 int wmain(int argc, wchar_t** argv) {

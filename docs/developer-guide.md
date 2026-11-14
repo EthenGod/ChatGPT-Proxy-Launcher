@@ -63,6 +63,7 @@ PowerShell 可直接分发并点调用 [companion-context.ps1](examples/companio
 | 回执字段 | `src/CompanionProtocol.*`；完整校验后才交给运行逻辑 |
 | 进程、等待与重试 | `src/CompanionRunner.cpp`；保持限时等待，不加常驻轮询 |
 | 新脚本类型 | `src/StartupApps.*` 和清单运行方式映射；明确宿主，不猜文件内容 |
+| 界面、提示和下载文本 | `locales/*.json` 和 `src/Localization.*`；中文为基准，见[翻译指南](translating.md) |
 
 改接口时同步[Schema](schemas/)、[示例](examples/)和规范。结构校验不能替代文件归属、真实路径、进程身份、字节大小和依赖检查。`tests/contract-tests.cpp` 检查公共常量与 Schema、示例是否一致，不是完整 Schema 验证器。
 

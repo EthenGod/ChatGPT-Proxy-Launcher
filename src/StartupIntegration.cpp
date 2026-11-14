@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "StartupIntegration.h"
+#include "Localization.h"
 #include "NativeMemory.h"
 #include <appmodel.h>
 #include <shellapi.h>
@@ -232,26 +233,26 @@ std::wstring StartupReport::Message() const {
     if (packagedTask) {
         std::wstring message;
         if (packagedTasks && packagedDisabled + packagedAlreadyOff == packagedTasks && !packagedError && !manifestError)
-            message = packagedDisabled ? L"已将 ChatGPT 的商店应用自启设为关闭，并已回读确认。" : L"ChatGPT 的商店应用自启已经关闭，无需重复操作。";
-        else message = L"已识别到 ChatGPT 的商店应用自启，但未能确认所有任务都已关闭，需要按上面的步骤手动核对。";
-        if (packagedError) message += L"\n自启状态处理结果：" + ErrorText(packagedError);
-        if (restoreError) message += L"\n恢复原状态未完成，请手动检查：" + ErrorText(restoreError);
-        if (disabled) message += L"\n另外，已关闭识别到的传统自启项。";
-        if (error) message += L"\n检查传统自启项时出现问题：" + ErrorText(error);
+            message = packagedDisabled ? l10n::Text("startup.report.disabled") : l10n::Text("startup.report.alreadyoff");
+        else message = l10n::Text("startup.report.unconfirmed");
+        if (packagedError) message += l10n::Format("startup.report.stateerror", {{"error", ErrorText(packagedError)}});
+        if (restoreError) message += l10n::Format("startup.report.restoreerror", {{"error", ErrorText(restoreError)}});
+        if (disabled) message += l10n::Text("startup.report.legacyalso");
+        if (error) message += l10n::Format("startup.report.legacyerror", {{"error", ErrorText(error)}});
         return message;
     }
     if (disabled && disabled == matched && !error)
-        return L"已将识别到的 ChatGPT 自启项标记为关闭。";
+        return l10n::Text("startup.report.legacyoff");
     if (disabled)
-        return L"已关闭部分 ChatGPT 自启项，仍有项目需要手动核对。";
+        return l10n::Text("startup.report.partial");
     if (error == ERROR_NOT_FOUND)
-        return L"未找到可验证的 ChatGPT 安装，无法检查自带自启。此结果不影响已保存的启动器配置。";
+        return l10n::Text("startup.report.notinstalled");
     if (error)
-        return L"未能自动处理 ChatGPT 的传统自启项：" + ErrorText(error)
-            + L"\n这不影响已经保存的启动器配置。";
+        return l10n::Format("startup.report.failed", {{"error", ErrorText(error)}})
+            + l10n::Text("startup.report.saved");
     if (manifestError)
-        return L"未找到可处理的传统自启项，且无法读取应用自启声明。\n" + ErrorText(manifestError);
-    return L"未找到可处理的传统自启项，这不代表自带自启仍然开启。如果你已经关闭，无需重复操作。";
+        return l10n::Format("startup.report.manifest", {{"error", ErrorText(manifestError)}});
+    return l10n::Text("startup.report.none");
 }
 StartupReport TryDisableOfficialStartup() {
     std::vector<std::wstring> executables;
@@ -270,6 +271,6 @@ Result OpenStartupSettings(HWND owner) {
     info.lpVerb = L"open"; info.lpFile = L"ms-settings:startupapps"; info.nShow = SW_SHOWNORMAL;
     if (ShellExecuteExW(&info)) return {};
     const DWORD error = GetLastError();
-    return { error ? error : ERROR_GEN_FAILURE, L"未能打开 Windows 设置，请手动进入「设置 → 应用 → 启动」检查。" };
+    return { error ? error : ERROR_GEN_FAILURE, l10n::Text("startup.error.settings") };
 }
 } // namespace setup

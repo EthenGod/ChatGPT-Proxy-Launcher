@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <winsock2.h>
+#include "Localization.h"
 #include <windows.h>
 #include "NativeMemory.h"
 #include <iphlpapi.h>
@@ -335,15 +336,15 @@ ProxyDetection Select(const std::vector<Candidate>& candidates) {
     if (candidates.empty()) return {};
     const auto& first = candidates.front();
     for (const auto& item : candidates) if (item.port != first.port)
-        return {L"", L"检测到多个代理端口，未自动填写。请在要使用的代理工具「端口设置」中核对后填写。"};
-    return {std::to_wstring(first.port), L"已填入 " + first.source + L" 的端口。请核对后保存；检测不代表联网已成功。"};
+        return {L"", l10n::Text("proxy.multiple")};
+    return {std::to_wstring(first.port), l10n::Format("proxy.detected", {{"source", first.source}})};
 }
 }
 ProxyDetection DetectProxyPort(const std::wstring& protocol, const std::wstring& host) {
     if (_wcsicmp(host.c_str(), L"localhost") && host != L"127.0.0.1")
-        return {L"", L"自动检测仅支持本机地址 127.0.0.1 / localhost。请到对应代理工具的「端口设置」查看并手动填写。"};
+        return {L"", l10n::Text("proxy.localonly")};
     if (protocol != L"http" && protocol != L"socks5")
-        return {L"", L"HTTPS 代理端口需要手动确认。请查看代理工具「端口设置」；混合端口通常请选择 HTTP 或 SOCKS5。"};
+        return {L"", l10n::Text("proxy.httpsmanual")};
     const auto listeners = Listeners();
     if (listeners.empty()) return {}; // No candidate can be verified; skip configuration I/O.
     std::vector<Candidate> candidates;
@@ -373,7 +374,7 @@ ProxyDetection DetectProxyPort(const std::wstring& protocol, const std::wstring&
             wchar_t server[4097]{}; size = sizeof(server);
             if (RegGetValueW(HKEY_CURRENT_USER, key, L"ProxyServer", RRF_RT_REG_SZ, nullptr, server, &size) == ERROR_SUCCESS) {
                 const unsigned port = SystemHttpPort(server);
-                if (Listening(port, listeners)) candidates.push_back({port, L"Windows 当前系统代理"});
+                if (Listening(port, listeners)) candidates.push_back({port, l10n::Text("proxy.system")});
             }
         }
     }

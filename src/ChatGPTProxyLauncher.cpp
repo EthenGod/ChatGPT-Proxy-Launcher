@@ -7,6 +7,7 @@
 #include "TaskbarShortcut.h"
 #include "StartupApps.h"
 #include "LauncherAutomation.h"
+#include "Localization.h"
 
 // Local tool, not an OpenAI product. No proxy settings are compiled in.
 static const wchar_t Family[] = L"OpenAI.Codex_2p2nqsd0c76g0";
@@ -161,9 +162,11 @@ static int ReportError(DWORD error) {
     if (!error) return 0;
     const HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
     if (!output || output == INVALID_HANDLE_VALUE) return static_cast<int>(error);
+    l10n::Initialize(); // No locale lookup on the normal successful launch path.
     PWSTR message = nullptr;
-    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr, error, 0, reinterpret_cast<PWSTR>(&message), 0, nullptr);
+    const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+    if (!FormatMessageW(flags, nullptr, error, l10n::SystemLanguage(), reinterpret_cast<PWSTR>(&message), 0, nullptr))
+        FormatMessageW(flags, nullptr, error, 0, reinterpret_cast<PWSTR>(&message), 0, nullptr);
     if (message) {
         WriteText(STD_ERROR_HANDLE, message);
         LocalFree(message);

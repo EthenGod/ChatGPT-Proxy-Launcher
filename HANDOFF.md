@@ -1,5 +1,12 @@
 # 项目交接
 
+## 多语言
+
+- 中文是文本基准和缺失译文的回退语言。配置器默认匹配 Windows 界面语言；手动选择保存在当前用户的 `Language` 偏好，`auto` 表示跟随系统。启动器和 PowerShell 读取同一偏好。机器协议字段、错误代码、文件名和管理标记保持固定。
+- 修改 `locales/*.json` 后运行 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/locales.ps1 -Generate`。生成的 C++ 表位于 `work/`；`setup.ps1` 的标记区需要随翻译提交。后者必须保持 ASCII，保证 Windows PowerShell 5.1 的在线入口可用。发布脚本在记录源码哈希前生成文案。
+- 切换语言只更新文本、字体和布局，不能调用 `RestoreOptions` 重置输入。保存和检测期间禁用语言菜单；完成状态保留语义键，切换后仍能提醒退出 ChatGPT。输入框用 Segoe UI，避免日文字体把路径反斜杠显示成日元符号。
+- 文本查询使用不可变静态表，不读磁盘、不分配内存。启动器仅在需要向用户报告错误或通知时初始化语言。社区翻译、校验和测试入口见 `docs/translating.md`。
+
 ## 后台部署与链式启动
 
 - v1.1.0 提供后台部署与链式启动。先读 `docs/developer-guide.md`，完整命令见 `docs/automation-usage.md`，接口见 `docs/automation-design.md` 和 `docs/companion-protocol-v1.md`。Schema、PowerShell 回执辅助函数和示例位于 `docs/schemas/`、`docs/examples/`。复审见 `docs/automation-maintenance.md`。本地打包与 GitHub 上传是两步。
@@ -100,6 +107,8 @@
 - 协议按钮使用 `BS_OWNERDRAW`，由 `selectedProtocol` 保持唯一选中状态。`BM_GETCHECK`、`BM_SETCHECK` 和方向键由子类处理；Tab 只停在当前选中项。不要恢复原生单选绘制，否则可能出现重叠描边和闪烁。
 - 动画仅更新开关位置和悬停颜色。读取 `SPI_GETCLIENTAREAANIMATION`，高对比度时关闭。150 毫秒后停止计时器，不在空闲时持续刷新。
 - 操作按钮保留 `BS_OWNERDRAW` 和 `WM_DRAWITEM`。不能用动画替换同步自绘，否则原生矩形可能再次闪现。
+- 开关保留 `BS_AUTOCHECKBOX` 的勾选、键盘和无障碍行为，通过父窗口的 `NM_CUSTOMDRAW` 统一同步绘制。不要对开关禁用 v6 主题路径，否则收不到该通知。`CDDS_PREERASE` 和 `CDDS_PREPAINT` 都须完成绘制后返回 `CDRF_SKIPDEFAULT`；部分复选框只发送前者。
+- 焦点显示共用窗口的 `UISF_HIDEFOCUS` 状态。鼠标点击按钮时隐藏，键盘操作时显示；开关只在胶囊周围画圆角焦点环，不再调用 `DrawFocusRect` 包围整行文字。测试同时比较普通绘制和临时绕过子类后的原生绘制，避免只验证 `WM_PAINT` 而漏掉同步绘制。
 - 窗口缓冲区按 `BeginPaint` 的 `rcPaint` 申请，布局仍按完整客户区计算。不要把布局坐标改成局部坐标。`RectVisible` 只用于跳过完全不可见的圆角；修改裁剪后须检查分块绘制和完整绘制的像素一致性。
 
 ## 外观偏好

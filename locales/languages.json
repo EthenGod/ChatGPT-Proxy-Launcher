@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "languages": [
+    { "tag": "zh-CN", "complete": true },
+    { "tag": "en-US", "complete": true },
+    { "tag": "ja-JP", "complete": true }
+  ]
+}

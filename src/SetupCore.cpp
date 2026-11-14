@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "Localization.h"
 #include "CodexEnv.h"
 #include "StartupApps.h"
 #include "DeploymentDiscovery.h"
@@ -47,7 +48,7 @@ Result EnsureDirectory(const std::wstring& path) {
         const DWORD attributes = GetFileAttributesW(path.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY)) return {};
     }
-    return Fail(static_cast<DWORD>(error), L"无法创建目录：" + path);
+    return Fail(static_cast<DWORD>(error), l10n::Format("error.files.createdirectory", {{"path", path}}));
 }
 struct Snapshot { bool exists = false; std::vector<BYTE> data; };
 
@@ -58,17 +59,17 @@ Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle.h == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
-        return IsMissing(error) ? Result{} : Fail(error, L"无法读取：" + path);
+        return IsMissing(error) ? Result{} : Fail(error, l10n::Format("error.files.read", {{"path", path}}));
     }
     LARGE_INTEGER size{};
-    if (!GetFileSizeEx(handle.h, &size)) return Fail(GetLastError(), L"无法读取文件大小。");
+    if (!GetFileSizeEx(handle.h, &size)) return Fail(GetLastError(), l10n::Text("error.files.size"));
     if (size.QuadPart < 0 || size.QuadPart > 32 * 1024 * 1024)
-        return Fail(ERROR_FILE_TOO_LARGE, L"文件超过本工具的处理范围：" + path);
+        return Fail(ERROR_FILE_TOO_LARGE, l10n::Format("error.files.toolarge", {{"path", path}}));
     file.data.resize(static_cast<size_t>(size.QuadPart));
     DWORD count = 0;
     if (!ReadFile(handle.h, file.data.data(), static_cast<DWORD>(file.data.size()), &count, nullptr))
-        return Fail(GetLastError(), L"无法读取文件内容：" + path);
-    if (count != file.data.size()) return Fail(ERROR_READ_FAULT, L"文件读取不完整：" + path);
+        return Fail(GetLastError(), l10n::Format("error.files.contents", {{"path", path}}));
+    if (count != file.data.size()) return Fail(ERROR_READ_FAULT, l10n::Format("error.files.incomplete", {{"path", path}}));
     file.exists = true;
     return {};
 }
@@ -81,7 +82,7 @@ Result NewTemp(const std::wstring& target, TempFile& temp) {
     temp.path.reserve(MAX_PATH); // No allocation may fail after the file is created.
     wchar_t name[MAX_PATH]{};
     if (!GetTempFileNameW(Parent(target).c_str(), L"cgl", 0, name))
-        return Fail(GetLastError(), L"无法在目标目录创建临时文件。");
+        return Fail(GetLastError(), l10n::Text("error.files.createtemp"));
     temp.path = name;
     return {};
 }
@@ -89,8 +90,8 @@ Result CommitTemp(TempFile& temp, const std::wstring& target, bool replace = tru
     if (!MoveFileExW(temp.path.c_str(), target.c_str(), (replace ? MOVEFILE_REPLACE_EXISTING : 0) | MOVEFILE_WRITE_THROUGH)) {
         const DWORD error = GetLastError();
         if (!replace && (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS))
-            return Conflict(L"保存期间出现同名文件，未覆盖：" + target, Parent(target));
-        return Fail(error, L"无法保存文件，可能没有权限或文件正在使用：" + target);
+            return Conflict(l10n::Format("error.files.lateconflict", {{"path", target}}), Parent(target));
+        return Fail(error, l10n::Format("error.files.save", {{"path", target}}));
     }
     temp.path.clear();
     return {};
@@ -103,23 +104,23 @@ Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool
         Handle handle;
         handle.h = CreateFileW(temp.path.c_str(), GENERIC_WRITE, 0, nullptr, TRUNCATE_EXISTING,
             FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (handle.h == INVALID_HANDLE_VALUE) return Fail(GetLastError(), L"无法打开临时文件。");
+        if (handle.h == INVALID_HANDLE_VALUE) return Fail(GetLastError(), l10n::Text("error.files.opentemp"));
         DWORD written = 0;
         if (!WriteFile(handle.h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr)
             || written != data.size() || !FlushFileBuffers(handle.h))
-            return Fail(GetLastError(), L"无法完整写入文件。");
+            return Fail(GetLastError(), l10n::Text("error.files.write"));
     }
     return CommitTemp(temp, path, replace);
 }
 Result Restore(const std::wstring& path, const Snapshot& snapshot) {
     if (snapshot.exists) return WriteAtomic(path, snapshot.data);
     if (DeleteFileW(path.c_str()) || IsMissing(GetLastError())) return {};
-    return Fail(GetLastError(), L"无法撤销新建文件：" + path);
+    return Fail(GetLastError(), l10n::Format("error.files.undo", {{"path", path}}));
 }
 Result WriteLink(const std::wstring& path, const Link& value, bool replace = true) {
     Com<IShellLinkW> link;
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
-    if (FAILED(hr)) return Hr(hr, L"无法创建快捷方式对象。");
+    if (FAILED(hr)) return Hr(hr, l10n::Text("error.link.create"));
     if (value.target.find(L'%') == std::wstring::npos) hr = link->SetPath(value.target.c_str());
     else {
         // SetPath can expand %NAME% inside a literal filename. Bind the actual filesystem item instead.
@@ -132,31 +133,32 @@ Result WriteLink(const std::wstring& path, const Link& value, bool replace = tru
         || FAILED(hr = link->SetWorkingDirectory(value.directory.c_str()))
         || FAILED(hr = link->SetDescription(value.description.c_str()))
         || FAILED(hr = link->SetIconLocation(value.target.c_str(), 0))
-        || FAILED(hr = link->SetShowCmd(SW_SHOWNORMAL))) return Hr(hr, L"无法设置快捷方式属性。");
+        || FAILED(hr = link->SetShowCmd(SW_SHOWNORMAL))) return Hr(hr, l10n::Text("error.link.properties"));
     Com<IPersistFile> persist;
-    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))) return Hr(hr, L"无法保存快捷方式。");
+    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))) return Hr(hr, l10n::Text("error.link.save"));
     TempFile temp;
     Result result = NewTemp(path, temp);
     if (!result) return result;
-    if (FAILED(hr = persist->Save(temp.path.c_str(), TRUE))) return Hr(hr, L"写入快捷方式失败。");
+    if (FAILED(hr = persist->Save(temp.path.c_str(), TRUE))) return Hr(hr, l10n::Text("error.link.write"));
     Link read;
     result = ReadLink(temp.path, read);
     if (!result) return result;
     if (!Same(read.target, value.target) || read.arguments != value.arguments
         || !Same(read.directory, value.directory) || read.description != value.description)
-        return Fail(ERROR_INVALID_DATA, L"快捷方式回读结果不一致，已停止保存。");
+        return Fail(ERROR_INVALID_DATA, l10n::Text("error.link.verify"));
     return CommitTemp(temp, path, replace);
 }
 } // namespace
 
 std::wstring ErrorText(DWORD error) {
     PWSTR message = nullptr;
-    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr, error, 0, reinterpret_cast<PWSTR>(&message), 0, nullptr);
+    const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+    if (!FormatMessageW(flags, nullptr, error, l10n::SystemLanguage(), reinterpret_cast<PWSTR>(&message), 0, nullptr))
+        FormatMessageW(flags, nullptr, error, 0, reinterpret_cast<PWSTR>(&message), 0, nullptr);
     native::LocalPtr<wchar_t> ownedMessage(message);
-    std::wstring result = message ? message : L"Windows 未提供详细说明。";
+    std::wstring result = message ? message : l10n::Text("error.system.nodetails");
     while (!result.empty() && (result.back() == L'\r' || result.back() == L'\n')) result.pop_back();
-    return result + L"（错误码 " + std::to_wstring(error) + L"）";
+    return l10n::Format("error.system.details", {{"message", result}, {"code", std::to_wstring(error)}});
 }
 std::wstring Join(const std::wstring& directory, const std::wstring& file) {
     return directory + (!directory.empty() && directory.back() == L'\\' ? L"" : L"\\") + file;
@@ -165,12 +167,12 @@ Result GetPaths(Paths& paths) {
     PWSTR local = nullptr, startup = nullptr;
     HRESULT hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local);
     native::TaskPtr<wchar_t> ownedLocal(local);
-    if (FAILED(hr)) return Hr(hr, L"无法获取用户程序目录。");
+    if (FAILED(hr)) return Hr(hr, l10n::Text("error.paths.localappdata"));
     paths.defaultDirectory = Join(local, companions::Root);
     paths.settingsLink = Join(paths.defaultDirectory, automation::contract::SettingsLink);
     hr = SHGetKnownFolderPath(FOLDERID_Startup, 0, nullptr, &startup);
     native::TaskPtr<wchar_t> ownedStartup(startup);
-    if (FAILED(hr)) return Hr(hr, L"无法获取当前用户的启动文件夹。");
+    if (FAILED(hr)) return Hr(hr, l10n::Text("error.paths.startup"));
     paths.startupLink = Join(startup, LinkName);
     PWSTR desktop = nullptr;
     hr = SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop);
@@ -184,12 +186,12 @@ Result GetPaths(Paths& paths) {
     return {};
 }
 Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
-    if (paths.defaultDirectory.empty()) return Fail(ERROR_PATH_NOT_FOUND, L"无法获取附加程序目录。");
+    if (paths.defaultDirectory.empty()) return Fail(ERROR_PATH_NOT_FOUND, l10n::Text("error.paths.companions"));
     folder = Join(paths.defaultDirectory, companions::Folder);
     Result result = EnsureDirectory(folder);
     if (!result) return result;
     if (GetFileAttributesW(folder.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT)
-        return Fail(ERROR_BAD_PATHNAME, L"启动目录不能是目录链接。");
+        return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.paths.redirectedstartup"));
     return {};
 }
 Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
@@ -197,28 +199,27 @@ Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
     auto targetKind = companions::FileKind(name.c_str());
     const bool importing = targetKind == companions::Kind::Link;
     if (!companions::LocalPath(program.c_str()) || (!importing && !companions::ValidTarget(program.c_str(), L"", L"")))
-        return Fail(ERROR_BAD_PATHNAME, L"请选择文件列表中支持的本机程序、脚本或快捷方式，不要选择启动器或配置器。");
+        return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.program.unsupported"));
     DWORD attrs = GetFileAttributesW(program.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY))
-        return Fail(ERROR_FILE_NOT_FOUND, L"找不到所选程序。");
+        return Fail(ERROR_FILE_NOT_FOUND, l10n::Text("error.program.missing"));
     if (importing) {
         Link source;
         Result read = ReadLink(program, source, true);
         if (!read) return read;
         if (companions::FileKind(source.target.c_str()) == companions::Kind::Batch && !source.arguments.empty())
-            return Fail(ERROR_INVALID_PARAMETER, L"批处理快捷方式不支持额外参数。请将所需选项写在 BAT 或 CMD 文件中。");
+            return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.program.batchargs"));
         if (!companions::ValidTarget(source.target.c_str(), source.arguments.c_str(), source.directory.c_str()))
-            return Fail(ERROR_BAD_PATHNAME, L"快捷方式必须指向受支持的本机程序或脚本，工作目录也必须在本机。");
+            return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.program.linktarget"));
         targetKind = companions::FileKind(source.target.c_str());
         DWORD targetAttrs = GetFileAttributesW(source.target.c_str());
         if (targetAttrs == INVALID_FILE_ATTRIBUTES || (targetAttrs & FILE_ATTRIBUTE_DIRECTORY))
-            return Fail(ERROR_FILE_NOT_FOUND, L"快捷方式指向的文件不存在。");
+            return Fail(ERROR_FILE_NOT_FOUND, l10n::Text("error.program.linkmissing"));
     }
     if (targetKind != companions::Kind::Exe && companions::FindHost(targetKind).empty()) {
         if (PCWSTR host = companions::PathHost(targetKind))
-            return Fail(ERROR_FILE_NOT_FOUND, std::wstring(L"在 PATH 中找不到 ") + host
-                + L"。请安装对应运行环境后重新打开配置器，或选择指向解释器的快捷方式。");
-        return Fail(ERROR_FILE_NOT_FOUND, L"找不到此脚本需要的 Windows 脚本运行程序。");
+            return Fail(ERROR_FILE_NOT_FOUND, l10n::Format("error.program.runtime", {{"runtime", host}}));
+        return Fail(ERROR_FILE_NOT_FOUND, l10n::Text("error.program.scripthost"));
     }
     std::wstring folder;
     Result result = EnsureCompanionFolder(paths, folder);
@@ -233,35 +234,35 @@ Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
             Link existing;
             if (ReadLink(destination, existing) && Same(existing.target, program)) return {};
         }
-        return Conflict(L"启动目录已有同名快捷方式。请先移走或重命名，原文件未修改。", folder);
+        return Conflict(l10n::Text("error.program.conflict"), folder);
     }
     if (importing) {
         TempFile temp;
         result = NewTemp(destination, temp);
         if (!result) return result;
-        if (!CopyFileW(program.c_str(), temp.path.c_str(), FALSE)) return Fail(GetLastError(), L"无法复制所选快捷方式。");
+        if (!CopyFileW(program.c_str(), temp.path.c_str(), FALSE)) return Fail(GetLastError(), l10n::Text("error.program.copy"));
         return CommitTemp(temp, destination, false);
     }
-    return WriteLink(destination, {program, L"", Parent(program), L"ChatGPT 启动时打开"}, false);
+    return WriteLink(destination, {program, L"", Parent(program), l10n::Text("program.description")}, false);
 }
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
     if (input.size() < 3 || !((input[0] >= L'A' && input[0] <= L'Z') || (input[0] >= L'a' && input[0] <= L'z'))
         || input[1] != L':' || input[2] != L'\\'
         || input.find_first_of(L"\"<>|?*\r\n/") != std::wstring::npos
         || input.find(L':', 2) != std::wstring::npos || input.find(L'\0') != std::wstring::npos)
-        return Fail(ERROR_BAD_PATHNAME, L"请选择本机磁盘上的完整目录，例如 D:\\Apps\\ChatGPTLauncher。");
+        return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.directory.absolute"));
     for (size_t i = 3; i < input.size(); ++i) {
         if (input[i] < L' ' || ((input[i] == L'.' || input[i] == L' ')
             && (i + 1 == input.size() || input[i + 1] == L'\\')))
-            return Fail(ERROR_BAD_PATHNAME, L"目录名称不能以空格或句点结尾，也不能含控制字符。");
+            return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.directory.characters"));
     }
     wchar_t full[MAX_PATH]{};
     const DWORD n = GetFullPathNameW(input.c_str(), MAX_PATH, full, nullptr);
-    if (!n || n >= MAX_PATH) return Fail(ERROR_FILENAME_EXCED_RANGE, L"部署路径过长。");
+    if (!n || n >= MAX_PATH) return Fail(ERROR_FILENAME_EXCED_RANGE, l10n::Text("error.directory.length"));
     output = full;
     while (output.size() > 3 && output.back() == L'\\') output.pop_back();
     if (output.size() + wcslen(LauncherName) + 2 >= MAX_PATH)
-        return Fail(ERROR_FILENAME_EXCED_RANGE, L"部署路径过长，请选择更短的目录。");
+        return Fail(ERROR_FILENAME_EXCED_RANGE, l10n::Text("error.directory.shorter"));
     size_t start = 3;
     while (start < output.size()) {
         const size_t end = output.find(L'\\', start);
@@ -271,7 +272,7 @@ Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
             || (stem.size() == 4 && (Same(stem.substr(0, 3), L"COM") || Same(stem.substr(0, 3), L"LPT"))
                 && stem[3] >= L'1' && stem[3] <= L'9');
         if (part.empty() || part.back() == L'.' || part.back() == L' ' || device)
-            return Fail(ERROR_BAD_PATHNAME, L"部署目录包含 Windows 不支持的名称。");
+            return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.directory.reserved"));
         if (end == std::wstring::npos) break;
         start = end + 1;
     }
@@ -280,10 +281,10 @@ Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
 Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget) {
     Com<IShellLinkW> link;
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
-    if (FAILED(hr)) return Hr(hr, L"无法读取快捷方式。");
+    if (FAILED(hr)) return Hr(hr, l10n::Text("error.link.read"));
     Com<IPersistFile> persist;
     if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))
-        || FAILED(hr = persist->Load(path.c_str(), STGM_READ))) return Hr(hr, L"无法读取快捷方式：" + path);
+        || FAILED(hr = persist->Load(path.c_str(), STGM_READ))) return Hr(hr, l10n::Format("error.link.readpath", {{"path", path}}));
     std::vector<wchar_t> text(32768);
     Link read;
     auto field = [&](HRESULT status, std::wstring& destination) {
@@ -295,7 +296,7 @@ Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget) {
     if (!field(link->GetPath(text.data(), 32768, nullptr, expandedTarget ? 0 : SLGP_RAWPATH), read.target)
         || !field(link->GetArguments(text.data(), 32768), read.arguments)
         || !field(link->GetWorkingDirectory(text.data(), 32768), read.directory)
-        || !field(link->GetDescription(text.data(), 1024), read.description)) return Hr(hr, L"无法读取快捷方式属性。");
+        || !field(link->GetDescription(text.data(), 1024), read.description)) return Hr(hr, l10n::Text("error.link.readproperties"));
     value = std::move(read);
     return {};
 }
@@ -306,9 +307,9 @@ Result Load(const Paths& paths, Loaded& loaded) {
     if (Exists(paths.settingsLink)) {
         Result result = ReadLink(paths.settingsLink, saved);
         if (!result) return result;
-        if (!Owned(saved)) return Conflict(L"配置记录被其他文件占用，未做任何修改。", Parent(paths.settingsLink));
+        if (!Owned(saved)) return Conflict(l10n::Text("error.settings.conflict"), Parent(paths.settingsLink));
         if (!Same(Join(Parent(saved.target), LauncherName), saved.target))
-            return Fail(ERROR_INVALID_DATA, L"配置记录中的启动器路径不正确。");
+            return Fail(ERROR_INVALID_DATA, l10n::Text("error.settings.target"));
         loaded.managedTarget = saved.target;
         loaded.options.directory = Parent(saved.target);
         loaded.hasSettings = true;
@@ -321,7 +322,7 @@ Result Load(const Paths& paths, Loaded& loaded) {
             loaded.options.startup = true;
             saved.arguments = startup.arguments;
         } else {
-            loaded.notice = L"启动文件夹中有同名快捷方式。保存前请手动移走或重命名，工具不会覆盖它。";
+            loaded.notice = l10n::Text("setup.notice.startupconflict");
         }
     }
     // Presence of our link records the choice; do not import desktop arguments over saved settings.
@@ -351,17 +352,17 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     result = BuildArguments(options, arguments);
     if (!result) return result;
     if (!payload.data || payload.size < sizeof(IMAGE_DOS_HEADER) || payload.size > 16 * 1024 * 1024)
-        return Fail(ERROR_INVALID_DATA, L"内置启动器资源不完整。");
+        return Fail(ERROR_INVALID_DATA, l10n::Text("error.payload.incomplete"));
     IMAGE_DOS_HEADER dos{};
     CopyMemory(&dos, payload.data, sizeof(dos));
     if (dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew < 0
         || static_cast<size_t>(dos.e_lfanew) + sizeof(IMAGE_NT_HEADERS64) > payload.size)
-        return Fail(ERROR_BAD_EXE_FORMAT, L"内置启动器格式不正确。");
+        return Fail(ERROR_BAD_EXE_FORMAT, l10n::Text("error.payload.format"));
     IMAGE_NT_HEADERS64 nt{};
     CopyMemory(&nt, payload.data + dos.e_lfanew, sizeof(nt));
     if (nt.Signature != IMAGE_NT_SIGNATURE || nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64
         || nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-        return Fail(ERROR_BAD_EXE_FORMAT, L"内置启动器不是 Windows x64 程序。");
+        return Fail(ERROR_BAD_EXE_FORMAT, l10n::Text("error.payload.architecture"));
     Loaded previous;
     result = Load(paths, previous);
     if (!result) return result;
@@ -372,23 +373,23 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         for (const auto& path : {directory, paths.settingsLink, paths.startupLink, discoveryPath}) automation::CheckPlainPath(path);
         if (options.desktop && !paths.desktopLink.empty()) automation::CheckPlainPath(paths.desktopLink);
         if (options.proxy && options.codexEnv && !paths.codexEnvFile.empty()) automation::CheckPlainPath(paths.codexEnvFile);
-    } catch (const automation::Invalid&) { return Fail(ERROR_BAD_PATHNAME, L"部署路径包含无效名称或目录链接。"); }
-    catch (const automation::IoError& e) { return Fail(e.code, L"无法检查部署路径。"); }
+    } catch (const automation::Invalid&) { return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.directory.invalid")); }
+    catch (const automation::IoError& e) { return Fail(e.code, l10n::Text("error.directory.check")); }
     result = ReadFileBytes(discoveryPath, oldDiscovery); if (!result) return result;
     if (oldDiscovery.exists) {
         try {
             const auto record = automation::ParseJson(std::string(oldDiscovery.data.begin(), oldDiscovery.data.end()));
             if (record.At(L"schemaVersion").Integer(0, MAXDWORD) != automation::contract::DiscoverySchema || record.At(L"managedBy").String() != automation::contract::ManagedBy)
-                return Conflict(L"发现信息文件不属于本工具。", paths.defaultDirectory);
-        } catch (...) { return Conflict(L"发现信息文件无法安全读取，未覆盖。", paths.defaultDirectory); }
+                return Conflict(l10n::Text("error.discovery.owner"), paths.defaultDirectory);
+        } catch (...) { return Conflict(l10n::Text("error.discovery.read"), paths.defaultDirectory); }
     }
     std::vector<BYTE> envBytes;
     const bool touchEnv = options.proxy && options.codexEnv;
     if (touchEnv) {
-        if (paths.codexEnvFile.empty()) return Fail(ERROR_PATH_NOT_FOUND, L"无法获取 Codex 的 .env 文件位置。");
+        if (paths.codexEnvFile.empty()) return Fail(ERROR_PATH_NOT_FOUND, l10n::Text("error.paths.env"));
         const DWORD attributes = GetFileAttributesW(paths.codexEnvFile.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
-            return Fail(ERROR_BAD_PATHNAME, L"Codex 的 .env 不是普通文件，请手动检查。");
+            return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.env.filetype"));
         result = ReadFileBytes(paths.codexEnvFile, oldEnv); if (!result) return result;
         result = MergeCodexEnv(oldEnv.data, options, envBytes); if (!result) return result;
     }
@@ -397,23 +398,23 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     result = ReadFileBytes(paths.startupLink, oldStartup); if (!result) return result;
     const bool touchDesktop = options.desktop || previous.options.desktop;
     if (touchDesktop) {
-        if (paths.desktopLink.empty()) return Fail(ERROR_PATH_NOT_FOUND, L"无法获取桌面快捷方式的位置。");
+        if (paths.desktopLink.empty()) return Fail(ERROR_PATH_NOT_FOUND, l10n::Text("error.paths.desktop"));
         result = ReadFileBytes(paths.desktopLink, oldDesktop); if (!result) return result;
         if (oldDesktop.exists) {
             Link existing;
             if (!ReadLink(paths.desktopLink, existing) || !Owned(existing)
                 || !Same(existing.target, previous.managedTarget))
-                return Conflict(L"桌面已有未由本工具管理的同名快捷方式。请先手动移走或重命名，原文件未修改。", Parent(paths.desktopLink));
+                return Conflict(l10n::Text("error.desktop.conflict"), Parent(paths.desktopLink));
         }
     }
     const std::vector<BYTE> bytes(payload.data, payload.data + payload.size);
     if (oldExe.exists && !Same(target, previous.managedTarget) && oldExe.data != bytes)
-        return Conflict(L"目标目录已有未由本工具管理的同名程序。请换一个目录，原文件未修改。", directory);
+        return Conflict(l10n::Text("error.deployment.conflict"), directory);
     if (oldStartup.exists) {
         Link existing;
         result = ReadLink(paths.startupLink, existing); if (!result) return result;
         if (!Owned(existing) || !Same(existing.target, previous.managedTarget))
-            return Conflict(L"启动文件夹中已有其他同名快捷方式。请先手动移走或重命名，原文件未修改。", Parent(paths.startupLink));
+            return Conflict(l10n::Text("error.startup.conflict"), Parent(paths.startupLink));
     }
     if (preflight) return {};
     result = EnsureDirectory(directory); if (!result) return result;
@@ -431,7 +432,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         if (startupChanged) note(Restore(paths.startupLink, oldStartup));
         if (settingsChanged) note(Restore(paths.settingsLink, oldSettings));
         if (exeChanged) note(Restore(target, oldExe));
-        failure.message += restoreErrors.empty() ? L"\n本次文件更改已撤销。" : L"\n部分更改未能恢复，请重新运行工具检查：" + restoreErrors;
+        failure.message += restoreErrors.empty() ? l10n::Text("error.rollback.complete") : l10n::Format("error.rollback.incomplete", {{"errors", restoreErrors}});
         failure.commit = restoreErrors.empty() ? CommitState::RolledBack : CommitState::Incomplete;
         return failure;
     };
@@ -442,7 +443,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     Snapshot check;
     result = ReadFileBytes(target, check);
     if (!result) return rollback(result);
-    if (!check.exists || check.data != bytes) return rollback(Fail(ERROR_CRC, L"部署后的程序校验失败。"));
+    if (!check.exists || check.data != bytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.deployment.verify")));
     const Link value{ target, arguments, directory, Marker };
     result = WriteLink(paths.settingsLink, value, oldSettings.exists); if (!result) return rollback(result);
     settingsChanged = true;
@@ -450,14 +451,14 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         result = WriteLink(paths.startupLink, value, oldStartup.exists); if (!result) return rollback(result);
         startupChanged = true;
     } else if (oldStartup.exists) {
-        if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), L"无法关闭登录自启。"));
+        if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.startup.disable")));
         startupChanged = true;
     }
     if (options.desktop) {
         result = WriteLink(paths.desktopLink, value, oldDesktop.exists); if (!result) return rollback(result);
         desktopChanged = true;
     } else if (previous.options.desktop && oldDesktop.exists) {
-        if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), L"无法移除桌面快捷方式。"));
+        if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.desktop.remove")));
         desktopChanged = true;
     }
     Loaded verify;
@@ -465,15 +466,15 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     if (!result) return rollback(result);
     if (!verify.deployed || verify.options.startup != options.startup || verify.options.desktop != options.desktop
         || !Same(verify.managedTarget, target))
-        return rollback(Fail(ERROR_INVALID_DATA, L"保存后的配置校验失败。"));
+        return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.settings.verify")));
     if (touchEnv && (!oldEnv.exists || oldEnv.data != envBytes)) {
         result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
         if (check.exists != oldEnv.exists || check.data != oldEnv.data)
-            return rollback(Fail(ERROR_RETRY, L"保存期间 Codex 的 .env 被其他程序更改，请重试。"));
+            return rollback(Fail(ERROR_RETRY, l10n::Text("error.env.concurrent")));
         result = WriteAtomic(paths.codexEnvFile, envBytes, oldEnv.exists); if (!result) return rollback(result);
         envChanged = true;
         result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
-        if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, L"Codex 的 .env 保存校验失败。"));
+        if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.env.verify")));
     }
     try {
         const auto record = automation::MakeDiscoveryRecord(target, automation::FromUtf8(APP_VERSION_TEXT));
@@ -481,21 +482,21 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         const std::vector<BYTE> discoveryBytes(text.begin(), text.end());
         result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);
         if (check.exists != oldDiscovery.exists || check.data != oldDiscovery.data)
-            return rollback(Fail(ERROR_RETRY, L"保存期间发现信息文件发生变化。"));
+            return rollback(Fail(ERROR_RETRY, l10n::Text("error.discovery.concurrent")));
         if (!oldDiscovery.exists || discoveryBytes != oldDiscovery.data) {
             result = WriteAtomic(discoveryPath, discoveryBytes, oldDiscovery.exists); if (!result) return rollback(result);
             discoveryChanged = true;
             result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);
-            if (!check.exists || check.data != discoveryBytes) return rollback(Fail(ERROR_CRC, L"发现信息保存校验失败。"));
+            if (!check.exists || check.data != discoveryBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.discovery.verify")));
         }
-    } catch (...) { return rollback(Fail(ERROR_INVALID_DATA, L"无法生成部署发现信息。")); }
+    } catch (...) { return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.discovery.generate"))); }
     deployedTarget = target;
     Result success; success.commit = CommitState::Committed; return success;
 }
 Result Apply(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget) {
     automation::UserLock lock;
     const DWORD error = lock.Acquire(paths.settingsLink);
-    if (error) return Fail(error, L"其他操作正在保存配置，请稍后重试。");
+    if (error) return Fail(error, l10n::Text("error.busy"));
     return ApplyFiles(paths, options, payload, deployedTarget, false);
 }
 Result Preflight(const Paths& paths, const Options& options, Payload payload) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "CodexEnv.h"
+#include "Localization.h"
 #include <algorithm>
 
 namespace setup {
@@ -14,17 +15,17 @@ Result MergeCodexEnv(const std::vector<BYTE>& source, const Options& options, st
     if (source.size() > 1024 * 1024 || std::find(source.begin(), source.end(), 0) != source.end()
         || (!source.empty() && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
             reinterpret_cast<const char*>(source.data()), static_cast<int>(source.size()), nullptr, 0)))
-        return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 不是有效的 UTF-8 文本，或文件过大。请手动检查，原文件未修改。");
+        return Fail(ERROR_INVALID_DATA, l10n::Text("error.env.encoding"));
     for (size_t i = 0; i < source.size(); ++i) {
         if (source[i] == '\r' && (i + 1 == source.size() || source[i + 1] != '\n'))
-            return Fail(ERROR_INVALID_DATA, L"Codex 的 .env 换行格式不受支持。请保存为 LF 或 CRLF 后重试，原文件未修改。");
+            return Fail(ERROR_INVALID_DATA, l10n::Text("error.env.newlines"));
     }
     const std::wstring address = options.protocol + L"://" + options.host + L":" + options.port;
     if (address.find_first_of(L"'\"$`\r\n") != std::wstring::npos
         || std::any_of(address.begin(), address.end(), [](wchar_t c) { return c < L' '; }))
-        return Fail(ERROR_INVALID_PARAMETER, L"代理地址包含 .env 不支持的字符。");
+        return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.env.address"));
     const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, address.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (!count) return Fail(ERROR_INVALID_PARAMETER, L"无法编码 Codex 的代理地址。");
+    if (!count) return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.env.encode"));
     std::string url(static_cast<size_t>(count), '\0');
     WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, address.c_str(), -1, &url[0], count, nullptr, nullptr);
     url.pop_back();
@@ -78,7 +79,7 @@ Result MergeCodexEnv(const std::vector<BYTE>& source, const Options& options, st
             else if (c == '\'' || c == '"') quote = c;
         }
         if (match >= 0) {
-            if (quote) return Fail(ERROR_INVALID_DATA, L".env 中的代理变量跨越多行，请先手动整理，原文件未修改。");
+            if (quote) return Fail(ERROR_INVALID_DATA, l10n::Text("error.env.multiline"));
             result += line.substr(0, equals + 1) + url;
             if (commentStart != std::string::npos) {
                 if (line[commentStart] == '#') result += ' ';
@@ -89,7 +90,7 @@ Result MergeCodexEnv(const std::vector<BYTE>& source, const Options& options, st
         } else result += line + ending;
         start = next;
     }
-    if (quote) return Fail(ERROR_INVALID_DATA, L".env 中有未闭合的引号，请先手动检查，原文件未修改。");
+    if (quote) return Fail(ERROR_INVALID_DATA, l10n::Text("error.env.quote"));
     for (int i = 0; i < 4; ++i) if (!found[i]) {
         if (result.size() > bom && result.back() != '\n') result += newline;
         result += std::string(keys[i]) + "=" + url + newline;

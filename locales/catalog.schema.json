@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChatGPT Launcher translation catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "locale", "nativeName", "fontFamily", "strings"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "locale": {"type": "string", "maxLength": 84, "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"},
+    "nativeName": {"type": "string", "minLength": 1, "maxLength": 64},
+    "fontFamily": {"type": "string", "minLength": 1, "maxLength": 31},
+    "strings": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*)+$"},
+      "additionalProperties": {"type": "string", "maxLength": 8192}
+    }
+  }
+}

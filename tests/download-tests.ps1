@@ -19,6 +19,7 @@ $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
 function Write-Host($Object, $ForegroundColor) { $calls.messages.Add([string]$Object) }
+function Get-ItemPropertyValue { return 'zh-CN' } # Never read the real language preference.
 function Assert-ProgressFits($Activity, $Status, $Percent = -1) {
     if (!$hasProgressView) { return }
     if ($PSStyle.Progress.View -ne 'Classic') { throw 'Progress must use the CJK-safe renderer' }
@@ -141,6 +142,12 @@ try {
     $ast = [Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, [ref]$parseErrors)
     if ($parseErrors.Count) { throw 'Entry point parse error' }
     $footer = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Show-SetupCompletion' }, $true)
+    $catalog = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$setupLocales' }, $true)
+    Invoke-Expression $catalog.Extent.Text
+    foreach ($name in @('Get-SetupLanguage','Get-SetupText')) {
+        $helper = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+        Invoke-Expression $helper.Extent.Text
+    }
     $keyCases = @(
         @{ key = 'X'; waitTicks = 0 },
         @{ key = ' '; waitTicks = 0 },
