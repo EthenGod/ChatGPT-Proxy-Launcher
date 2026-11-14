@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "StartupApps.h"
+#include "AutomationContract.h"
 #include <shlobj.h>
 #include <string>
 #include <vector>
@@ -24,7 +25,7 @@ struct Apartment {
     }
     ~Apartment() { if (SUCCEEDED(hr)) CoUninitialize(); }
 };
-constexpr wchar_t Guard[] = L"CHATGPT_PROXY_LAUNCHER_COMPANION";
+using automation::contract::Guard;
 struct ChildGuard {
     bool set = false;
     ~ChildGuard() { if (set) SetEnvironmentVariableW(Guard, nullptr); }

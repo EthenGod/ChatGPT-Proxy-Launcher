@@ -170,7 +170,7 @@ ChatGPTLauncherSetup.exe --headless info --result <新文件绝对路径>
 
 能力列表只包含该版本已实现的接口。`launcherVersion` 来自数值版本资源：第四段为零时省略，因此通常为三段。不要依赖固定的文本段数，也不要把它当作扩展版本。
 
-查询状态包括 `not-deployed`、`managed`、`legacy`、`missing`、`invalid`；启动器查询还可能返回 `unknown`。记录与 EXE 版本不匹配时返回 `invalid`，不会使用过期能力。
+两个 EXE 共用查询逻辑，均可能返回 `not-deployed`、`managed`、`legacy`、`missing`、`invalid`、`unknown`。记录与 EXE 版本不匹配、能力列表无效或未知字段返回 `invalid`；权限或 I/O 错误返回 `unknown`。目标文件缺失优先返回 `missing`。查询不读取私人启动参数，也不依赖自启快捷方式能否读取。
 
 部署能力描述生成此记录时的配置器接口，不表示配置器 EXE 已留存在安装目录。部署命令始终调用配置器；扩展启动和查询命令始终调用启动器。外部工具需要再次部署时，应取得支持该接口的配置器或调用 PowerShell 下载入口。
 
@@ -209,8 +209,11 @@ GUI 和后台共用现有文件提交核心，没有复制两套部署规则。
 | `SetupCommandLine` | 命令入口、请求解析、结果序列化，不依赖窗口 |
 | `SetupCore` | 共用预检、文件提交、所有权检查和回滚；两个入口使用同一用户写锁 |
 | `AutomationJson` / `AutomationIO` | 有界 JSON、路径检查、参数编码、结果文件及用户锁 |
-| `CompanionRegistry` | 注册、用户覆盖配置、只读发现及同名保护 |
+| `AutomationContract` | 公共协议版本、能力表、限制及状态分类 |
+| `DeploymentDiscovery` | 两个 EXE 共用的发现信息生成、只读查询和版本校验 |
+| `CompanionRegistry` | 注册、用户覆盖配置及同名保护 |
 | `CompanionManifest` | 清单校验、路径解析、版本及依赖检查 |
+| `CompanionProtocol` | 纯回执解析；完整校验后才返回，不操作进程 |
 | `CompanionRunner` | 有限时长的调度、启动确认、重试和结果汇总 |
 | `LauncherAutomation` | 发现查询、显式链式入口及限时失败提示 |
 
@@ -245,4 +248,4 @@ GUI 和后台共用现有文件提交核心，没有复制两套部署规则。
 
 初稿的两个示例及 Schema 完成 25 项结构检查。实现阶段补上真实隔离子进程、文件提交和回滚、用户锁、回执时序及 PowerShell 替身测试。
 
-当前验证范围和复测命令见[实现审查记录](automation-review.md)。真实插件互操作、登录自启及 ChatGPT 网络状态须另做实机验收；不能由隔离测试推断。
+初次实现记录见[实现审查记录](automation-review.md)，后续审查见[复审记录](automation-maintenance.md)，开发入口见[接入指南](developer-guide.md)。真实插件互操作、登录自启及 ChatGPT 网络状态须另做实机验收；不能由隔离测试推断。

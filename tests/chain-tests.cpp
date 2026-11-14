@@ -76,12 +76,17 @@ static int Fixture(int argc, wchar_t** argv) {
         reply[L"status"] = Json(L"failed"); reply[L"errorCode"] = Json(L"fixture-failure"); reply[L"retryable"] = Json(mode != L"permanent");
     }
     if (mode == L"wrong-token") reply[L"token"] = Json(L"incorrect");
+    if (mode == L"invalid-failure") {
+        reply[L"status"] = Json(L"failed"); reply[L"errorCode"] = Json(L"must-not-leak");
+        reply[L"retryable"] = Json(true); reply[L"message"] = Json::Number(1);
+    }
     if (mode == L"already-running") {
         const DWORD pid = static_cast<DWORD>(config.At(L"existingPid").Integer(1, MAXDWORD)); Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
         if (!process) return 91; reply[L"status"] = Json(L"already-running"); reply[L"readyProcessId"] = Json::Number(pid); reply[L"readyProcessCreationTime"] = Json(Stamp(process.value));
     }
     const auto path = c.At(L"replyPath").String(); Write(path + L".tmp", reply);
     if (!MoveFileExW((path + L".tmp").c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) return 92;
+    if (mode == L"invalid-failure") { Sleep(1800); return 0; }
     if (reply.At(L"status").String() == L"failed" || mode == L"crash" || mode == L"already-running") return mode == L"crash" ? 4 : 0;
     Sleep(1300); return 0;
 }
@@ -166,6 +171,29 @@ int wmain(int argc, wchar_t** argv) {
         const auto base = Join(argv[1], L"chain-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         REQUIRE(CreateDirectoryW(base.c_str(), nullptr)); wchar_t self[32768]{}; GetModuleFileNameW(nullptr, self, 32768);
         if (benchmark) { const auto code = Benchmark(base, self); CoUninitialize(); return code; }
+        const chain::ReplyIdentity identity{L"run", L"attempt", L"token"};
+        auto reply = automation::ParseJson("{\"schemaVersion\":1,\"runId\":\"run\",\"attemptId\":\"attempt\",\"token\":\"token\",\"status\":\"failed\",\"errorCode\":\"invalid-config\",\"retryable\":true}");
+        REQUIRE(!chain::ParseReadyReply(automation::WriteJson(reply), identity).retryable);
+        auto rejectedReply = [&](const Json& j) { try { chain::ParseReadyReply(automation::WriteJson(j), identity); return false; } catch (const Invalid&) { return true; } };
+        reply[L"message"] = Json::Number(1); REQUIRE(rejectedReply(reply)); reply.object.erase(L"message");
+        reply[L"token"] = Json(L"other"); REQUIRE(rejectedReply(reply)); reply[L"token"] = Json(L"token");
+        reply[L"status"] = Json(L"ready"); REQUIRE(rejectedReply(reply)); // Status-specific fields must not leak between variants.
+        Case repair(base, L"disable-broken", self, L"task"); repair.Register();
+        Write(repair.manifest, Json::Object(), true);
+        auto disableBroken = automation::ParseJson("{\"schemaVersion\":1,\"id\":\"org.example.addon\",\"overrides\":{\"enabled\":false}}");
+        REQUIRE(repair.Call(L"companion-configure", disableBroken).At(L"exitCode").Integer(0, 255) == 0);
+        REQUIRE(Last(repair.Run()).At(L"status").String() == L"disabled");
+        disableBroken[L"overrides"][L"enabled"] = Json(true);
+        REQUIRE(repair.Call(L"companion-configure", disableBroken).At(L"exitCode").Integer(0, 255) == 20);
+        REQUIRE(Last(repair.Run()).At(L"status").String() == L"disabled");
+        Case full(base, L"remove-over-limit", self, L"task"); full.Register();
+        for (unsigned i = 0; i < 32; ++i) Write(Join(Join(full.paths.defaultDirectory, L"CompanionRegistry"), L"org.example.extra" + std::to_wstring(i) + L".json"), Json::Object());
+        disableBroken[L"overrides"][L"enabled"] = Json(false);
+        auto disabledFull = full.Call(L"companion-configure", disableBroken);
+        REQUIRE(disabledFull.At(L"exitCode").Integer(0, 255) == 10 && disabledFull.At(L"committed").Bool());
+        auto removed = full.Call(L"companion-remove");
+        REQUIRE(removed.At(L"exitCode").Integer(0, 255) == 10 && removed.At(L"committed").Bool());
+        REQUIRE(GetFileAttributesW(Join(Join(full.paths.defaultDirectory, L"CompanionRegistry"), L"org.example.addon.json").c_str()) == INVALID_FILE_ATTRIBUTES);
         Case ready(base, L"ready 中文", self, L"ready");
         ready.document[L"entry"][L"arguments"].array.emplace_back(L""); ready.document[L"entry"][L"arguments"].array.emplace_back(L"空格 quote\" slash\\ & % !"); ready.Save(); ready.Register();
         auto r = ready.Run(); REQUIRE(r.At(L"exitCode").Integer(0, 255) == 0 && Last(r).At(L"status").String() == L"ready");
@@ -185,6 +213,9 @@ int wmain(int argc, wchar_t** argv) {
         Case timeout(base, L"timeout", self, L"timeout", true, 3); timeout.document[L"readiness"][L"timeoutMs"] = Json::Number(1000); timeout.Save(); timeout.Register(); r = timeout.Run();
         REQUIRE(Last(r).At(L"status").String() == L"timeout-running" && Last(r).At(L"attempts").Integer(1, 3) == 1);
         Case wrong(base, L"wrong-token", self, L"wrong-token"); wrong.Register(); r = wrong.Run(); REQUIRE(Last(r).At(L"status").String() == L"failed");
+        Case invalidFailure(base, L"invalid-failure", self, L"invalid-failure", true, 2);
+        invalidFailure.document[L"readiness"][L"timeoutMs"] = Json::Number(1000); invalidFailure.Save(); invalidFailure.Register(); r = invalidFailure.Run();
+        REQUIRE(Last(r).At(L"status").String() == L"timeout-running" && Last(r).At(L"code").String() == L"ready-timeout" && Last(r).At(L"attempts").Integer(1, 3) == 1);
         Case crash(base, L"crash", self, L"crash", true, 2); crash.Register(); r = crash.Run();
         REQUIRE(Last(r).At(L"status").String() == L"failed" && Last(r).At(L"attempts").Integer(1, 3) == 2);
         Case existing(base, L"existing", self, L"already-running"); existing.document[L"config"][L"existingPid"] = Json::Number(GetCurrentProcessId()); existing.Save(); existing.Register(); r = existing.Run();
@@ -239,6 +270,9 @@ int wmain(int argc, wchar_t** argv) {
         config[L"id"] = Json(L"org.example.b");
         Write(Join(Join(graph.paths.defaultDirectory, L"CompanionRegistry"), L"org.example.b.json"), Json::Object(), true);
         REQUIRE(graph.Call(L"companion-register").At(L"exitCode").Integer(0, 255) == 30);
+        const auto foreignRemoval = graph.Call(L"companion-remove");
+        REQUIRE(foreignRemoval.At(L"exitCode").Integer(0, 255) == 30 && !foreignRemoval.At(L"committed").Bool());
+        REQUIRE(automation::ReadBytes(Join(Join(graph.paths.defaultDirectory, L"CompanionRegistry"), L"org.example.b.json")) == automation::WriteJson(Json::Object()));
         Case duplicate(base, L"legacy-duplicate", self, L"task"); duplicate.Register(); REQUIRE(setup::AddCompanionProgram(duplicate.paths, Join(duplicate.package, L"Addon.exe")));
         r = duplicate.Run(); REQUIRE(legacyCalls == 0 && r.At(L"entries").array[0].At(L"code").String() == L"legacy-entry-conflict" && Last(r).At(L"status").String() == L"completed");
         REQUIRE(duplicate.Call(L"companion-register").At(L"exitCode").Integer(0, 255) == 30);

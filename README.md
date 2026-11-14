@@ -99,7 +99,7 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 >
 
 ## 从源码构建
 
-**供脚本和插件作者使用：** 开发版 v1.0.7 新增后台部署、部署查询，以及带启动确认和有限重试的插件接口。详见[自动化接入说明](docs/automation-usage.md)。这些接口需要对应版本的 EXE；本地实现不代表 GitHub Release 已更新。普通用户继续使用上面的配置器步骤即可。
+**供脚本和插件作者使用：** 开发版 v1.0.7 新增后台部署、部署查询，以及带启动确认和有限重试的插件接口。先看[开发者接入指南](docs/developer-guide.md)，完整命令见[自动化用法](docs/automation-usage.md)。这些接口需要对应版本的 EXE；本地实现不代表 GitHub Release 已更新。普通用户继续使用上面的配置器步骤即可。
 
 需要 Visual Studio 2022 Build Tools 的 C++ 工具和 Windows SDK。在项目根目录运行：
 

@@ -2,14 +2,17 @@
 
 ## 后台部署与链式启动
 
-- v1.0.7 开发版已实现。用法见 `docs/automation-usage.md`，接口见 `docs/automation-design.md` 和 `docs/companion-protocol-v1.md`。Schema、PowerShell 回执辅助函数和示例位于 `docs/schemas/`、`docs/examples/`。本轮未打包或上传 Release。
+- v1.0.7 开发版已实现。先读 `docs/developer-guide.md`，完整命令见 `docs/automation-usage.md`，接口见 `docs/automation-design.md` 和 `docs/companion-protocol-v1.md`。Schema、PowerShell 回执辅助函数和示例位于 `docs/schemas/`、`docs/examples/`。复审见 `docs/automation-maintenance.md`。本轮未打包或上传 Release。
 - PowerShell 后台入口先检查下载 EXE 至少为 1.0.7。不能先执行 `--headless` 探测，否则旧版仍会打开界面。旧启动器会把未知参数转发给 ChatGPT，也不能用新查询命令探测旧版。在线命令还依赖默认分支脚本与 Release 实际发布。
 - 现有 ChatGPT 退出流程需要前台焦点。后台部署只报告重新打开应用的待办，不调用此流程。GUI 保留原有行为。两个入口共用部署核心和用户写锁；GUI 空闲时不占用写锁。
 - 就绪回执只证明本次初始化完成。有限重试必须同时检查扩展声明和上一轮完整进程族已退出，不能把进程创建成功、父进程退出或窗口消失当作这个条件。
 - Job 在创建进程时附加；属性列表指向的 Job 句柄存储须活到 `CreateProcessW` 返回。根进程退出事件可能早于 Job 计数归零，短任务也须在截止时间内等待计数更新。不能设置 `KILL_ON_JOB_CLOSE`。Job 不覆盖 WMI、服务或外部代理代建的进程；这类扩展不应声明安全重试。
 - 结果文件独占保留到进程退出。测试也须销毁写入对象后再读取，不能用放宽共享模式绕过这个约定。文件提交结果区分未开始、完成、已回滚和回滚不完整；`.env` 与 `discovery.json` 都在回滚范围内。后续自启处理失败不能冒充文件未提交。
 - 共用原生 JSON 解析器拒绝重复键、非法编码和超深结构。整数按十进制精确转换，不能经浮点数把 `1.00000000000000001` 误当作版本 1。不新增第三方运行库。
+- 协议版本、能力与公共限制维护在 `AutomationContract.h`，不随产品版本自动升级。`tests/contract-tests.cpp` 检查 Schema 和示例是否同步。回执先经 `CompanionProtocol` 完整解析，再修改运行状态；无效 message、状态混用或身份不符不能泄漏部分失败码或重试标志。
+- 两个 EXE 使用 `DeploymentDiscovery` 读取同一管理快捷方式和数值版本，不经 `Load` 解析私人参数。目标缺失优先报告 missing；记录损坏报告 invalid；无法读取报告 unknown。不要把空版本相等当作有效发现信息。
 - 注册更新保留用户覆盖项；移除只操作指定 ID 的注册文件。明确识别到旧启动目录中的重复入口时报告冲突。回执令牌和扩展配置只放本次协议目录，不进入自动日志或常规结果。
+- 停用是恢复入口，不依赖作者清单或其他扩展的依赖图。停用记录只检查归属和覆盖项，列表版本为空；重新启用必须完整校验。停用与移除在注册目录超限时仍按精确 ID 操作，并返回 registry-read-incomplete；不能绕过目标记录的归属检查。configure 整体替换 overrides，不隐式保留旧字段。
 - `tests/chain-tests.cpp` 使用真实隔离子进程，但通知窗口为替身。`--benchmark` 测空目录调度和 30 秒无事件等待。它不代表完整 EXE 冷启动、ChatGPT 窗口或真实插件互操作性能。
 
 ## 发布与目录整理

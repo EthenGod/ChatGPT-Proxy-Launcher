@@ -35,7 +35,7 @@ param([switch]$Headless, [string]$Request, [string]$Result,
             $Path -match '[\x00-\x1f]' -or $Path.Substring(2).Contains(':')) { throw 'invalid-local-path' }
         $full = [IO.Path]::GetFullPath($Path)
         foreach ($component in $full.Substring(3).Split('\')) {
-            if ($component -match '[. ]$' -or $component -match '\A(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)') { throw 'invalid-path-component' }
+            if ($component -match '[. ]$' -or $component -match '\A(?:CON|PRN|AUX|NUL|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\.|$)') { throw 'invalid-path-component' }
         }
         $part = $full
         while ($part) {

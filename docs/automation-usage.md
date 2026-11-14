@@ -1,5 +1,7 @@
 # 自动化接入
 
+第一次接入请先看[开发者接入指南](developer-guide.md)。本页提供完整调用示例。
+
 适用于本地开发版 **v1.0.7** 及后续兼容版本。本次没有发布 Release。在线下载命令需要新版脚本及 EXE 已经发布；旧 EXE 不支持这些接口。
 
 ## 先查看计划，再部署
@@ -80,6 +82,8 @@ ChatGPTLauncherSetup.exe --headless companion register --manifest D:\Apps\Exampl
 
 4. 作者升级程序时保留清单路径与 ID。用户覆盖项继续有效。迁移到新路径时注册命令加 `--replace`，它不会删除旧程序。
 5. 移除注册使用 `companion remove --id <ID> --result <新文件>`。只删除这个 ID 的注册记录，程序和用户数据保留。
+
+`configure` 会整体替换 `overrides`，不会补丁式合并旧值。[配置请求示例](examples/companion-config-v1.json)可直接复制。停用使用 `"enabled":false`；清单或入口损坏时仍可操作，重新启用必须通过全部校验。停用项的列表版本为空，不代表未注册。
 
 同一入口不要同时放在旧 `StartupApps` 目录。明确识别到重复入口时会报告冲突。没有实现回执的普通插件继续使用配置器的“添加程序”。
 

@@ -70,5 +70,9 @@ try {
     if ($value.exitCode -ne 70 -or $calls.launch -ne $before -or [IO.File]::ReadAllText($existing) -ne $prior) { throw 'Existing result was overwritten' }
     $value = & $entry -Headless -Request $requestFile -Result $requestFile
     if ($value.exitCode -ne 20 -or [IO.File]::ReadAllText($requestFile) -ne '{"schemaVersion":1}') { throw 'Request path was overwritten' }
+    foreach ($name in @(('COM' + [char]0x00b9 + '.json'), ('LPT' + [char]0x00b2 + '.json'), ('COM' + [char]0x00b3 + '.json'))) {
+        $value = & $entry -Headless -Request $requestFile -Result (Join-Path $testRoot $name)
+        if ($value.exitCode -ne 20 -or $calls.launch -ne $before) { throw 'Reserved device path accepted' }
+    }
     Write-Output 'PASS headless download: one structured result, caller session retained, no UI/progress, pinned assets, checksum/version gates, cleanup, native errors and output protection.'
 } finally { $env:TEMP = $savedTemp }

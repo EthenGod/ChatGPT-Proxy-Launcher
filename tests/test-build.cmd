@@ -4,10 +4,14 @@ setlocal
 cd /d "%~dp0.."
 call build.cmd
 if errorlevel 1 exit /b %errorlevel%
-set "SETUP_VALUE_OBJECTS=work\SetupArguments.obj work\CodexEnv.obj work\AutomationJson.obj work\AutomationIO.obj advapi32.lib"
+set "SETUP_VALUE_OBJECTS=work\SetupArguments.obj work\CodexEnv.obj work\AutomationJson.obj work\AutomationIO.obj work\DeploymentDiscovery.obj advapi32.lib"
 call tools\msvc-env.cmd
 if errorlevel 1 exit /b %errorlevel%
-cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-tests.obj /Fe:work\launcher-tests.exe tests\launcher-tests.cpp work\AutomationJson.obj work\AutomationIO.obj work\CompanionManifest.obj work\LauncherAutomation.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib version.lib user32.lib comctl32.lib
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\contract-tests.obj /Fe:work\contract-tests.exe tests\contract-tests.cpp work\CompanionManifest.obj work\AutomationJson.obj work\AutomationIO.obj work\DeploymentDiscovery.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib version.lib
+if errorlevel 1 exit /b %errorlevel%
+work\contract-tests.exe "%CD%"
+if errorlevel 1 exit /b %errorlevel%
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-tests.obj /Fe:work\launcher-tests.exe tests\launcher-tests.cpp work\AutomationJson.obj work\AutomationIO.obj work\DeploymentDiscovery.obj work\CompanionManifest.obj work\LauncherAutomation.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib version.lib user32.lib comctl32.lib
 if errorlevel 1 exit /b %errorlevel%
 work\launcher-tests.exe "%CD%\work\capture with spaces.txt"
 if errorlevel 1 exit /b %errorlevel%
@@ -43,7 +47,7 @@ cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work
 if errorlevel 1 exit /b %errorlevel%
 work\automation-tests.exe "%CD%\work" "%CD%\outputs\ChatGPTProxyLauncher.exe" "%CD%\outputs\ChatGPTLauncherSetup.exe"
 if errorlevel 1 exit /b %errorlevel%
-cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\chain-tests.obj /Fe:work\chain-tests.exe tests\chain-tests.cpp work\CompanionManifest.obj work\CompanionRegistry.obj work\StartupApps.obj work\SetupCore.obj work\SetupCommandLine.obj work\StartupIntegration.obj %SETUP_VALUE_OBJECTS% /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib shlwapi.lib advapi32.lib bcrypt.lib xmllite.lib version.lib user32.lib comctl32.lib
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\chain-tests.obj /Fe:work\chain-tests.exe tests\chain-tests.cpp work\CompanionProtocol.obj work\CompanionManifest.obj work\CompanionRegistry.obj work\StartupApps.obj work\SetupCore.obj work\SetupCommandLine.obj work\StartupIntegration.obj %SETUP_VALUE_OBJECTS% /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib shlwapi.lib advapi32.lib bcrypt.lib xmllite.lib version.lib user32.lib comctl32.lib
 if errorlevel 1 exit /b %errorlevel%
 work\chain-tests.exe "%CD%\work"
 if errorlevel 1 exit /b %errorlevel%

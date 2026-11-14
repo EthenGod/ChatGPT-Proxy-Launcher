@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 param([string]$ProjectRoot = (Split-Path $PSScriptRoot))
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 . (Join-Path $ProjectRoot 'docs\examples\companion-context.ps1')
 $root = Join-Path $ProjectRoot ('work\protocol-example-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root
@@ -26,10 +27,14 @@ try {
         $before=[IO.File]::ReadAllText($context.replyPath); $rejected=$false
         try { Send-CglReply -Context $read -Status 'ready' } catch { $rejected=$true }
         if (!$rejected -or [IO.File]::ReadAllText($context.replyPath) -cne $before) { throw 'Existing reply changed.' }
+        if ([IO.File]::Exists($context.replyPath+'.tmp')) { throw 'Failed write left its temporary file.' }
         $read.deadlineUtc = [DateTime]::UtcNow.AddSeconds(-1).ToString('o'); $rejected=$false
         try { Send-CglReply -Context $read -Status 'ready' } catch { $rejected=$true }
         if (!$rejected) { throw 'Late reply was accepted.' }
     }
+    $read.PSObject.Properties.Remove('replyPath'); $rejected=$false
+    try { Send-CglReply -Context $read -Status 'ready' } catch { $rejected=$_.Exception.Message -eq 'This entry uses exit-code readiness.' }
+    if (!$rejected) { throw 'Exit-code context was not handled under StrictMode.' }
     'PASS protocol example: UTF-8 atomic replies, ready/failure/existing identity, no overwrite and deadline.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }

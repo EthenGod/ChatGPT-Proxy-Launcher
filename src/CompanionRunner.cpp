@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "CompanionRunner.h"
+#include "CompanionProtocol.h"
 #include "AppVersion.h"
 #include <shlobj.h>
 #include <bcrypt.h>
@@ -11,8 +12,9 @@
 namespace chain {
 using automation::Invalid;
 using automation::Handle;
+namespace rules = automation::contract;
 namespace {
-constexpr wchar_t Guard[] = L"CHATGPT_PROXY_LAUNCHER_COMPANION";
+using rules::Guard;
 std::wstring Random() {
     BYTE bytes[32]{};
     if (BCryptGenRandom(nullptr, bytes, sizeof(bytes), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) throw Invalid("random-unavailable");
@@ -112,20 +114,20 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
     const auto began = GetTickCount64();
     const auto deadline = std::min(globalDeadline, began + e.timeout);
     const auto token = Random(), attemptId = Random(); AttemptFiles files; files.Create(token);
-    auto context = Json::Object(); context[L"schemaVersion"] = Json::Number(1); context[L"protocolVersion"] = Json::Number(1);
+    auto context = Json::Object(); context[L"schemaVersion"] = Json::Number(rules::ContextSchema); context[L"protocolVersion"] = Json::Number(rules::ChainProtocol);
     context[L"runId"] = Json(runId); context[L"attemptId"] = Json(attemptId); context[L"token"] = Json(token);
     context[L"deadlineUtc"] = Json(DeadlineUtc(static_cast<DWORD>(deadline > began ? deadline - began : 0)));
     auto launcher = Json::Object(); launcher[L"path"] = Json(options.launcher); launcher[L"version"] = Json(automation::FromUtf8(APP_VERSION_TEXT));
     launcher[L"deploymentState"] = Json(L"standalone");
     if (info.At(L"state").String() == L"managed" && automation::SamePath(info.At(L"launcherPath").String(), options.launcher)) launcher[L"deploymentState"] = Json(L"managed");
-    else if (info.At(L"state").String() == L"unknown") launcher[L"deploymentState"] = Json(L"unknown");
+    else if (info.At(L"state").String() == L"unknown" || info.At(L"state").String() == L"invalid") launcher[L"deploymentState"] = Json(L"unknown");
     context[L"launcher"] = launcher;
     auto entry = Json::Object(); entry[L"id"] = Json(e.id); entry[L"version"] = Json(e.version); entry[L"attempt"] = Json::Number(attempt); context[L"entry"] = entry;
     auto input = Json::Object(); input[L"arguments"] = Json::Array(); for (const auto& a : e.arguments) input[L"arguments"].array.emplace_back(a);
     input[L"config"] = e.config; context[L"input"] = input;
     if (e.signal) context[L"replyPath"] = Json(files.reply);
     auto chat = Json::Object(); chat[L"processCreated"] = Json(true); chat[L"readiness"] = Json(L"unknown"); context[L"chatgpt"] = chat;
-    const auto bytes = automation::WriteJson(context); if (bytes.size() > 65536) throw Invalid("context-too-large");
+    const auto bytes = automation::WriteJson(context); if (bytes.size() > rules::JsonBytes) throw Invalid("context-too-large");
     {
         Handle file(CreateFileW(files.context.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
         if (!file) throw automation::IoError(GetLastError()); automation::WriteBytes(file.value, bytes);
@@ -144,7 +146,7 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
         const wchar_t* prefix = e.kind == companions::Kind::PowerShell ? L"-NoLogo -NoProfile -File " : e.kind == companions::Kind::Wsh ? L"//Nologo " : e.kind == companions::Kind::Jar ? L"-jar " : L"";
         tail = prefix + automation::Quote(e.target);
     }
-    std::map<std::wstring, std::wstring> variables{{Guard, L"1"}, {L"CGL_CHAIN_PROTOCOL", L"1"}, {L"CGL_CONTEXT_FILE", files.context},
+    std::map<std::wstring, std::wstring> variables{{Guard, L"1"}, {L"CGL_CHAIN_PROTOCOL", std::to_wstring(rules::ChainProtocol)}, {L"CGL_CONTEXT_FILE", files.context},
         {L"CGL_LAUNCHER_PATH", options.launcher}, {L"CGL_LAUNCHER_VERSION", automation::FromUtf8(APP_VERSION_TEXT)}, {L"CGL_RUN_ID", runId}, {L"CGL_ENTRY_ID", e.id}, {L"CGL_ATTEMPT", std::to_wstring(attempt)}};
     if (e.kind == companions::Kind::Batch) { variables[L"CHATGPT_PROXY_LAUNCHER_BATCH_PATH"] = e.target; tail = L"/d /v:off /s /c \"\"%CHATGPT_PROXY_LAUNCHER_BATCH_PATH%\"\""; }
     else for (const auto& arg : e.arguments) { if (!tail.empty()) tail += L' '; tail += automation::Quote(arg); }
@@ -173,35 +175,25 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
         const bool exited = processWait == WAIT_OBJECT_0;
         if (e.signal && !acknowledged && !failed && GetFileAttributesW(files.reply.c_str()) != INVALID_FILE_ATTRIBUTES) {
             try {
-                const auto reply = automation::ParseJson(automation::ReadBytes(files.reply, 4096), 4096);
-                reply.Fields({L"schemaVersion", L"runId", L"attemptId", L"token", L"status", L"readyProcessId", L"readyProcessCreationTime", L"errorCode", L"retryable", L"message"});
-                if (reply.At(L"schemaVersion").Integer(1, 1) != 1 || reply.At(L"runId").String() != runId || reply.At(L"attemptId").String() != attemptId || reply.At(L"token").String() != token || now >= deadline) throw Invalid("invalid-reply");
-                const auto status = reply.At(L"status").String();
-                if (status == L"failed") {
-                    reply.Fields({L"schemaVersion", L"runId", L"attemptId", L"token", L"status", L"errorCode", L"retryable", L"message"});
-                    code = reply.At(L"errorCode").String(64); retryable = reply.At(L"retryable").Bool();
-                    if (code.empty() || code[0] < L'a' || code[0] > L'z' || code.find_first_not_of(L"abcdefghijklmnopqrstuvwxyz0123456789-") != code.npos) throw Invalid("invalid-error-code");
-                    if (code == L"invalid-config" || code == L"invalid-arguments" || code == L"permission-denied" || code == L"runtime-missing" || code == L"unsupported-capability") retryable = false;
-                    if (reply.Has(L"message")) reply.At(L"message").String(256);
-                    failed = true;
-                } else if (status == L"ready" || status == L"already-running") {
-                    if (status == L"already-running") {
-                        reply.Fields({L"schemaVersion", L"runId", L"attemptId", L"token", L"status", L"readyProcessId", L"readyProcessCreationTime"});
-                        const DWORD pid = static_cast<DWORD>(reply.At(L"readyProcessId").Integer(1, MAXDWORD));
-                        const auto creation = reply.At(L"readyProcessCreationTime").String(16);
-                        if (creation.size() != 16 || creation.find_first_not_of(L"0123456789abcdefABCDEF") != creation.npos) throw Invalid("invalid-ready-process");
+                const auto reply = ParseReadyReply(automation::ReadBytes(files.reply, rules::ReplyBytes), {runId, attemptId, token});
+                if (GetTickCount64() >= deadline) throw Invalid("late-reply");
+                if (reply.kind == ReplyKind::Failed) {
+                    code = reply.errorCode; retryable = reply.retryable; failed = true;
+                } else {
+                    if (reply.kind == ReplyKind::AlreadyRunning) {
+                        const DWORD pid = reply.processId;
                         Handle candidate(OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
                         if (!candidate) throw Invalid("ready-process-unavailable");
                         FILETIME birth{}, exit{}, kernel{}, user{}; DWORD session = 0, ours = 0;
                         if (!GetProcessTimes(candidate.value, &birth, &exit, &kernel, &user) || !ProcessIdToSessionId(pid, &session) || !ProcessIdToSessionId(GetCurrentProcessId(), &ours)
                             || session != ours || Sid(candidate.value) != Sid(GetCurrentProcess())) throw Invalid("ready-process-mismatch");
                         const ULONGLONG stamp = (static_cast<ULONGLONG>(birth.dwHighDateTime) << 32) | birth.dwLowDateTime;
-                        if (stamp != _wcstoui64(creation.c_str(), nullptr, 16)) throw Invalid("ready-process-reused");
+                        if (stamp != reply.processCreated) throw Invalid("ready-process-reused");
                         existing.Reset(candidate.value); candidate.value = INVALID_HANDLE_VALUE;
-                        success = status;
-                    } else reply.Fields({L"schemaVersion", L"runId", L"attemptId", L"token", L"status"});
+                        success = L"already-running";
+                    }
                     acknowledged = true; observedAt = GetTickCount64();
-                } else throw Invalid("invalid-reply-status");
+                }
             } catch (...) { /* Invalid or unfinished replies cannot confirm readiness. */ }
         }
         now = GetTickCount64();
@@ -209,7 +201,7 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
             HANDLE ready = existing ? existing.value : process.value;
             const DWORD readyWait = WaitForSingleObject(ready, 0);
             if (readyWait != WAIT_TIMEOUT) { failed = true; acknowledged = false; retryable = true; code = L"exited-after-ready"; }
-            else if (now - observedAt >= 1000 && now <= deadline) return {success, L"", false, false};
+            else if (now - observedAt >= rules::StabilityMs && now <= deadline) return {success, L"", false, false};
         }
         bool taskChildren = false;
         if (!e.signal && exited) {
@@ -230,7 +222,7 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
         if (!exited) waits[count++] = process.value;
         if (watch.value != INVALID_HANDLE_VALUE) waits[count++] = watch.value;
         if (existing && WaitForSingleObject(existing.value, 0) == WAIT_TIMEOUT) waits[count++] = existing.value;
-        DWORD delay = static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, acknowledged ? 1000 - std::min<ULONGLONG>(1000, now - observedAt) : exited ? 250 : MAXDWORD));
+        DWORD delay = static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, acknowledged ? rules::StabilityMs - std::min<ULONGLONG>(rules::StabilityMs, now - observedAt) : exited ? rules::JobPollMs : MAXDWORD));
         if (!count) Sleep(delay);
         else {
             const DWORD wait = WaitForMultipleObjects(count, waits, FALSE, delay);
@@ -251,7 +243,7 @@ void LegacyResult(PCWSTR file, DWORD error) {
     PCWSTR leaf = wcsrchr(file, L'\\'); leaf = leaf ? leaf + 1 : file;
     legacyResults->array.push_back(Item(L"legacy:" + std::wstring(leaf), error == ERROR_TIMEOUT ? L"skipped-budget" : error ? L"failed" : L"started-unverified", error == ERROR_TIMEOUT ? L"budget-exhausted" : error == ERROR_ALREADY_EXISTS ? L"legacy-entry-conflict" : error ? L"start-failed" : L"", error == ERROR_ALREADY_EXISTS ? 0 : 1));
 }
-bool Succeeded(const Json& item) { const auto& s = item.At(L"status").String(); return s == L"ready" || s == L"already-running" || s == L"completed" || s == L"started-unverified" || s == L"disabled"; }
+bool Succeeded(const Json& item) { return rules::ItemSucceeded(item.At(L"status").String()); }
 }
 std::wstring RootDirectory() {
     PWSTR path = nullptr;
@@ -264,18 +256,18 @@ Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) 
     try {
         wchar_t guard[2]{};
         if (GetEnvironmentVariableW(Guard, guard, 2)) { report[L"chainStatus"] = Json(L"not-started"); report[L"exitCode"] = Json::Number(10); return report; }
-        const auto folder = Join(options.root, L"CompanionRegistry"), legacy = Join(options.root, companions::Folder);
+        const auto folder = Join(options.root, rules::RegistryFolder), legacy = Join(options.root, companions::Folder);
         if (!DirectoryExists(folder) && !DirectoryExists(legacy)) return report;
         automation::UserLock lock;
         const DWORD locked = lock.Acquire(Join(options.root, L"chain-start"), 0);
         if (locked) { report[L"chainStatus"] = Json(L"skipped-busy"); report[L"exitCode"] = Json::Number(10); return report; }
-        DWORD budget = 60000; std::wstring policyError;
-        const auto policyFile = Join(options.root, L"companion-policy.json");
+        DWORD budget = rules::BudgetDefaultMs; std::wstring policyError;
+        const auto policyFile = Join(options.root, rules::PolicyFile);
         if (GetFileAttributesW(policyFile.c_str()) != INVALID_FILE_ATTRIBUTES) {
             try {
-                const auto policy = automation::ParseJson(automation::ReadBytes(policyFile, 4096), 4096); policy.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
-                if (policy.At(L"schemaVersion").Integer(1, 1) != 1) throw Invalid("invalid-policy-version");
-                budget = static_cast<DWORD>(policy.At(L"budgetMs").Integer(1000, 120000));
+                const auto policy = automation::ParseJson(automation::ReadBytes(policyFile, rules::PolicyBytes), rules::PolicyBytes); policy.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
+                if (policy.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::PolicySchema) throw Invalid("invalid-policy-version");
+                budget = static_cast<DWORD>(policy.At(L"budgetMs").Integer(rules::BudgetMinMs, rules::BudgetMaxMs));
                 const auto feedback = policy.At(L"feedback").String(); if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback"); notify = feedback == L"notify";
             } catch (...) { policyError = L"invalid-policy"; }
         }
@@ -326,7 +318,7 @@ Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) 
                         result = Item(r.id, outcome.status.c_str(), outcome.code, tries, GetTickCount64() - began);
                     }
                 }
-                success[r.id] = Succeeded(result) && result.At(L"status").String() != L"disabled"; items.array.push_back(result);
+                success[r.id] = rules::DependencyReady(result.At(L"status").String()); items.array.push_back(result);
             }
         }
         if (std::any_of(items.array.begin(), items.array.end(), [](const Json& item) { return !Succeeded(item); })) {

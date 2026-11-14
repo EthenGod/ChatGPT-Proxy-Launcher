@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.assistant-addon",
+  "overrides": {
+    "enabled": true,
+    "arguments": ["--profile", "default"],
+    "maxAttempts": 1
+  }
+}

@@ -2,6 +2,8 @@
 
 状态：开发版 v1.0.7 已实现，尚未发布。后台接口见[部署设计](automation-design.md)，操作示例见[自动化接入](automation-usage.md)。
 
+初次接入先看[开发者指南](developer-guide.md)。结构文件包括[作者清单](schemas/companion-v1.schema.json)、[配置请求](schemas/companion-config-v1.schema.json)、[回执](schemas/companion-reply-v1.schema.json)、[全链策略](schemas/companion-policy-v1.schema.json)。
+
 本规范用于本机、当前用户主动注册的程序和脚本。它定义启动、参数、就绪确认、有限重试及发现接口。它不负责下载扩展、自动更新扩展、权限提升或持续监控。
 
 ## 1. 启动器保证什么
@@ -108,13 +110,15 @@ ChatGPTLauncherSetup.exe --headless companion list --result <新文件>
 ```
 
 - `register`：校验清单并原子写入注册记录。同 ID、同路径重复注册可安全执行，保留用户覆盖项。同 ID、不同路径返回所有权冲突；只有显式 `--replace` 才可更新本工具已有的记录。
-- `configure`：请求格式为 `{ "schemaVersion":1, "id":"...", "overrides":{...} }`，整体替换用户覆盖项。空对象恢复清单默认值。不能修改未注册项。
+- `configure`：请求格式为 `{ "schemaVersion":1, "id":"...", "overrides":{...} }`，整体替换用户覆盖项。空对象恢复清单默认值。不能修改未注册项。`enabled:false` 验证请求及注册归属后可直接停用，不依赖作者清单、入口或其他扩展的依赖图；重新启用须完整校验。
 - `remove`：只删除一个指定 ID 的、本工具管理的注册文件。不删除程序、清单或用户数据。没有该项也返回成功。
-- `list`：只读返回每个 ID 的启用状态、版本、有效性和注册来源。默认不回显参数及私有配置。
+- `list`：只读返回每个 ID 的启用状态、版本、有效性和注册来源。默认不回显参数及私有配置。停用项不读取作者清单，版本为空；此时 `valid:true` 只表示停用记录有效。
 
 注册记录不是信任凭证。不会从下载目录自动发现并执行清单，不会按清单中的 URL 下载代码。作者更新已受信任目录内的入口，属于该扩展自身的更新责任。
 
 注册验证全图依赖。安装多个依赖时先注册被依赖项。注册记录损坏时不能覆盖猜测；可用 `list` 查看对应 ID，再检查 `CompanionRegistry\<ID>.json`。
+
+注册目录超限或无法完整读取时，停用和移除仍按精确 ID 操作一份可确认归属的记录。返回 `registry-read-incomplete` 警告，退出码为 10；不能完整列出受影响依赖。损坏或归属不明的目标记录仍拒绝写入和删除。
 
 停用、移除或降级被依赖项时，不级联修改其他扩展。操作结果以警告列出无法满足依赖的 ID，提交成功仍保留 `committed=true`；下次启动按 `skipped-dependency` 处理这些依赖项。
 
@@ -301,7 +305,7 @@ ChatGPTProxyLauncher.exe --launcher-chain --result <新文件绝对路径> --fee
 
 能力名按行为版本固定：`headless-deploy-v1`、`companion-registry-v1`、`ready-file-v1`、`tracked-retry-v1`、`chain-run-result-v1`。扩展先检查 `chainProtocolVersions` 和必需能力，再决定是否注册。只检查 EXE 文件名或版本大小不足以证明能力存在。
 
-`schemaVersion` 和 `protocolVersion` 独立于产品版本。v1 新字段不能在旧启动器上默默生效；发布新字段时同步新的协议版本或明确的能力。新启动器继续读取已承诺兼容的旧协议，不把未知大版本当作 v1 猜测执行。
+`schemaVersion` 和 `protocolVersion` 独立于产品版本。旧版拒绝公共对象中的未知字段；变更字段或既有语义时升级受影响的格式版本。新可选行为用新能力名协商，不因产品版本升高就假定支持。扩展私有设置放入 `config`。新启动器继续读取已承诺兼容的旧协议，不把未知大版本当作 v1 猜测执行。公共版本、能力和限制维护在 `AutomationContract.h`，变更时同步 Schema 与契约测试。
 
 规范 v1 不提供自动更新、持续心跳、远程健康 URL、服务安装或下载执行。扩展更新由作者负责。稳定清单路径、固定 ID 和独立用户覆盖项用于避免更新时重配参数。
 

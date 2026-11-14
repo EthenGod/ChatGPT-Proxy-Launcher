@@ -5,16 +5,17 @@
 
 namespace chain {
 using automation::Invalid;
+namespace rules = automation::contract;
 namespace {
 void OwnedRecord(const Record& r) {
     try {
         r.json.Fields({L"schemaVersion", L"managedBy", L"id", L"manifestPath", L"overrides"});
-        if (r.json.At(L"schemaVersion").Integer(1, 1) != 1 || r.json.At(L"managedBy").String() != L"ChatGPTProxyLauncher" || r.json.At(L"id").String() != r.id)
+        if (r.json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::RegistrySchema || r.json.At(L"managedBy").String() != rules::ManagedBy || r.json.At(L"id").String() != r.id)
             throw Invalid("foreign-registration");
     } catch (const Invalid&) { throw automation::IoError(ERROR_ALREADY_EXISTS); }
 }
 void AtomicRecord(const std::wstring& path, const std::string& bytes, const std::string* previous) {
-    if (bytes.size() > 65536) throw Invalid("registration-too-large");
+    if (bytes.size() > rules::JsonBytes) throw Invalid("registration-too-large");
     automation::CheckPlainPath(path);
     const auto folder = automation::ParentPath(path);
     const int error = SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
@@ -65,49 +66,75 @@ Json Summary(const Record& r) {
     if (r.error.empty()) { j[L"enabled"] = Json(r.entry.enabled); j[L"version"] = Json(r.entry.version); j[L"manifestPath"] = Json(r.entry.manifestPath); }
     return j;
 }
+void Warn(Json& warnings, PCWSTR code, const std::wstring& message = L"") {
+    auto warning = Json::Object(); warning[L"code"] = Json(code); warning[L"message"] = Json(message); warnings.array.push_back(warning);
+}
+Record ReadOwned(const std::wstring& path, const std::wstring& id, std::string& bytes) {
+    Record r; r.path = path; r.id = id; bytes = automation::ReadBytes(path);
+    r.json = automation::ParseJson(bytes); OwnedRecord(r); return r;
+}
 }
 Json RegistryCommand(const std::wstring& operation, const setup::Paths& paths, const std::wstring& manifest,
     const std::wstring& inputId, const Json& request, bool replace, bool& committed, Json& warnings) {
-    auto records = ReadRegistry(paths.defaultDirectory);
     auto data = Json::Object(); committed = false;
     if (operation == L"companion-list") {
+        const auto records = ReadRegistry(paths.defaultDirectory);
         data[L"entries"] = Json::Array(); for (const auto& r : records) data[L"entries"].array.push_back(Summary(r)); return data;
     }
     std::wstring id = inputId; Entry candidate; Json overrides = Json::Object();
     if (operation == L"companion-register") { candidate = ReadManifest(manifest); id = candidate.id; }
     else if (operation == L"companion-configure") {
         request.Fields({L"schemaVersion", L"id", L"overrides"});
-        if (request.At(L"schemaVersion").Integer(0, MAXDWORD) != 1) throw Invalid("unsupported-schema-version");
+        if (request.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::SetupApi) throw Invalid("unsupported-schema-version");
         id = request.At(L"id").String(128); overrides = request.At(L"overrides");
+        ValidateOverrides(overrides);
     }
     if (!ValidId(id)) throw Invalid("invalid-id");
+    const auto path = Join(Join(paths.defaultDirectory, rules::RegistryFolder), id + L".json");
+    const bool disabling = operation == L"companion-configure" && overrides.Has(L"enabled") && !overrides.At(L"enabled").Bool();
+    const bool recovery = disabling || operation == L"companion-remove";
+    std::vector<Record> records;
+    try { records = ReadRegistry(paths.defaultDirectory); }
+    catch (...) {
+        if (!recovery) throw;
+        // Recovery addresses exactly one owned record, without trusting the rest of the registry.
+        Warn(warnings, L"registry-read-incomplete");
+    }
     auto current = std::find_if(records.begin(), records.end(), [&](const Record& r) { return r.id == id; });
-    const bool exists = current != records.end();
+    bool exists = current != records.end();
     std::string previous;
-    if (exists) {
+    if (recovery) {
+        try {
+            auto owned = ReadOwned(path, id, previous);
+            if (exists) *current = std::move(owned);
+            else { records.push_back(std::move(owned)); current = records.end() - 1; exists = true; }
+        } catch (const automation::IoError& ex) {
+            if (ex.code != ERROR_FILE_NOT_FOUND && ex.code != ERROR_PATH_NOT_FOUND) throw;
+            exists = false;
+        }
+    } else if (exists) {
         OwnedRecord(*current); previous = automation::ReadBytes(current->path);
         if (automation::WriteJson(automation::ParseJson(previous)) != automation::WriteJson(current->json)) throw Invalid("registration-changed");
     }
-    const auto path = Join(Join(paths.defaultDirectory, L"CompanionRegistry"), id + L".json");
     data[L"id"] = Json(id);
     if (operation == L"companion-remove") {
         if (exists) { RemoveRecord(path, previous); committed = true; }
     } else {
         if (operation == L"companion-configure") {
             if (!exists) throw Invalid("not-registered");
-            candidate = ReadManifest(current->json.At(L"manifestPath").String(), overrides);
+            candidate = ReadRegisteredEntry(id, current->json.At(L"manifestPath").String(), overrides);
         } else if (exists) {
             if (!replace && !automation::SamePath(candidate.manifestPath, current->json.At(L"manifestPath").String())) throw automation::IoError(ERROR_ALREADY_EXISTS);
-            overrides = current->json.At(L"overrides"); candidate = ReadManifest(candidate.manifestPath, overrides);
+            overrides = current->json.At(L"overrides"); candidate = ReadRegisteredEntry(id, candidate.manifestPath, overrides);
         }
         if (candidate.id != id) throw Invalid("manifest-id-changed");
-        if (!exists && records.size() >= 32) throw Invalid("entry-limit");
+        if (!exists && records.size() >= rules::Entries) throw Invalid("entry-limit");
         if (candidate.enabled) CheckLegacy(paths, candidate);
         Record proposed; proposed.id = id; proposed.path = path; proposed.entry = candidate; proposed.json = Json::Object();
-        proposed.json[L"schemaVersion"] = Json::Number(1); proposed.json[L"managedBy"] = Json(L"ChatGPTProxyLauncher");
+        proposed.json[L"schemaVersion"] = Json::Number(rules::RegistrySchema); proposed.json[L"managedBy"] = Json(rules::ManagedBy);
         proposed.json[L"id"] = Json(id); proposed.json[L"manifestPath"] = Json(candidate.manifestPath); proposed.json[L"overrides"] = overrides;
         if (exists) *current = proposed; else records.push_back(proposed);
-        std::vector<size_t> order; if (!SortEntries(records, order)) throw Invalid("invalid-graph");
+        std::vector<size_t> order; if (candidate.enabled && !SortEntries(records, order)) throw Invalid("invalid-graph");
         if (candidate.enabled) for (const auto& dep : candidate.dependencies) {
             const auto found = std::find_if(records.begin(), records.end(), [&](const Record& r) { return r.id == dep.id; });
             if (found == records.end() || !found->error.empty() || !found->entry.enabled
@@ -120,7 +147,7 @@ Json RegistryCommand(const std::wstring& operation, const setup::Paths& paths, c
         if (!r.error.empty() || !r.entry.enabled || r.id == id) continue;
         for (const auto& dep : r.entry.dependencies) if (dep.id == id && (operation == L"companion-remove" || !candidate.enabled
             || (!dep.minimumVersion.empty() && CompareVersion(candidate.version, dep.minimumVersion) < 0))) {
-            auto warning = Json::Object(); warning[L"code"] = Json(L"dependency-unavailable"); warning[L"message"] = Json(r.id); warnings.array.push_back(warning);
+            Warn(warnings, L"dependency-unavailable", r.id);
         }
     }
     return data;

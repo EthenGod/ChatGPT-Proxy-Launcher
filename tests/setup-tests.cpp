@@ -174,7 +174,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     {
         const std::string expected = APP_VERSION_TEXT;
         const std::wstring current(expected.begin(), expected.end());
-        REQUIRE(ReadFileVersion(launcherArg) == current && ReadFileVersion(setupArg) == current);
+        REQUIRE(automation::ReadAppVersion(launcherArg) == current && automation::ReadAppVersion(setupArg) == current);
         const std::wstring base = Join(root, L"version 中文");
         REQUIRE(EnsureDirectory(base));
         Paths versionPaths{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), {}, {}};

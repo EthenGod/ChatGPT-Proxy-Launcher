@@ -127,7 +127,7 @@ class Reader {
     }
     bool Digit() const { return Peek() >= L'0' && Peek() <= L'9'; }
     Json Value(unsigned depth) {
-        Space(); if (depth > 16) throw Invalid("json-too-deep");
+        Space(); if (depth > contract::JsonDepth) throw Invalid("json-too-deep");
         const wchar_t c = Peek();
         if (c == L'"') return Json(String());
         if (c == L'{' || c == L'[') {
@@ -175,7 +175,7 @@ void AppendString(std::wstring& out, const std::wstring& value) {
     out += L'"';
 }
 void Append(std::wstring& out, const Json& j, unsigned depth) {
-    if (depth > 20) throw Invalid("json-too-deep");
+    if (depth > contract::OutputDepth) throw Invalid("json-too-deep");
     switch (j.type) {
     case Json::Type::Null: out += L"null"; break;
     case Json::Type::Boolean: out += j.boolean ? L"true" : L"false"; break;

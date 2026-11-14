@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include "AutomationContract.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -32,6 +33,6 @@ struct Json {
 };
 std::wstring FromUtf8(const std::string& text);
 std::string Utf8(const std::wstring& text);
-Json ParseJson(const std::string& bytes, size_t maximum = 65536);
+Json ParseJson(const std::string& bytes, size_t maximum = contract::JsonBytes);
 std::string WriteJson(const Json& value);
 }

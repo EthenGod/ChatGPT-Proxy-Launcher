@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "全链启动策略 v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "budgetMs", "feedback"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "budgetMs": {"type": "integer", "minimum": 1000, "maximum": 120000, "default": 60000},
+    "feedback": {"enum": ["notify", "quiet"], "default": "notify"}
+  },
+  "$comment": "文件最多 4096 UTF-8 字节。此预算包含启动与重试等待。notify 在链结束后最多再显示 10 秒。"
+}

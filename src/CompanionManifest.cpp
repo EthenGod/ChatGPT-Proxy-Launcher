@@ -7,6 +7,7 @@
 
 namespace chain {
 using automation::Invalid;
+namespace rules = automation::contract;
 std::wstring Join(const std::wstring& directory, const std::wstring& leaf) { if (directory.empty()) throw Invalid("empty-directory"); return directory + (directory.back() == L'\\' ? L"" : L"\\") + leaf; }
 bool ValidId(const std::wstring& id) {
     if (id.empty() || id.size() > 128 || id[0] < L'a' || id[0] > L'z' || id.find(L'.') == id.npos) return false;
@@ -35,9 +36,9 @@ std::array<unsigned long, 3> Version(const std::wstring& value) {
     return fields;
 }
 std::vector<std::wstring> Arguments(const Json& value) {
-    if (value.type != Json::Type::Array || value.array.size() > 128) throw Invalid("invalid-arguments");
+    if (value.type != Json::Type::Array || value.array.size() > rules::Arguments) throw Invalid("invalid-arguments");
     std::vector<std::wstring> args;
-    for (const auto& arg : value.array) args.push_back(arg.String(8192));
+    for (const auto& arg : value.array) args.push_back(arg.String(rules::ArgumentChars));
     return args;
 }
 std::wstring Relative(const std::wstring& base, const std::wstring& rel, bool directory) {
@@ -55,22 +56,40 @@ std::wstring Relative(const std::wstring& base, const std::wstring& rel, bool di
     if (a == INVALID_FILE_ATTRIBUTES || ((a & FILE_ATTRIBUTE_DIRECTORY) != 0) != directory) throw Invalid(directory ? "working-directory-missing" : "entry-missing");
     return full;
 }
+void ApplyOverrides(Entry& e, const Json& overrides) {
+    overrides.Fields({L"enabled", L"arguments", L"config", L"timeoutMs", L"maxAttempts"});
+    if (overrides.Has(L"enabled")) e.enabled = overrides.At(L"enabled").Bool();
+    if (overrides.Has(L"arguments")) e.arguments = Arguments(overrides.At(L"arguments"));
+    if (overrides.Has(L"config")) e.config = overrides.At(L"config");
+    if (overrides.Has(L"timeoutMs")) e.timeout = static_cast<DWORD>(overrides.At(L"timeoutMs").Integer(rules::TimeoutMinMs, rules::TimeoutMaxMs));
+    if (overrides.Has(L"maxAttempts")) e.attempts = static_cast<DWORD>(overrides.At(L"maxAttempts").Integer(1, rules::AttemptsMax));
+    if (e.config.type != Json::Type::Object) throw Invalid("config-must-be-object");
+}
 }
 int CompareVersion(const std::wstring& left, const std::wstring& right) { const auto a = Version(left), b = Version(right); return a == b ? 0 : a < b ? -1 : 1; }
+void ValidateOverrides(const Json& overrides) { Entry value; ApplyOverrides(value, overrides); }
+Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides) {
+    if (overrides.Has(L"enabled") && !overrides.At(L"enabled").Bool()) {
+        Entry e; e.id = id; e.manifestPath = automation::FullPath(manifest); ApplyOverrides(e, overrides); return e;
+    }
+    auto entry = ReadManifest(manifest, overrides);
+    if (entry.id != id) throw Invalid("manifest-id-changed");
+    return entry;
+}
 Entry ReadManifest(const std::wstring& file, const Json& overrides) {
     Entry e; e.manifestPath = automation::FullPath(file);
     const auto j = automation::ParseJson(automation::ReadBytes(e.manifestPath));
     j.Fields({L"schemaVersion", L"id", L"name", L"version", L"requires", L"entry", L"dependsOn", L"readiness", L"retry", L"config"});
-    if (j.At(L"schemaVersion").Integer(0, MAXDWORD) != 1) throw Invalid("unsupported-schema-version");
+    if (j.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::ManifestSchema) throw Invalid("unsupported-schema-version");
     e.id = j.At(L"id").String(128); if (!ValidId(e.id)) throw Invalid("invalid-id");
     e.name = j.At(L"name").String(80); if (e.name.empty()) throw Invalid("empty-name");
     e.version = j.At(L"version").String(32); Version(e.version);
     const auto& requirements = j.At(L"requires");
-    if (requirements.type != Json::Type::Array || requirements.array.size() > 16) throw Invalid("invalid-capabilities");
+    if (requirements.type != Json::Type::Array || requirements.array.size() > rules::Capabilities) throw Invalid("invalid-capabilities");
     std::set<std::wstring> capabilities;
     for (const auto& item : requirements.array) {
         const auto value = item.String(64);
-        if (value != L"ready-file-v1" && value != L"tracked-retry-v1" && value != L"chain-run-result-v1" && value != L"companion-registry-v1") throw Invalid("unsupported-capability");
+        if (!rules::SupportsManifestCapability(value)) throw Invalid("unsupported-capability");
         if (!capabilities.insert(value).second) throw Invalid("duplicate-capability");
     }
     const auto& entry = j.At(L"entry"); entry.Fields({L"runtime", L"path", L"workingDirectory", L"arguments", L"hostPath", L"window"});
@@ -105,7 +124,7 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides) {
         if (companions::FileKind(e.host.c_str()) != companions::Kind::Exe || !companions::HostFile(e.host)) throw Invalid("runtime-missing");
     }
     if (j.Has(L"dependsOn")) {
-        const auto& deps = j.At(L"dependsOn"); if (deps.type != Json::Type::Array || deps.array.size() > 31) throw Invalid("invalid-dependencies");
+        const auto& deps = j.At(L"dependsOn"); if (deps.type != Json::Type::Array || deps.array.size() >= rules::Entries) throw Invalid("invalid-dependencies");
         std::set<std::wstring> ids;
         for (const auto& dep : deps.array) {
             dep.Fields({L"id", L"minimumVersion"}); Dependency d; d.id = dep.At(L"id").String(128);
@@ -116,9 +135,9 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides) {
     }
     const auto& readiness = j.At(L"readiness"); const auto mode = readiness.At(L"mode").String();
     e.signal = mode == L"signal"; if (!e.signal && mode != L"exit-code") throw Invalid("invalid-readiness");
-    if (e.signal) { readiness.Fields({L"mode", L"timeoutMs"}); if (!capabilities.count(L"ready-file-v1")) throw Invalid("missing-ready-capability"); }
+    if (e.signal) { readiness.Fields({L"mode", L"timeoutMs"}); if (!capabilities.count(rules::ReadyCapability)) throw Invalid("missing-ready-capability"); }
     else readiness.Fields({L"mode", L"timeoutMs", L"successExitCodes"});
-    if (readiness.Has(L"timeoutMs")) e.timeout = static_cast<DWORD>(readiness.At(L"timeoutMs").Integer(1000, 30000));
+    if (readiness.Has(L"timeoutMs")) e.timeout = static_cast<DWORD>(readiness.At(L"timeoutMs").Integer(rules::TimeoutMinMs, rules::TimeoutMaxMs));
     if (readiness.Has(L"successExitCodes")) {
         const auto& codes = readiness.At(L"successExitCodes");
         if (codes.type != Json::Type::Array || codes.array.empty() || codes.array.size() > 16) throw Invalid("invalid-exit-codes");
@@ -128,22 +147,16 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides) {
     if (j.Has(L"retry")) {
         const auto& retry = j.At(L"retry"); retry.Fields({L"safe", L"maxAttempts", L"delayMs"});
         if (retry.Has(L"safe")) e.safe = retry.At(L"safe").Bool();
-        if (retry.Has(L"maxAttempts")) e.attempts = static_cast<DWORD>(retry.At(L"maxAttempts").Integer(1, 3));
-        if (retry.Has(L"delayMs")) e.delay = static_cast<DWORD>(retry.At(L"delayMs").Integer(250, 5000));
+        if (retry.Has(L"maxAttempts")) e.attempts = static_cast<DWORD>(retry.At(L"maxAttempts").Integer(1, rules::AttemptsMax));
+        if (retry.Has(L"delayMs")) e.delay = static_cast<DWORD>(retry.At(L"delayMs").Integer(rules::RetryMinMs, rules::RetryMaxMs));
     }
     if (j.Has(L"config")) e.config = j.At(L"config");
-    overrides.Fields({L"enabled", L"arguments", L"config", L"timeoutMs", L"maxAttempts"});
-    if (overrides.Has(L"enabled")) e.enabled = overrides.At(L"enabled").Bool();
-    if (overrides.Has(L"arguments")) e.arguments = Arguments(overrides.At(L"arguments"));
-    if (overrides.Has(L"config")) e.config = overrides.At(L"config");
-    if (overrides.Has(L"timeoutMs")) e.timeout = static_cast<DWORD>(overrides.At(L"timeoutMs").Integer(1000, 30000));
-    if (overrides.Has(L"maxAttempts")) e.attempts = static_cast<DWORD>(overrides.At(L"maxAttempts").Integer(1, 3));
-    if (e.config.type != Json::Type::Object) throw Invalid("config-must-be-object");
-    if ((e.attempts > 1 && !e.safe) || (e.safe && !capabilities.count(L"tracked-retry-v1"))) throw Invalid("unsafe-retry");
+    ApplyOverrides(e, overrides);
+    if ((e.attempts > 1 && !e.safe) || (e.safe && !capabilities.count(rules::RetryCapability))) throw Invalid("unsafe-retry");
     return e;
 }
 std::vector<Record> ReadRegistry(const std::wstring& root) {
-    const auto folder = Join(root, L"CompanionRegistry"); automation::CheckPlainPath(folder);
+    const auto folder = Join(root, rules::RegistryFolder); automation::CheckPlainPath(folder);
     std::vector<Record> records;
     WIN32_FIND_DATAW data{}; HANDLE raw = FindFirstFileW(Join(folder, L"*.json").c_str(), &data);
     if (raw == INVALID_HANDLE_VALUE) {
@@ -152,16 +165,15 @@ std::vector<Record> ReadRegistry(const std::wstring& root) {
     }
     struct Find { HANDLE value; ~Find() { FindClose(value); } } find{raw};
     do {
-        if (records.size() == 32) throw Invalid("entry-limit");
+        if (records.size() == rules::Entries) throw Invalid("entry-limit");
         Record r; r.path = Join(folder, data.cFileName); r.id = data.cFileName; r.id.resize(r.id.size() - 5);
         try {
             if (!ValidId(r.id) || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) throw Invalid("invalid-registration-file");
             r.json = automation::ParseJson(automation::ReadBytes(r.path));
             r.json.Fields({L"schemaVersion", L"managedBy", L"id", L"manifestPath", L"overrides"});
-            if (r.json.At(L"schemaVersion").Integer(0, MAXDWORD) != 1) throw Invalid("unsupported-schema-version");
-            if (r.json.At(L"managedBy").String() != L"ChatGPTProxyLauncher" || r.json.At(L"id").String() != r.id) throw Invalid("foreign-registration");
-            r.entry = ReadManifest(r.json.At(L"manifestPath").String(), r.json.At(L"overrides"));
-            if (r.entry.id != r.id) throw Invalid("manifest-id-changed");
+            if (r.json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::RegistrySchema) throw Invalid("unsupported-schema-version");
+            if (r.json.At(L"managedBy").String() != rules::ManagedBy || r.json.At(L"id").String() != r.id) throw Invalid("foreign-registration");
+            r.entry = ReadRegisteredEntry(r.id, r.json.At(L"manifestPath").String(), r.json.At(L"overrides"));
         } catch (const Invalid& ex) { r.error = automation::FromUtf8(ex.what()); }
         catch (const automation::IoError&) { r.error = L"read-failed"; }
         records.push_back(std::move(r));

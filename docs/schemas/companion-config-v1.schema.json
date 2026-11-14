@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "扩展用户配置请求 v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "overrides"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "id": {"$ref": "companion-v1.schema.json#/$defs/id"},
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "arguments": {"$ref": "companion-v1.schema.json#/$defs/arguments"},
+        "config": {"type": "object"},
+        "timeoutMs": {"type": "integer", "minimum": 1000, "maximum": 30000},
+        "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 3}
+      }
+    }
+  },
+  "$comment": "overrides 整体替换，不合并旧覆盖项。enabled=false 只验证本请求与注册归属，不要求作者清单可读。重新启用时验证全部有效配置。"
+}

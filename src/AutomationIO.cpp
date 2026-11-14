@@ -32,7 +32,8 @@ std::wstring FullPath(const std::wstring& input) {
         for (auto& c : stem) c = static_cast<wchar_t>(towupper(c));
         if (part.empty() || part.back() == L'.' || part.back() == L' '
             || stem == L"CON" || stem == L"PRN" || stem == L"AUX" || stem == L"NUL"
-            || (stem.size() == 4 && (stem.substr(0, 3) == L"COM" || stem.substr(0, 3) == L"LPT") && stem[3] >= L'1' && stem[3] <= L'9'))
+            || (stem.size() == 4 && (stem.substr(0, 3) == L"COM" || stem.substr(0, 3) == L"LPT")
+                && ((stem[3] >= L'1' && stem[3] <= L'9') || stem[3] == L'\u00b9' || stem[3] == L'\u00b2' || stem[3] == L'\u00b3')))
             throw Invalid("invalid-path-component");
         if (end == full.npos) break;
         start = end + 1;

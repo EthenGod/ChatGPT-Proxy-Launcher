@@ -3,6 +3,7 @@
 #include "SetupResources.h"
 #include "AppVersion.h"
 #include "CompanionManifest.h"
+#include "DeploymentDiscovery.h"
 #include <shellapi.h>
 #include <objbase.h>
 #include <set>
@@ -10,9 +11,10 @@
 namespace setup {
 using automation::Json;
 using automation::Invalid;
+namespace rules = automation::contract;
 namespace {
 Json NewResult(const std::wstring& operation) {
-    auto j = Json::Object(); j[L"schemaVersion"] = Json::Number(1); j[L"operation"] = Json(operation);
+    auto j = Json::Object(); j[L"schemaVersion"] = Json::Number(rules::SetupApi); j[L"operation"] = Json(operation);
     j[L"status"] = Json(L"success"); j[L"exitCode"] = Json::Number(0); j[L"code"] = Json(L"ok");
     j[L"committed"] = Json(false); j[L"stage"] = Json(L"preflight"); j[L"nativeError"] = Json::Number(0);
     j[L"warnings"] = Json::Array(); j[L"actionsRequired"] = Json::Array(); j[L"data"] = Json::Object(); return j;
@@ -47,10 +49,10 @@ void CheckResultLocation(const AutomationCommand& c, const Paths& p, const Optio
     if (c.resultPath.empty()) throw Invalid("missing-result-path");
     const auto output = automation::FullPath(c.resultPath);
     if (output.size() < 5 || _wcsicmp(output.c_str() + output.size() - 5, L".json")) throw Invalid("result-must-be-json-file");
-    const auto registry = Join(p.defaultDirectory, L"CompanionRegistry") + L"\\";
+    const auto registry = Join(p.defaultDirectory, rules::RegistryFolder) + L"\\";
     if (output.size() >= registry.size() && automation::SamePath(output.substr(0, registry.size()), registry)) throw Invalid("result-is-registration");
     for (const auto& path : {c.requestPath, c.manifestPath, p.settingsLink, p.startupLink, p.desktopLink, p.codexEnvFile,
-            Join(p.defaultDirectory, L"discovery.json"), Join(p.defaultDirectory, L"companion-policy.json"), Join(p.defaultDirectory, LauncherName)}) {
+            Join(p.defaultDirectory, rules::DiscoveryFile), Join(p.defaultDirectory, rules::PolicyFile), Join(p.defaultDirectory, LauncherName)}) {
         if (!path.empty() && automation::SamePath(output, automation::FullPath(path))) throw Invalid("result-is-managed-file");
     }
     if (options && automation::SamePath(output, automation::FullPath(Join(options->directory, LauncherName)))) throw Invalid("result-is-launcher");
@@ -69,7 +71,7 @@ Json PlanData(const Options& o, const Paths& paths, const Json& request) {
     change(L"settings", L"save", paths.settingsLink);
     change(L"startup", o.startup ? L"save" : L"remove-if-managed", paths.startupLink);
     change(L"desktop", o.desktop ? L"save" : L"remove-if-managed", paths.desktopLink);
-    change(L"discovery", L"save", Join(paths.defaultDirectory, L"discovery.json"));
+    change(L"discovery", L"save", Join(paths.defaultDirectory, rules::DiscoveryFile));
     if (o.codexEnv) change(L"codex-env", L"merge", paths.codexEnvFile);
     j[L"actions"] = request.Has(L"actions") ? request.At(L"actions") : Json::Object();
     return j;
@@ -88,7 +90,7 @@ void ParseAutomationCommand(const std::wstring& tail, AutomationCommand& command
         if (args.size() < 3) throw Invalid("missing-companion-operation");
         command.operation += L"-" + args[2]; firstOption = 3;
     }
-    auto& request = command.request; request[L"schemaVersion"] = Json::Number(1);
+    auto& request = command.request; request[L"schemaVersion"] = Json::Number(rules::SetupApi);
     auto settings = Json::Object(), actions = Json::Object(), extra = Json::Array();
     std::set<std::wstring> seen; bool flat = false, clearExtra = false;
     for (size_t i = firstOption; i < args.size(); ++i) {
@@ -138,7 +140,7 @@ void ParseAutomationCommand(const std::wstring& tail, AutomationCommand& command
 }
 Options ResolveAutomationOptions(const Json& request, const Paths& paths, const Loaded& loaded) {
     request.Fields({L"schemaVersion", L"base", L"settings", L"actions"});
-    if (request.At(L"schemaVersion").Integer(0, MAXDWORD) != 1) throw Invalid("unsupported-schema-version");
+    if (request.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::SetupApi) throw Invalid("unsupported-schema-version");
     const auto base = request.Has(L"base") ? request.At(L"base").String() : L"preserve";
     if (base != L"preserve" && base != L"defaults") throw Invalid("invalid-base");
     Options options;
@@ -166,9 +168,9 @@ Options ResolveAutomationOptions(const Json& request, const Paths& paths, const 
         }
         if (s.Has(L"extraArguments")) {
             const auto& list = s.At(L"extraArguments");
-            if (list.type != Json::Type::Array || list.array.size() > 128) throw Invalid("invalid-argument-array");
+            if (list.type != Json::Type::Array || list.array.size() > rules::Arguments) throw Invalid("invalid-argument-array");
             options.extra.clear();
-            for (const auto& arg : list.array) { if (!options.extra.empty()) options.extra += L' '; options.extra += QuoteArgument(arg.String(8192)); }
+            for (const auto& arg : list.array) { if (!options.extra.empty()) options.extra += L' '; options.extra += QuoteArgument(arg.String(rules::ArgumentChars)); }
         }
     }
     if (request.Has(L"actions")) {
@@ -196,12 +198,14 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
         output.Reserve(command.resultPath);
         auto request = command.request;
         if (!command.requestPath.empty()) request = automation::ParseJson(automation::ReadBytes(command.requestPath));
-        if (command.operation.find(L"companion-") == 0) {
+        if (command.operation.find(L"companion-") == 0 || command.operation == L"info") {
             automation::UserLock lock; const DWORD error = lock.Acquire(paths.settingsLink);
             if (error) { Failure(result, error == ERROR_BUSY ? 31 : 50, L"busy", error); result[L"stage"] = Json(L"lock"); }
             else {
-                result[L"data"] = chain::RegistryCommand(command.operation, paths, command.manifestPath, command.entryId, request,
-                    command.replaceManifest, registryCommitted, result[L"warnings"]);
+                result[L"data"] = command.operation == L"info"
+                    ? automation::ReadDeploymentInfo(paths.defaultDirectory, paths.settingsLink)
+                    : chain::RegistryCommand(command.operation, paths, command.manifestPath, command.entryId, request,
+                        command.replaceManifest, registryCommitted, result[L"warnings"]);
                 result[L"committed"] = Json(registryCommitted);
                 if (!result[L"warnings"].array.empty()) { result[L"status"] = Json(L"success-with-warnings"); result[L"exitCode"] = Json::Number(10); }
             }
@@ -211,8 +215,8 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
         Loaded initial; auto status = Load(paths, initial);
         if (!status) { FromCore(result, status); }
         Options options;
-        if (status && command.operation != L"info") options = ResolveAutomationOptions(request, paths, initial);
-        CheckResultLocation(command, paths, status && command.operation != L"info" ? &options : nullptr);
+        if (status) options = ResolveAutomationOptions(request, paths, initial);
+        CheckResultLocation(command, paths, status ? &options : nullptr);
         if (!initial.managedTarget.empty() && automation::SamePath(command.resultPath, automation::FullPath(initial.managedTarget))) throw Invalid("result-is-installed-launcher");
         if (status) {
             automation::UserLock lock;
@@ -221,22 +225,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
             else {
                 Loaded loaded; status = Load(paths, loaded);
                 if (!status) FromCore(result, status);
-                else if (command.operation == L"info") {
-                    auto data = Json::Object();
-                    data[L"state"] = Json(loaded.deployed ? L"legacy" : loaded.hasSettings ? L"missing" : L"not-deployed");
-                    data[L"launcherPath"] = Json(loaded.managedTarget); data[L"launcherVersion"] = Json(loaded.deployedVersion);
-                    const auto discovery = Join(paths.defaultDirectory, L"discovery.json");
-                    if (GetFileAttributesW(discovery.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                        try {
-                            auto record = automation::ParseJson(automation::ReadBytes(discovery));
-                            if (record.At(L"schemaVersion").Integer(1, 1) != 1 || record.At(L"managedBy").String() != L"ChatGPTProxyLauncher"
-                                || !automation::SamePath(record.At(L"launcherPath").String(), loaded.managedTarget)
-                                || record.At(L"launcherVersion").String() != loaded.deployedVersion) throw Invalid("invalid-discovery");
-                            data[L"discovery"] = record; if (loaded.deployed) data[L"state"] = Json(L"managed");
-                        } catch (...) { data[L"state"] = Json(L"invalid"); }
-                    }
-                    result[L"data"] = data;
-                } else {
+                else {
                     options = ResolveAutomationOptions(request, paths, loaded);
                     CheckResultLocation(command, paths, &options);
                     status = Preflight(paths, options, payload);

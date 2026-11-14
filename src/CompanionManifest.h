@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "AutomationIO.h"
+#include "SetupCore.h"
 #include "StartupApps.h"
 
 namespace chain {
@@ -13,7 +14,7 @@ struct Entry {
     std::vector<Dependency> dependencies;
     Json config = Json::Object();
     bool enabled = true, signal = true, safe = false, hidden = false;
-    DWORD timeout = 15000, attempts = 1, delay = 1000;
+    DWORD timeout = automation::contract::TimeoutDefaultMs, attempts = 1, delay = automation::contract::RetryDefaultMs;
     std::vector<DWORD> exitCodes{0};
 };
 struct Record { std::wstring id, path, error; Entry entry; Json json; };
@@ -21,6 +22,9 @@ std::wstring Join(const std::wstring& directory, const std::wstring& leaf);
 bool ValidId(const std::wstring& id);
 int CompareVersion(const std::wstring& left, const std::wstring& right);
 Entry ReadManifest(const std::wstring& file, const Json& overrides = Json::Object());
+void ValidateOverrides(const Json& overrides);
+// Disabled registrations remain manageable even when their package is unavailable.
+Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides);
 std::vector<Record> ReadRegistry(const std::wstring& root);
 bool SortEntries(const std::vector<Record>& records, std::vector<size_t>& order);
 Json RegistryCommand(const std::wstring& operation, const setup::Paths& paths, const std::wstring& manifest,

@@ -2,7 +2,7 @@
 #include "SetupCore.h"
 #include "CodexEnv.h"
 #include "StartupApps.h"
-#include "AutomationIO.h"
+#include "DeploymentDiscovery.h"
 #include "AppVersion.h"
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -49,25 +49,7 @@ Result EnsureDirectory(const std::wstring& path) {
     return Fail(static_cast<DWORD>(error), L"无法创建目录：" + path);
 }
 struct Snapshot { bool exists = false; std::vector<BYTE> data; };
-std::wstring ReadFileVersion(const std::wstring& path) {
-    // Read metadata only. Never start the deployed executable to ask for its version.
-    DWORD ignored = 0;
-    const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
-    if (!size || size > 1024 * 1024) return {};
-    std::vector<BYTE> data(size);
-    if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data())) return {};
-    LPVOID value = nullptr;
-    UINT length = 0;
-    if (!VerQueryValueW(data.data(), L"\\", &value, &length) || !value || length < sizeof(VS_FIXEDFILEINFO)) return {};
-    VS_FIXEDFILEINFO info{};
-    CopyMemory(&info, value, sizeof(info));
-    if (info.dwSignature != VS_FFI_SIGNATURE || info.dwFileType != VFT_APP
-        || (!info.dwFileVersionMS && !info.dwFileVersionLS)) return {};
-    std::wstring version = std::to_wstring(HIWORD(info.dwFileVersionMS)) + L"."
-        + std::to_wstring(LOWORD(info.dwFileVersionMS)) + L"." + std::to_wstring(HIWORD(info.dwFileVersionLS));
-    if (LOWORD(info.dwFileVersionLS)) version += L"." + std::to_wstring(LOWORD(info.dwFileVersionLS));
-    return version;
-}
+
 Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
     file = {};
     Handle handle;
@@ -183,7 +165,7 @@ Result GetPaths(Paths& paths) {
     if (FAILED(hr)) return Hr(hr, L"无法获取用户程序目录。");
     paths.defaultDirectory = Join(local, companions::Root);
     CoTaskMemFree(local);
-    paths.settingsLink = Join(paths.defaultDirectory, L"Launcher settings.lnk");
+    paths.settingsLink = Join(paths.defaultDirectory, automation::contract::SettingsLink);
     hr = SHGetKnownFolderPath(FOLDERID_Startup, 0, nullptr, &startup);
     if (FAILED(hr)) return Hr(hr, L"无法获取当前用户的启动文件夹。");
     paths.startupLink = Join(startup, LinkName);
@@ -351,7 +333,7 @@ Result Load(const Paths& paths, Loaded& loaded) {
         if (!parsed) loaded.notice = parsed.message;
         const DWORD a = GetFileAttributesW(loaded.managedTarget.c_str());
         loaded.deployed = a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
-        if (loaded.deployed) loaded.deployedVersion = ReadFileVersion(loaded.managedTarget);
+        if (loaded.deployed) loaded.deployedVersion = automation::ReadAppVersion(loaded.managedTarget);
     } else {
         // These are form defaults, not a statement that Windows startup is already configured.
         loaded.options.startup = true;
@@ -383,7 +365,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     if (!result) return result;
     const std::wstring target = Join(directory, LauncherName);
     Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv, oldDiscovery;
-    const auto discoveryPath = Join(paths.defaultDirectory, L"discovery.json");
+    const auto discoveryPath = Join(paths.defaultDirectory, automation::contract::DiscoveryFile);
     try {
         for (const auto& path : {directory, paths.settingsLink, paths.startupLink, discoveryPath}) automation::CheckPlainPath(path);
         if (options.desktop && !paths.desktopLink.empty()) automation::CheckPlainPath(paths.desktopLink);
@@ -394,7 +376,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     if (oldDiscovery.exists) {
         try {
             const auto record = automation::ParseJson(std::string(oldDiscovery.data.begin(), oldDiscovery.data.end()));
-            if (record.At(L"schemaVersion").Integer(1, 1) != 1 || record.At(L"managedBy").String() != L"ChatGPTProxyLauncher")
+            if (record.At(L"schemaVersion").Integer(0, MAXDWORD) != automation::contract::DiscoverySchema || record.At(L"managedBy").String() != automation::contract::ManagedBy)
                 return Conflict(L"发现信息文件不属于本工具。", paths.defaultDirectory);
         } catch (...) { return Conflict(L"发现信息文件无法安全读取，未覆盖。", paths.defaultDirectory); }
     }
@@ -492,17 +474,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, L"Codex 的 .env 保存校验失败。"));
     }
     try {
-        auto record = automation::Json::Object();
-        record[L"schemaVersion"] = automation::Json::Number(1);
-        record[L"managedBy"] = automation::Json(L"ChatGPTProxyLauncher");
-        record[L"launcherPath"] = automation::Json(target);
-        record[L"launcherVersion"] = automation::Json(automation::FromUtf8(APP_VERSION_TEXT));
-        auto versions = automation::Json::Array(); versions.array.push_back(automation::Json::Number(1));
-        record[L"setupApiVersions"] = versions;
-        record[L"chainProtocolVersions"] = versions;
-        auto capabilities = automation::Json::Array();
-        for (const auto capability : {L"headless-deploy-v1", L"companion-registry-v1", L"ready-file-v1", L"tracked-retry-v1", L"chain-run-result-v1"}) capabilities.array.emplace_back(capability);
-        record[L"capabilities"] = capabilities;
+        const auto record = automation::MakeDiscoveryRecord(target, automation::FromUtf8(APP_VERSION_TEXT));
         const auto text = automation::WriteJson(record);
         const std::vector<BYTE> discoveryBytes(text.begin(), text.end());
         result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);

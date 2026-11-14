@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
-#include "SetupCore.h"
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include "AutomationJson.h"
 
 namespace automation {
@@ -20,7 +26,7 @@ std::wstring FullPath(const std::wstring& path);
 std::wstring ParentPath(const std::wstring& path);
 std::wstring Quote(const std::wstring& value);
 void CheckPlainPath(const std::wstring& path); // Check existing path components; no writes.
-std::string ReadBytes(const std::wstring& path, size_t maximum = 65536);
+std::string ReadBytes(const std::wstring& path, size_t maximum = contract::JsonBytes);
 void WriteBytes(HANDLE file, const std::string& bytes);
 class ResultFile {
     Handle file;
@@ -34,6 +40,6 @@ class UserLock {
     bool owned = false;
 public:
     ~UserLock() { if (owned) ReleaseMutex(mutex.value); }
-    DWORD Acquire(const std::wstring& identity, DWORD waitMs = 5000);
+    DWORD Acquire(const std::wstring& identity, DWORD waitMs = contract::LockWaitMs);
 };
 }
