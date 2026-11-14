@@ -515,6 +515,11 @@ static int LanguageTests(App& app, PCWSTR folder) {
     }
     app.LanguageMenu(); REQUIRE(app.languagePopup);
     REQUIRE(SendMessageW(app.window, WM_MOUSEACTIVATE, 0, 0) == MA_ACTIVATEANDEAT && !app.languagePopup);
+    app.ScrollTo(0); app.LanguageMenu(); REQUIRE(app.languagePopup);
+    app.ScrollTo(app.S(32));
+    const bool closedOnScroll = !app.languagePopup;
+    if (!closedOnScroll) puts("FAIL language popup remained open after its anchor scrolled");
+    app.CloseLanguageMenu(false); app.ScrollTo(0);
     app.LanguageMenu(); REQUIRE(app.languagePopup); app.Layout(); REQUIRE(!app.languagePopup);
     app.LanguageMenu(); REQUIRE(app.languagePopup); app.Theme(); REQUIRE(!app.languagePopup);
     app.LanguageMenu(); REQUIRE(app.languagePopup);
@@ -527,7 +532,20 @@ static int LanguageTests(App& app, PCWSTR folder) {
     SendMessageW(list, WM_LBUTTONDOWN, MK_LBUTTON, point); SendMessageW(list, WM_LBUTTONUP, 0, point);
     REQUIRE(!app.languagePopup && storedLanguage == L"zh-CN");
     languageWriteResult = ERROR_ACCESS_DENIED; app.ChangeLanguage(1);
-    REQUIRE(app.Text(Footer) == l10n::Text("setup.language.unsaved")); languageWriteResult = ERROR_SUCCESS;
+    REQUIRE(app.Text(Footer).find(l10n::Text("setup.language.unsaved")) != std::wstring::npos);
+    // A preference warning must not replace the deployment's quit/reopen instruction.
+    app.savedThisSession = true; app.dirty = false; app.envPreferenceWarning = true;
+    bool completionPreserved = true;
+    for (size_t i = 0; i < l10n::Count(); ++i) for (const auto key : {"setup.quit.closed", "setup.quit.manual"}) {
+        app.completionKey = key; app.ChangeLanguage(i + 1);
+        const auto expected = std::wstring(l10n::Text(key)) + l10n::Text("setup.status.envunsaved") + L"\n" + l10n::Text("setup.language.unsaved");
+        completionPreserved = completionPreserved && app.Text(Footer) == expected;
+        REQUIRE(WrappedTextFits(app.Get(Footer), app.fonts[4], app.Text(Footer)) && FooterAligned(app));
+    }
+    if (!completionPreserved) puts("FAIL language preference warning replaced the ChatGPT completion instruction");
+    REQUIRE(closedOnScroll && completionPreserved);
+    app.savedThisSession = false; app.dirty = true; app.envPreferenceWarning = false; app.completionKey.clear();
+    languageWriteResult = ERROR_SUCCESS; app.ChangeLanguage(1);
     app.busy = true; app.Refresh(false); app.ChangeLanguage(2);
     REQUIRE(!IsWindowEnabled(app.Get(LanguageButton)) && !wcscmp(l10n::Current().tag, L"zh-CN"));
     app.busy = false; app.detectingPort = true; app.Refresh(false); app.ChangeLanguage(2);

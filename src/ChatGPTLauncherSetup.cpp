@@ -600,7 +600,8 @@ void App::ChangeLanguage(size_t menuIndex) {
     if (busy || detectingPort || menuIndex > l10n::Count()) return;
     if (!menuIndex) l10n::UseSystem(); else l10n::Select(l10n::At(menuIndex - 1).tag);
     TranslateControls();
-    if (!SaveLanguagePreference()) Set(Footer, l10n::Text("setup.language.unsaved"));
+    // Keep deployment/quit instructions visible if only the appearance preference fails.
+    if (!SaveLanguagePreference()) Set(Footer, Text(Footer) + L"\n" + l10n::Text("setup.language.unsaved"));
 }
 void App::TranslateControls() {
     // Change captions only. Do not restore options, overwrite edits or reset dirty state.
@@ -736,6 +737,7 @@ void App::ScrollTo(int position) {
     position = std::clamp(position, 0, std::max(0, contentHeight - static_cast<int>(viewport.bottom)));
     const int delta = scroll - position;
     if (!delta) return;
+    CloseLanguageMenu(false);
     if (tooltip) SendMessageW(tooltip, TTM_POP, 0, 0);
     scroll = position;
     // Translate every body child, including those currently outside the clipping area.
