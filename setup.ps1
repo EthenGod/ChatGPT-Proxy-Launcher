@@ -77,36 +77,36 @@ param([switch]$Headless, [string]$Request, [string]$Result,
     $outcome = [ordered]@{schemaVersion=1; operation=$Operation; status='error'; exitCode=20; code='invalid-request';
         committed=$false; stage='parse'; nativeError=0; warnings=@(); actionsRequired=@(); data=@{}}
     try {
-      if ($Request -or $Result -or $Operation -ne 'deploy') {
-        if (!$Headless) { throw 'Parameters require -Headless.' }
-      }
-      if ($Headless) {
-        $Result = Get-SetupLocalPath $Result
-        if ([IO.Path]::GetExtension($Result) -ine '.json') { throw 'Result must be a new .json file.' }
-        $managedRoot = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'ChatGPTProxyLauncher') + '\'
-        if ($Result.StartsWith($managedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Result cannot be inside the managed directory.' }
-        if ($Operation -ne 'info') { $Request = Get-SetupLocalPath $Request }
-        elseif ($Request) { throw 'info does not accept -Request.' }
-        if ($Request -and $Request -ieq $Result) { throw 'Request and Result must differ.' }
-        $phase = 'result'
-        $resultStream = [IO.File]::Open($Result, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-        $phase = 'transport'
-        if ($Request -and (![IO.File]::Exists($Request) -or (Get-Item -LiteralPath $Request).Length -gt 65536)) { throw 'Request is missing or too large.' }
-      }
-      $tag = Invoke-SetupProgress {
-        Show-SetupStage ([regex]::Unescape('\u6b63\u5728\u83b7\u53d6\u6700\u65b0\u7248\u672c'))
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 30
-        $tag = [string]$release.tag_name
-        if ($tag -cnotmatch '\Av[0-9]+(?:\.[0-9]+){2,3}\z') { throw 'Unexpected release tag. Setup was not started.' }
-        return $tag
-    }
-    $base = "https://github.com/$repo/releases/download/$tag"
-    $name = 'ChatGPTLauncherSetup.exe'
-    $folder = Join-Path $env:TEMP ('ChatGPTLauncherSetup-' + [guid]::NewGuid().ToString('N'))
-    $null = New-Item -ItemType Directory -Path $folder
-    $ownedFolder = $true
-    $sums = Join-Path $folder 'SHA256SUMS.txt'
-    $exe = Join-Path $folder $name
+        if ($Request -or $Result -or $Operation -ne 'deploy') {
+            if (!$Headless) { throw 'Parameters require -Headless.' }
+        }
+        if ($Headless) {
+            $Result = Get-SetupLocalPath $Result
+            if ([IO.Path]::GetExtension($Result) -ine '.json') { throw 'Result must be a new .json file.' }
+            $managedRoot = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'ChatGPTProxyLauncher') + '\'
+            if ($Result.StartsWith($managedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Result cannot be inside the managed directory.' }
+            if ($Operation -ne 'info') { $Request = Get-SetupLocalPath $Request }
+            elseif ($Request) { throw 'info does not accept -Request.' }
+            if ($Request -and $Request -ieq $Result) { throw 'Request and Result must differ.' }
+            $phase = 'result'
+            $resultStream = [IO.File]::Open($Result, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $phase = 'transport'
+            if ($Request -and (![IO.File]::Exists($Request) -or (Get-Item -LiteralPath $Request).Length -gt 65536)) { throw 'Request is missing or too large.' }
+        }
+        $tag = Invoke-SetupProgress {
+            Show-SetupStage ([regex]::Unescape('\u6b63\u5728\u83b7\u53d6\u6700\u65b0\u7248\u672c'))
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 30
+            $tag = [string]$release.tag_name
+            if ($tag -cnotmatch '\Av[0-9]+(?:\.[0-9]+){2,3}\z') { throw 'Unexpected release tag. Setup was not started.' }
+            return $tag
+        }
+        $base = "https://github.com/$repo/releases/download/$tag"
+        $name = 'ChatGPTLauncherSetup.exe'
+        $folder = Join-Path $env:TEMP ('ChatGPTLauncherSetup-' + [guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $folder
+        $ownedFolder = $true
+        $sums = Join-Path $folder 'SHA256SUMS.txt'
+        $exe = Join-Path $folder $name
         $nativeResult = Join-Path $folder 'native-result.json'
         if (!$Headless) { Write-Host "Downloading ChatGPT Launcher Setup $tag ..." }
         $setupProcess = Invoke-SetupProgress {
@@ -129,7 +129,7 @@ param([switch]$Headless, [string]$Request, [string]$Result,
                 Show-SetupStage -Completed
                 if ($Headless) {
                     $version = [version](Get-Item -LiteralPath $exe).VersionInfo.FileVersion
-                    if ($version -lt [version]'1.0.7') { throw 'Downloaded setup does not support headless deployment.' }
+                    if ($version -lt [version]'1.1.0') { throw 'Downloaded setup does not support headless deployment.' }
                     $arguments = @('--headless', $Operation, '--result', ('"' + $nativeResult + '"'))
                     if ($Request) { $arguments += @('--request', ('"' + $Request + '"')) }
                     Start-Process -FilePath $exe -WorkingDirectory $folder -ArgumentList $arguments -WindowStyle Hidden -PassThru

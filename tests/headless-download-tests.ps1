@@ -8,18 +8,18 @@ $requestFile = Join-Path $testRoot 'request.json'
 $fixture = [Text.Encoding]::ASCII.GetBytes('mock setup')
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-','') } finally { $sha.Dispose() }
-$calls = @{launch=0; folder=$null; version='1.0.7'; arguments=$null}
+$calls = @{launch=0; folder=$null; version='1.1.0'; arguments=$null}
 function Write-Host { throw 'Headless wrote to the host' }
 function Write-Progress { throw 'Headless showed progress' }
 function Start-Sleep { throw 'Headless waited for completion text' }
 function Invoke-RestMethod($Uri, $TimeoutSec) {
     if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Headless progress enabled' }
     if ($scenario -eq 'offline') { throw 'offline' }
-    return @{tag_name='v1.0.7'}
+    return @{tag_name='v1.1.0'}
 }
 function Invoke-WebRequest([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec) {
     $calls.folder = Split-Path $OutFile
-    if ($Uri -notlike 'https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.0.7/*') { throw 'Tag changed' }
+    if ($Uri -notlike 'https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.1.0/*') { throw 'Tag changed' }
     if ($OutFile.EndsWith('.txt')) { [IO.File]::WriteAllText($OutFile, "$hash  ChatGPTLauncherSetup.exe") }
     else { [IO.File]::WriteAllBytes($OutFile, $fixture); if ($scenario -eq 'checksum') { [IO.File]::AppendAllText($OutFile, 'wrong') } }
 }
@@ -45,8 +45,9 @@ $savedTemp = $env:TEMP
 try {
     $env:TEMP = $testRoot
     $entry = Join-Path $ProjectRoot 'setup.ps1'
-    foreach ($scenario in @('ok','warning','offline','checksum','old','crash','mismatch','keep')) {
-        $calls.folder=$null; $calls.version = if ($scenario -eq 'old') { '1.0.6' } else { '1.0.7' }
+    foreach ($scenario in @('ok','warning','offline','checksum','old','development','invalid-version','crash','mismatch','keep')) {
+        $calls.folder=$null
+        $calls.version = switch ($scenario) { 'old' { '1.0.6' } 'development' { '1.0.7' } 'invalid-version' { 'unknown' } default { '1.1.0' } }
         $before = $calls.launch
         $output = Join-Path $testRoot ($scenario + '.json')
         $values = @(& $entry -Headless -Request $requestFile -Result $output)

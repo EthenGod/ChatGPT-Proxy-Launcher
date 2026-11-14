@@ -251,6 +251,25 @@ void LegacyResult(PCWSTR file, DWORD error) {
     legacyResults->array.push_back(Item(L"legacy:" + std::wstring(leaf), error == ERROR_TIMEOUT ? L"skipped-budget" : error ? L"failed" : L"started-unverified", error == ERROR_TIMEOUT ? L"budget-exhausted" : error == ERROR_ALREADY_EXISTS ? L"legacy-entry-conflict" : error ? L"start-failed" : L"", error == ERROR_ALREADY_EXISTS ? 0 : 1));
 }
 bool Succeeded(const Json& item) { return rules::ItemSucceeded(item.At(L"status").String()); }
+struct Policy {
+    DWORD budget = rules::BudgetDefaultMs;
+    bool notify = true;
+};
+Policy ReadPolicy(const std::wstring& root) {
+    const auto path = Join(root, rules::PolicyFile);
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return {};
+        throw automation::IoError(error);
+    }
+    const auto json = automation::ParseJson(automation::ReadBytes(path, rules::PolicyBytes), rules::PolicyBytes);
+    json.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
+    if (json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::PolicySchema) throw Invalid("invalid-policy-version");
+    const auto budget = static_cast<DWORD>(json.At(L"budgetMs").Integer(rules::BudgetMinMs, rules::BudgetMaxMs));
+    const auto feedback = json.At(L"feedback").String();
+    if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback");
+    return {budget, feedback == L"notify"};
+}
 }
 std::wstring RootDirectory() {
     PWSTR path = nullptr;
@@ -269,18 +288,13 @@ Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) 
         automation::UserLock lock;
         const DWORD locked = lock.Acquire(Join(options.root, L"chain-start"), 0);
         if (locked) { report[L"chainStatus"] = Json(L"skipped-busy"); report[L"exitCode"] = Json::Number(10); return report; }
-        DWORD budget = rules::BudgetDefaultMs; std::wstring policyError;
-        const auto policyFile = Join(options.root, rules::PolicyFile);
-        if (GetFileAttributesW(policyFile.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            try {
-                const auto policy = automation::ParseJson(automation::ReadBytes(policyFile, rules::PolicyBytes), rules::PolicyBytes); policy.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
-                if (policy.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::PolicySchema) throw Invalid("invalid-policy-version");
-                budget = static_cast<DWORD>(policy.At(L"budgetMs").Integer(rules::BudgetMinMs, rules::BudgetMaxMs));
-                const auto feedback = policy.At(L"feedback").String(); if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback"); notify = feedback == L"notify";
-            } catch (...) { policyError = L"invalid-policy"; }
-        }
+        Policy policy;
+        std::wstring policyError;
+        try { policy = ReadPolicy(options.root); }
+        catch (...) { policyError = L"invalid-policy"; }
+        notify = policy.notify;
         if (options.feedback >= 0) notify = options.feedback != 0;
-        const auto deadline = GetTickCount64() + budget;
+        const auto deadline = GetTickCount64() + policy.budget;
         auto& items = report[L"entries"];
         std::vector<Record> records; std::vector<size_t> order;
         if (policyError.empty()) {

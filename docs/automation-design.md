@@ -1,8 +1,8 @@
 # 后台部署与扩展启动设计
 
-状态：已实现，开发版 v1.0.7。日期：2026-11-14。实现前基线：`4f1d596`。
+状态：已实现，产品版本 v1.1.0，接口版本 1。更新日期：2026-11-15。实现前基线：`4f1d596`。
 
-本地构建已提供下述接口。尚未打包或上传 Release。在线 PowerShell 命令须等新版脚本和支持后台部署的 EXE 发布后才能使用。操作示例见[自动化接入](automation-usage.md)。
+本地构建提供下述接口。在线 PowerShell 命令须等对应脚本和 EXE 发布后才能使用。操作示例见[自动化接入](automation-usage.md)。
 
 ## 1. 总体方案
 
@@ -159,7 +159,7 @@ ChatGPTLauncherSetup.exe --headless info --result <新文件绝对路径>
   "schemaVersion": 1,
   "managedBy": "ChatGPTProxyLauncher",
   "launcherPath": "D:\\Apps\\ChatGPTLauncher\\ChatGPTProxyLauncher.exe",
-  "launcherVersion": "1.0.7",
+  "launcherVersion": "1.1.0",
   "setupApiVersions": [1],
   "chainProtocolVersions": [1],
   "capabilities": ["headless-deploy-v1", "companion-registry-v1", "ready-file-v1", "tracked-retry-v1", "chain-run-result-v1"]
@@ -191,7 +191,7 @@ $result = & ([scriptblock]::Create((irm $url))) -Headless -Request 'C:\Deploy\re
 
 - 后台模式不显示进度条、提示窗口、Star 文本或网页，不等待按键。
 - 不在调用者会话内执行 `exit`。返回一个结构化对象，不混入下载输出。外部任务需退出码时，由它自行执行 `exit $result.exitCode`。
-- 先取得固定发布标签，再下载同标签的 EXE 和校验清单。最低 EXE 版本为 **1.0.7**。
+- 先取得固定发布标签，再下载同标签的 EXE 和校验清单。最低 EXE 版本为 **1.1.0**。
 - 校验通过后读取文件版本。低于门槛或无法识别时停止，不尝试调用它的 `--headless`。旧 EXE 会忽略参数并打开界面。
 - 部署器通过 `-WindowStyle Hidden` 启动，脚本等待本次进程退出。隐藏窗口仅是辅助；真正无界面由 EXE 的命令入口保证。
 - 原生结果先写入本次专属临时目录；PowerShell 等待结束后读取，并附加可选的 `transport` 字段。对外结果仍使用同一结构。

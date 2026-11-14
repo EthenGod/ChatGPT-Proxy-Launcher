@@ -11,6 +11,11 @@
 #include "MemoryFault.h"
 static unsigned notifications = 0, closeSignals = 0, legacyCalls = 0;
 static bool rejectJob = false, rejectJobQuery = false;
+static std::wstring deniedPolicyPath;
+static DWORD WINAPI TestFileAttributes(PCWSTR path) {
+    if (!deniedPolicyPath.empty() && deniedPolicyPath == path) { SetLastError(ERROR_ACCESS_DENIED); return INVALID_FILE_ATTRIBUTES; }
+    return GetFileAttributesW(path);
+}
 static thread_local PCWSTR syntheticEnvironment = nullptr;
 static LPWCH WINAPI TestEnvironmentStrings() {
     return syntheticEnvironment ? const_cast<LPWCH>(syntheticEnvironment) : GetEnvironmentStringsW();
@@ -44,11 +49,13 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #define QueryInformationJobObject TestQueryJob
 #define GetEnvironmentStringsW TestEnvironmentStrings
 #define FreeEnvironmentStringsW TestFreeEnvironment
+#define GetFileAttributesW TestFileAttributes
 #include "../src/CompanionRunner.cpp"
 #undef CreateJobObjectW
 #undef QueryInformationJobObject
 #undef GetEnvironmentStringsW
 #undef FreeEnvironmentStringsW
+#undef GetFileAttributesW
 using automation::Json;
 using automation::Handle;
 using automation::Invalid;
@@ -183,6 +190,11 @@ int wmain(int argc, wchar_t** argv) {
         const auto base = Join(argv[1], L"chain-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         REQUIRE(CreateDirectoryW(base.c_str(), nullptr)); wchar_t self[32768]{}; GetModuleFileNameW(nullptr, self, 32768);
         if (benchmark) { const auto code = Benchmark(base, self); CoUninitialize(); return code; }
+        Case unreadablePolicy(base, L"unreadable-policy", self, L"task"); unreadablePolicy.Register();
+        deniedPolicyPath = Join(unreadablePolicy.paths.defaultDirectory, L"companion-policy.json");
+        const auto policyFailure = unreadablePolicy.Run(); deniedPolicyPath.clear();
+        REQUIRE(policyFailure.At(L"exitCode").Integer(0, 255) == 10 && Last(policyFailure).At(L"code").String() == L"invalid-policy");
+        REQUIRE(GetFileAttributesW(Join(unreadablePolicy.root, L"capture-1.json").c_str()) == INVALID_FILE_ATTRIBUTES);
         {
             syntheticEnvironment = L"Alpha=old\0=C:=C:\\example\0Keep=value\0";
             const std::map<std::wstring, std::wstring> changes{{L"alpha", L"新 值"}, {L"Beta", L"a=b"}};

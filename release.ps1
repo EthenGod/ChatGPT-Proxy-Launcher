@@ -101,6 +101,8 @@ try {
     $binaryNames = @('ChatGPTLauncherSetup.exe', 'ChatGPTProxyLauncher.exe')
     foreach ($name in $binaryNames) {
         $built = Join-Path $projectRoot ('outputs\' + $name)
+        $binaryVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($built).FileVersion
+        if ($binaryVersion -ne $releaseVersion) { throw ('Release binary version mismatch: ' + $name) }
         $staged = Join-Path $stage $name
         [IO.File]::Copy($built, $staged, $false)
         if ((Get-Sha256 $built) -ne (Get-Sha256 $staged)) { throw 'Staged binary mismatch.' }

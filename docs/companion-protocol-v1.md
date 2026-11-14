@@ -1,6 +1,6 @@
 # 链式启动规范 v1
 
-状态：开发版 v1.0.7 已实现，尚未发布。后台接口见[部署设计](automation-design.md)，操作示例见[自动化接入](automation-usage.md)。
+状态：随 v1.1.0 提供，协议版本为 1。后台接口见[部署设计](automation-design.md)，操作示例见[自动化接入](automation-usage.md)。
 
 初次接入先看[开发者指南](developer-guide.md)。结构文件包括[作者清单](schemas/companion-v1.schema.json)、[配置请求](schemas/companion-config-v1.schema.json)、[回执](schemas/companion-reply-v1.schema.json)、[全链策略](schemas/companion-policy-v1.schema.json)。
 
@@ -240,7 +240,7 @@ BAT/CMD 不拼接任意参数到 cmd 命令。原数组放在上下文 `input.ar
 
 普通目录不能作为规范依赖。全部启用项构成的依赖图出现环时，不执行注册图；仍允许旧普通目录启动，并报告 `invalid-graph`。个别清单无效、缺依赖、依赖被停用或最低版本不满足时，跳过受影响分支，其他有效分支继续。
 
-`companion-policy.json` 为 `{ "schemaVersion":1, "budgetMs":60000, "feedback":"notify" }`。预算允许 1000–120000 ms；反馈为 `notify` 或 `quiet`。配置文件不存在时采用示例默认值。配置文件损坏时禁用规范注册图并报告配置错误，不猜测用户选择。旧目录不受该错误影响。此文件最多 4 KiB，拒绝未知字段、重复键或不支持的版本。v1 可由用户按示例编辑，未来图形入口使用同一结构。
+`companion-policy.json` 为 `{ "schemaVersion":1, "budgetMs":60000, "feedback":"notify" }`。预算允许 1000–120000 ms；反馈为 `notify` 或 `quiet`。仅在文件不存在时采用示例默认值。文件损坏或无法读取时，禁用规范注册图并报告 `invalid-policy`。整份配置通过校验后才生效，不使用部分字段。旧目录仍按默认预算运行。此文件最多 4 KiB，拒绝未知字段、重复键或不支持的版本。v1 可由用户按示例编辑，未来图形入口使用同一结构。
 
 每项超时默认 15000 ms，上限 30000 ms。重试间隔默认 1000 ms，范围 250–5000 ms。全链最多 32 个注册项。总预算覆盖旧目录派发、注册图读取、就绪观察及重试间隔；每项有效等待时间取其超时与剩余总预算的较小值。旧目录不等就绪，但派发前也检查剩余预算。
 
