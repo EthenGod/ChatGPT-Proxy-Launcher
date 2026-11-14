@@ -45,19 +45,14 @@ static unsigned themeWrites = 0;
 static bool themePathValid = true;
 static std::wstring storedLanguage;
 static LSTATUS languageWriteResult = ERROR_SUCCESS;
-static UINT languageMenuResult = 0;
 static unsigned languageMenuCalls = 0;
-static bool languageMenuValid = true;
-static BOOL WINAPI TestLanguageMenu(HMENU menu, UINT flags, int, int, HWND, LPTPMPARAMS) {
-    ++languageMenuCalls;
-    languageMenuValid = languageMenuValid && (flags & TPM_RETURNCMD) && (flags & TPM_NONOTIFY);
-    for (int i = 0; i < GetMenuItemCount(menu); ++i) {
-        MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_FTYPE | MIIM_ID | MIIM_DATA;
-        languageMenuValid = languageMenuValid && GetMenuItemInfoW(menu, i, TRUE, &item)
-            && (item.fType & MFT_OWNERDRAW) && item.wID == 40000 + static_cast<UINT>(i) && item.dwItemData == static_cast<ULONG_PTR>(i);
-    }
-    return static_cast<BOOL>(languageMenuResult);
+static BOOL WINAPI TestShowWindow(HWND window, int show) {
+    wchar_t name[64]{}; GetClassNameW(window, name, _countof(name));
+    // Exercise real native controls without displaying test popups over the user's desktop.
+    if (!wcscmp(name, L"ChatGPTSetupLanguagePopup")) { ++languageMenuCalls; return TRUE; }
+    return ShowWindow(window, show);
 }
+static BOOL WINAPI TestSetForegroundWindow(HWND) { return TRUE; }
 static DWORD storedCodexEnv = 1;
 static LSTATUS envReadResult = ERROR_FILE_NOT_FOUND, envWriteResult = ERROR_SUCCESS;
 static LSTATUS WINAPI TestThemeRead(HKEY key, LPCWSTR path, LPCWSTR name, DWORD, LPDWORD, PVOID data, LPDWORD size) {
@@ -128,10 +123,12 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #define PostMessageW TestPostMessage
 #define SetTimer TestSetTimer
 #define wWinMain SetupEntryForTest
-#define TrackPopupMenuEx TestLanguageMenu
+#define ShowWindow TestShowWindow
+#define SetForegroundWindow TestSetForegroundWindow
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
-#undef TrackPopupMenuEx
+#undef ShowWindow
+#undef SetForegroundWindow
 #undef MessageBoxW
 #undef ShellExecuteExW
 #undef RegGetValueW
@@ -139,6 +136,7 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #undef BeginBufferedPaint
 #undef PostMessageW
 #undef SetTimer
+#include "../work/LocalizationData.h"
 
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
 struct ButtonPaintProbe { unsigned paints = 0, captions = 0; };
@@ -245,6 +243,17 @@ static bool FooterAligned(App& app) {
         && advanced.left == status.left && advanced.left == app.S(32) && root.right - apply.right == app.S(32)
         && advanced.top == close.top && close.top == apply.top && apply.bottom - apply.top == app.S(40);
 }
+static bool SaveBitmap(HBITMAP bitmap, PCWSTR filename) {
+    CLSID png{};
+    UINT count = 0, bytes = 0;
+    Gdiplus::GetImageEncodersSize(&count, &bytes);
+    std::vector<BYTE> buffer(bytes);
+    auto codecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+    Gdiplus::GetImageEncoders(count, bytes, codecs);
+    for (UINT i = 0; i < count; ++i) if (!wcscmp(codecs[i].MimeType, L"image/png")) png = codecs[i].Clsid;
+    Gdiplus::Bitmap image(bitmap, nullptr);
+    return image.Save(filename, &png) == Gdiplus::Ok;
+}
 static bool Capture(App& app, PCWSTR filename) {
     RECT r{}; GetClientRect(app.window, &r);
     HDC screen = GetDC(app.window), dc = CreateCompatibleDC(screen);
@@ -266,17 +275,41 @@ static bool Capture(App& app, PCWSTR filename) {
         RestoreDC(dc, state);
     }
     SelectObject(dc, old);
-    CLSID png{};
-    UINT count = 0, bytes = 0;
-    Gdiplus::GetImageEncodersSize(&count, &bytes);
-    std::vector<BYTE> buffer(bytes);
-    auto codecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
-    Gdiplus::GetImageEncoders(count, bytes, codecs);
-    for (UINT i = 0; i < count; ++i) if (!wcscmp(codecs[i].MimeType, L"image/png")) png = codecs[i].Clsid;
-    bool saved = false;
-    { Gdiplus::Bitmap image(bitmap, nullptr); saved = image.Save(filename, &png) == Gdiplus::Ok; }
+    const bool saved = SaveBitmap(bitmap, filename);
     DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(app.window, screen);
     return saved;
+}
+static bool CheckLanguageMenu(App& app, PCWSTR filename = nullptr) {
+    std::vector<MEASUREITEMSTRUCT> sizes;
+    const int inset = app.S(LanguageMenuPadding);
+    int width = 0, height = inset * 2; bool fits = true;
+    HDC screen = GetDC(app.window), dc = CreateCompatibleDC(screen);
+    for (size_t i = 0; i <= l10n::Count(); ++i) {
+        MEASUREITEMSTRUCT size{}; size.itemData = i; app.MeasureLanguageItem(size);
+        HFONT font = app.LanguageMenuFont(i); const auto old = SelectObject(dc, font ? font : app.fonts[0]);
+        SIZE text{}; const auto caption = LanguageMenuText(i);
+        GetTextExtentPoint32W(dc, caption, static_cast<int>(wcslen(caption)), &text);
+        SelectObject(dc, old); if (font) DeleteObject(font);
+        fits = fits && text.cx <= static_cast<int>(size.itemWidth) - inset * 2 - app.S(42)
+            && text.cy <= static_cast<int>(size.itemHeight) - app.S(i ? 4 : 12);
+        width = std::max(width, static_cast<int>(size.itemWidth)); height += size.itemHeight; sizes.push_back(size);
+    }
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, width, height); const auto oldBitmap = SelectObject(dc, bitmap);
+    RECT frame{0, 0, width, height}; app.DrawLanguageMenu(dc, frame);
+    int y = inset;
+    for (const auto& size : sizes) {
+        DRAWITEMSTRUCT item{}; item.itemData = size.itemData; item.hDC = dc;
+        item.rcItem = {inset, y, width - inset, y + static_cast<LONG>(size.itemHeight)}; item.itemState = size.itemData == 0 ? ODS_SELECTED : 0;
+        app.DrawLanguageItem(item);
+        fits = fits && GetPixel(dc, app.S(3), y + app.S(10)) == app.colors.surface;
+        if (LanguageMenuSelected(size.itemData))
+            fits = fits && GetPixel(dc, width - inset - app.S(4), y + app.S(20)) == app.colors.selected;
+        y += size.itemHeight;
+    }
+    SelectObject(dc, oldBitmap);
+    if (filename) fits = SaveBitmap(bitmap, filename) && fits;
+    DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(app.window, screen);
+    return fits;
 }
 static bool PartialSurfaceMatches(App& app, HWND target) {
     RECT rect{}; GetClientRect(target, &rect);
@@ -347,6 +380,46 @@ static bool WaitForSave(App& app) {
     }
     return !app.busy;
 }
+static bool WrappedTextFits(HWND control, HFONT font, const std::wstring& text) {
+    RECT bounds{}; GetClientRect(control, &bounds); RECT measured = bounds;
+    HDC dc = GetDC(control); const auto old = SelectObject(dc, font);
+    DrawTextW(dc, text.c_str(), -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, old); ReleaseDC(control, dc);
+    return measured.bottom <= bounds.bottom;
+}
+static bool StatusAndPlaceholderFit(App& app) {
+    const auto previous = app.Text(Footer); bool fits = true; unsigned failures = 0;
+    for (const auto key : l10n::data::Keys) {
+        const std::string_view name(key);
+        if (name.rfind("setup.status.", 0) && name.rfind("setup.quit.", 0) && name.rfind("proxy.", 0)
+            && name.rfind("error.proxy.", 0) && name.rfind("error.arguments.", 0) && name.rfind("error.directory.", 0)) continue;
+        const auto text = l10n::Format(key, {{"source", L"Clash for Windows"}});
+        app.Set(Footer, text);
+        if (!WrappedTextFits(app.Get(Footer), app.fonts[4], text)) {
+            if (failures++ < 4) printf("Clipped footer: %ls %u DPI %s\n", l10n::Current().tag, app.dpi, key); fits = false;
+        }
+    }
+    for (const auto key : {"setup.quit.closed", "setup.quit.absent", "setup.quit.manual"}) {
+        const std::wstring text = std::wstring(l10n::Text(key)) + l10n::Text("setup.status.envunsaved");
+        app.Set(Footer, text);
+        if (!WrappedTextFits(app.Get(Footer), app.fonts[4], text)) {
+            printf("Clipped combined status: %ls %u DPI %s\n", l10n::Current().tag, app.dpi, key); fits = false;
+        }
+    }
+    app.Set(Footer, previous);
+    for (const auto id : {Port, Bypass}) {
+        wchar_t cue[256]{}; SendMessageW(app.Get(id), EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), _countof(cue));
+        HDC dc = GetDC(app.Get(id)); const auto old = SelectObject(dc, app.fonts[5]); SIZE measured{};
+        GetTextExtentPoint32W(dc, cue, static_cast<int>(wcslen(cue)), &measured);
+        SelectObject(dc, old); ReleaseDC(app.Get(id), dc);
+        RECT field{}; GetClientRect(app.Get(id), &field);
+        const LRESULT margins = SendMessageW(app.Get(id), EM_GETMARGINS, 0, 0);
+        if (measured.cx > field.right - LOWORD(margins) - HIWORD(margins)) {
+            printf("Clipped placeholder: %ls %u DPI control %d\n", l10n::Current().tag, app.dpi, id); fits = false;
+        }
+    }
+    return fits;
+}
 static int LanguageTests(App& app, PCWSTR folder) {
     const auto originalDpi = app.dpi;
     app.Check(Proxy, true); app.Check(CodexEnv, true); app.Set(Port, L"12345");
@@ -354,11 +427,16 @@ static int LanguageTests(App& app, PCWSTR folder) {
     const auto arguments = app.Text(Preview), directory = app.Text(Directory);
     const auto revision = app.editRevision;
     for (size_t i = 0; i < l10n::Count(); ++i) {
-        languageMenuResult = LanguageMenuBase + 1 + static_cast<UINT>(i);
         // Both native Space and dialog Enter must reach the same menu command.
         SetFocus(app.Get(LanguageButton));
         SendMessageW(app.Get(LanguageButton), WM_KEYDOWN, VK_SPACE, 0);
         SendMessageW(app.Get(LanguageButton), WM_KEYUP, VK_SPACE, 0);
+        REQUIRE(app.languagePopup);
+        HWND list = GetDlgItem(app.languagePopup, LanguageMenuBase);
+        REQUIRE(SendMessageW(list, LB_GETCOUNT, 0, 0) == static_cast<LRESULT>(l10n::Count() + 1));
+        SendMessageW(list, LB_SETCURSEL, i + 1, 0);
+        MSG commit{}; commit.hwnd = list; commit.message = WM_KEYDOWN; commit.wParam = VK_RETURN;
+        REQUIRE(app.LanguageMenuMessage(commit) && !app.languagePopup);
         REQUIRE(storedLanguage == l10n::At(i).tag && !l10n::FollowsSystem() && LanguageMenuSelected(i + 1));
         REQUIRE(app.dirty && app.editRevision == revision && app.Text(Preview) == arguments && app.Text(Directory) == directory);
         REQUIRE(app.Text(Startup) == l10n::Text("setup.option.startup") && app.Text(LanguageButton) == l10n::Current().name);
@@ -368,13 +446,18 @@ static int LanguageTests(App& app, PCWSTR folder) {
         REQUIRE(!wcscmp(tipText, HelpText(CodexEnvHelp)));
         LOGFONTW fieldFont{}; REQUIRE(GetObjectW(reinterpret_cast<HFONT>(SendMessageW(app.Get(Directory), WM_GETFONT, 0, 0)), sizeof(fieldFont), &fieldFont));
         REQUIRE(!wcscmp(fieldFont.lfFaceName, L"Segoe UI"));
-        for (UINT dpi : {96u, 144u, 192u}) for (int mode : {0, 1, 2}) {
+        for (UINT dpi : {96u, 120u, 144u, 168u, 192u}) for (int mode : {0, 1, 2}) {
             app.dpi = dpi; app.Theme(mode); app.motionEnabled = false;
             SetWindowPos(app.window, nullptr, 0, 0, app.S(620), app.S(812), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            if (mode == 1) REQUIRE(StatusAndPlaceholderFit(app));
+            const auto menuName = setup::Join(folder, L"setup-" + std::wstring(l10n::Current().tag) + (mode ? L"-menu-dark.png" : L"-menu-light.png"));
+            REQUIRE(CheckLanguageMenu(app, dpi == 96 && mode != 2 ? menuName.c_str() : nullptr));
             for (bool advanced : {false, true}) {
                 app.advanced = advanced; app.Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
                 app.Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced")); app.Layout();
                 REQUIRE(LabelsFit(app) && FooterAligned(app) && PartialSurfaceMatches(app, app.body));
+                RECT env{}, envHelp{}; GetWindowRect(app.Get(CodexEnv), &env); GetWindowRect(app.Get(CodexEnvHelp), &envHelp);
+                REQUIRE(env.left + app.S(app.CaptionWidth(CodexEnv, 0)) <= envHelp.left && envHelp.right <= env.right - app.S(56));
                 for (const auto& pair : {std::pair{ProtocolLabel, ProtocolHelp}, {HostLabel, HostHelp}, {PortLabel, PortHelp}}) {
                     RECT label{}, help{}; GetWindowRect(app.Get(pair.first), &label); GetWindowRect(app.Get(pair.second), &help);
                     REQUIRE(label.right <= help.left);
@@ -389,15 +472,60 @@ static int LanguageTests(App& app, PCWSTR folder) {
             }
         }
         const auto normalState = app.Text(State);
-        app.Set(State, l10n::Text("setup.notice.startupconflict")); app.Layout();
+        app.Set(State, l10n::Text("setup.notice.startupconflict"));
         REQUIRE(LabelsFit(app));
         app.Set(State, normalState); app.Layout();
+        for (const auto key : {"setup.status.saving", "setup.action.saved", "setup.action.save", "setup.action.deploy"}) {
+            app.Set(ApplyButton, l10n::Text(key)); REQUIRE(LabelsFit(app) && FooterAligned(app));
+        }
+        app.Refresh(false);
+        app.dpi = 96; app.Theme(1); app.advanced = false;
+        app.Set(Title, l10n::Text("common.launcher")); app.Set(Advanced, l10n::Text("setup.action.advanced"));
+        SetWindowPos(app.window, nullptr, 0, 0, app.S(620), app.S(500), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        const auto message = std::wstring(l10n::Text("setup.quit.manual")) + l10n::Text("setup.status.envunsaved");
+        app.Set(Footer, message);
+        REQUIRE(WrappedTextFits(app.Get(Footer), app.fonts[4], message) && FooterAligned(app));
+        REQUIRE(Capture(app, setup::Join(folder, L"setup-" + std::wstring(l10n::Current().tag) + L"-long-status.png").c_str()));
+        app.Set(Footer, L"A"); const auto layoutCount = app.layoutPasses;
+        app.Set(Footer, L"B"); app.Set(Footer, L"B"); REQUIRE(app.layoutPasses == layoutCount);
+        app.Refresh(false);
     }
-    REQUIRE(languageMenuValid && languageMenuCalls == l10n::Count());
-    languageMenuResult = LanguageMenuBase;
+    REQUIRE(languageMenuCalls == l10n::Count());
     MSG enter{}; enter.hwnd = app.Get(LanguageButton); enter.message = WM_KEYDOWN; enter.wParam = VK_RETURN;
     SetFocus(enter.hwnd); REQUIRE(IsDialogMessageW(app.window, &enter));
+    REQUIRE(app.languagePopup);
+    HWND list = GetDlgItem(app.languagePopup, LanguageMenuBase);
+    SendMessageW(list, WM_KEYDOWN, VK_HOME, 0); REQUIRE(SendMessageW(list, LB_GETCURSEL, 0, 0) == 0);
+    MSG choose{}; choose.hwnd = list; choose.message = WM_KEYDOWN; choose.wParam = VK_SPACE;
+    REQUIRE(app.LanguageMenuMessage(choose) && !app.languagePopup);
     REQUIRE(l10n::FollowsSystem() && storedLanguage == L"auto" && LanguageMenuSelected(0));
+    for (const WPARAM key : {VK_ESCAPE, VK_TAB}) {
+        app.LanguageMenu(); REQUIRE(app.languagePopup);
+        const HWND popup = app.languagePopup;
+        list = GetDlgItem(popup, LanguageMenuBase);
+        HRGN region = CreateRectRgn(0, 0, 0, 0); REQUIRE(region);
+        REQUIRE(GetWindowRgn(popup, region) != ERROR && !PtInRegion(region, 0, 0) && PtInRegion(region, app.S(20), app.S(20)));
+        DeleteObject(region);
+        REQUIRE((GetWindowLongPtrW(popup, GWL_STYLE) & (WS_BORDER | WS_CAPTION)) == 0);
+        SendMessageW(list, WM_KEYDOWN, VK_END, 0); REQUIRE(SendMessageW(list, LB_GETCURSEL, 0, 0) == static_cast<LRESULT>(l10n::Count()));
+        REQUIRE(storedLanguage == L"auto"); // Browsing does not change the saved language.
+        MSG cancel{}; cancel.hwnd = list; cancel.message = WM_KEYDOWN; cancel.wParam = key;
+        REQUIRE(app.LanguageMenuMessage(cancel) && !app.languagePopup && !IsWindow(popup));
+        REQUIRE(storedLanguage == L"auto" && GetFocus() == app.Get(LanguageButton));
+    }
+    app.LanguageMenu(); REQUIRE(app.languagePopup);
+    REQUIRE(SendMessageW(app.window, WM_MOUSEACTIVATE, 0, 0) == MA_ACTIVATEANDEAT && !app.languagePopup);
+    app.LanguageMenu(); REQUIRE(app.languagePopup); app.Layout(); REQUIRE(!app.languagePopup);
+    app.LanguageMenu(); REQUIRE(app.languagePopup); app.Theme(); REQUIRE(!app.languagePopup);
+    app.LanguageMenu(); REQUIRE(app.languagePopup);
+    SendMessageW(app.languagePopup, WM_ACTIVATE, WA_INACTIVE, 0); REQUIRE(!app.languagePopup);
+    // Click a real list item and commit through the subclass; no menu or selection mock.
+    app.LanguageMenu(); REQUIRE(app.languagePopup);
+    list = GetDlgItem(app.languagePopup, LanguageMenuBase);
+    RECT selected{}; SendMessageW(list, LB_GETITEMRECT, 1, reinterpret_cast<LPARAM>(&selected));
+    const LPARAM point = MAKELPARAM(app.S(40), (selected.top + selected.bottom) / 2);
+    SendMessageW(list, WM_LBUTTONDOWN, MK_LBUTTON, point); SendMessageW(list, WM_LBUTTONUP, 0, point);
+    REQUIRE(!app.languagePopup && storedLanguage == L"zh-CN");
     languageWriteResult = ERROR_ACCESS_DENIED; app.ChangeLanguage(1);
     REQUIRE(app.Text(Footer) == l10n::Text("setup.language.unsaved")); languageWriteResult = ERROR_SUCCESS;
     app.busy = true; app.Refresh(false); app.ChangeLanguage(2);
@@ -406,7 +534,7 @@ static int LanguageTests(App& app, PCWSTR folder) {
     REQUIRE(!IsWindowEnabled(app.Get(LanguageButton)) && !wcscmp(l10n::Current().tag, L"zh-CN"));
     app.detectingPort = false; app.Refresh(false); REQUIRE(IsWindowEnabled(app.Get(LanguageButton)));
     app.dpi = originalDpi; app.Theme();
-    puts("PASS localization UI: three languages, live captions/tooltips, preserved edits, auto/manual preference, failures, keyboard menu and busy guards; dark/light/contrast at 100/150/200 percent");
+    puts("PASS localization UI: three languages, live captions/tooltips, preserved edits, auto/manual preference, failures, rounded popup frame, mouse/keyboard selection, Escape/Tab/outside cancellation, focus return and busy guards; labels/placeholders/statuses at 100/125/150/175/200 percent in dark/light/contrast");
     return 0;
 }
 static int RunTests(PCWSTR folder) {

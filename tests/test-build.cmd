@@ -13,6 +13,8 @@ work\localization-tests.exe
 if errorlevel 1 exit /b %errorlevel%
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0localization-tests.ps1"
 if errorlevel 1 exit /b %errorlevel%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0documentation-tests.ps1"
+if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\contract-tests.obj /Fe:work\contract-tests.exe tests\contract-tests.cpp work\CompanionManifest.obj work\AutomationJson.obj work\AutomationIO.obj work\DeploymentDiscovery.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib version.lib
 if errorlevel 1 exit /b %errorlevel%
 work\contract-tests.exe "%CD%"

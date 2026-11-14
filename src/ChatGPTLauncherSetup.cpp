@@ -26,9 +26,10 @@ namespace {
 constexpr UINT SavedMessage = WM_APP + 1;
 constexpr UINT DetectPortMessage = WM_APP + 2;
 constexpr UINT PortDetectedMessage = WM_APP + 3;
-constexpr int FooterHeight = 96;
 constexpr UINT_PTR MotionTimer = 1;
 constexpr UINT_PTR WorkerTimer = 2;
+constexpr int HeaderButtonHeight = 36, HeaderButtonRadius = 10;
+constexpr int LanguageMenuPadding = 6, LanguageRowHeight = 36, LanguageMenuRadius = 12;
 enum ControlId {
     Title = 1000, SetupVersion, ThemeToggle, LanguageButton, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, PortHelp, Port,
@@ -136,6 +137,7 @@ LRESULT CALLBACK StyledControl(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 struct App {
     HINSTANCE instance = nullptr;
     HWND window = nullptr, body = nullptr, tooltip = nullptr;
+    HWND languagePopup = nullptr;
     UINT dpi = 96;
     bool advanced = false, loading = true, dirty = false, busy = false, fatal = false;
     bool savedThisSession = false, startupReminderShown = false;
@@ -147,6 +149,7 @@ struct App {
     unsigned layoutPasses = 0;
     int scroll = 0, contentHeight = 0;
     int headerOffset = 0;
+    int footerTextHeight = 32;
     std::string completionKey;
     bool envPreferenceWarning = false;
     std::wstring savedTarget;
@@ -185,14 +188,22 @@ struct App {
         return text;
     }
     void Set(int id, const std::wstring& text) {
-        if (Text(id) != text) SetWindowTextW(Get(id), text.c_str());
+        if (Text(id) == text) return;
+        SetWindowTextW(Get(id), text.c_str());
+        if (!loading) ResizeCaption(id);
     }
     bool Checked(int id) const { return SendMessageW(Get(id), BM_GETCHECK, 0, 0) == BST_CHECKED; }
     void Check(int id, bool value) { SendMessageW(Get(id), BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0); }
     void Theme(int mode = -1);
     int CaptionWidth(int id, int font) const;
     int CaptionHeight(int id, int font, int width) const;
+    void ResizeCaption(int id);
+    HFONT LanguageMenuFont(size_t index) const;
+    void MeasureLanguageItem(MEASUREITEMSTRUCT& item) const;
     void LanguageMenu();
+    void CloseLanguageMenu(bool restoreFocus);
+    bool LanguageMenuMessage(MSG& message);
+    void DrawLanguageMenu(HDC dc, const RECT& bounds);
     void ChangeLanguage(size_t menuIndex);
     void TranslateControls();
     void UpdateState(const setup::Loaded& loaded);
@@ -241,6 +252,7 @@ void ShowSetupError(HWND window, const setup::Result& result, PCWSTR title) {
 }
 
 void App::Theme(int mode) {
+    CloseLanguageMenu(false);
     HIGHCONTRASTW hc{ sizeof(hc), 0, nullptr };
     SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0);
     contrast = (hc.dwFlags & HCF_HIGHCONTRASTON) != 0;
@@ -308,7 +320,7 @@ void App::CreateControls() {
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
     add(Title, L"STATIC", l10n::Text("common.launcher"), label, 2);
     add(SetupVersion, L"STATIC", l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}).c_str(), label, 3);
-    add(LanguageButton, L"BUTTON", l10n::Current().name, WS_TABSTOP | BS_OWNERDRAW, 3);
+    add(LanguageButton, L"BUTTON", l10n::Current().name, WS_TABSTOP | BS_OWNERDRAW);
     add(ThemeToggle, L"BUTTON", l10n::Text("setup.theme.light"), WS_TABSTOP | BS_OWNERDRAW);
     add(State, L"STATIC", l10n::Text("setup.state.initial"), label, 3);
     add(StartTitle, L"STATIC", l10n::Text("setup.section.startup"), label, 1);
@@ -401,46 +413,188 @@ int App::CaptionHeight(int id, int font, int width) const {
     SelectObject(dc, old); ReleaseDC(body, dc);
     return MulDiv(bounds.bottom, 96, static_cast<int>(dpi)) + 1;
 }
+void App::ResizeCaption(int id) {
+    if (id != Footer && id != State && id != ApplyButton && id != CloseButton) return;
+    RECT root{}, bounds{}; GetClientRect(window, &root); GetClientRect(Get(id), &bounds);
+    const int width = MulDiv(root.right, 96, static_cast<int>(dpi));
+    // Reflow only when text changes the required geometry. Typing and scrolling stay cheap.
+    const bool changed = id == Footer ? footerTextHeight != std::max(32, CaptionHeight(id, 4, width - 64))
+        : id == State ? bounds.bottom != S(std::max(20, CaptionHeight(id, 3, width - 64)))
+        : id == ApplyButton ? bounds.right != S(std::max(116, CaptionWidth(id, 1) + 40))
+        : bounds.right != S(std::max(80, CaptionWidth(id, 0) + 32));
+    if (changed) Layout();
+}
+HFONT App::LanguageMenuFont(size_t index) const {
+    LOGFONTW info{}; GetObjectW(fonts[0], sizeof(info), &info);
+    wcscpy_s(info.lfFaceName, index ? l10n::At(index - 1).font : l10n::Current().font);
+    return CreateFontIndirectW(&info);
+}
+void App::MeasureLanguageItem(MEASUREITEMSTRUCT& item) const {
+    // Measure with the same font used to paint each native language name.
+    HFONT font = LanguageMenuFont(item.itemData);
+    HDC dc = GetDC(window); const auto old = SelectObject(dc, font ? font : fonts[0]); SIZE size{};
+    PCWSTR caption = LanguageMenuText(item.itemData);
+    GetTextExtentPoint32W(dc, caption, static_cast<int>(wcslen(caption)), &size);
+    SelectObject(dc, old); ReleaseDC(window, dc); if (font) DeleteObject(font);
+    item.itemWidth = static_cast<UINT>(std::max<LONG>(S(156), size.cx + S(48 + 2 * LanguageMenuPadding)));
+    item.itemHeight = S(LanguageRowHeight + (item.itemData ? 0 : 8));
+}
+LRESULT CALLBACK LanguageListProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_LBUTTONUP) {
+        const auto result = DefSubclassProc(window, message, wparam, lparam);
+        const LRESULT hit = SendMessageW(window, LB_ITEMFROMPOINT, 0, lparam);
+        if (!HIWORD(hit)) SendMessageW(GetParent(window), WM_COMMAND, MAKEWPARAM(IDOK, 0), 0);
+        return result;
+    }
+    if (message == WM_MOUSEMOVE) {
+        const LRESULT hit = SendMessageW(window, LB_ITEMFROMPOINT, 0, lparam);
+        if (!HIWORD(hit) && SendMessageW(window, LB_GETCURSEL, 0, 0) != LOWORD(hit)) SendMessageW(window, LB_SETCURSEL, LOWORD(hit), 0);
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, LanguageListProc, 1);
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+LRESULT CALLBACK LanguagePopupProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    App* app = StateOf(window);
+    if (message == WM_NCCREATE) {
+        app = static_cast<App*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    }
+    if (!app) return DefWindowProcW(window, message, wparam, lparam);
+    switch (message) {
+    case WM_DRAWITEM: {
+        const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
+        if (item && item->CtlType == ODT_LISTBOX && item->itemID != static_cast<UINT>(-1)) { app->DrawLanguageItem(*item); return TRUE; }
+        break;
+    }
+    case WM_MEASUREITEM: {
+        const auto item = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+        if (item && item->CtlType == ODT_LISTBOX) {
+            item->itemData = item->itemID; app->MeasureLanguageItem(*item); return TRUE;
+        }
+        break;
+    }
+    case WM_CTLCOLORLISTBOX: return reinterpret_cast<LRESULT>(app->surface);
+    case WM_PAINT: {
+        PAINTSTRUCT paint{}; HDC dc = BeginPaint(window, &paint); RECT bounds{}; GetClientRect(window, &bounds);
+        app->DrawLanguageMenu(dc, bounds); EndPaint(window, &paint); return 0;
+    }
+    case WM_PRINTCLIENT: {
+        RECT bounds{}; GetClientRect(window, &bounds); app->DrawLanguageMenu(reinterpret_cast<HDC>(wparam), bounds); return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_COMMAND:
+        if (LOWORD(wparam) == IDOK) {
+            const LRESULT selected = SendDlgItemMessageW(window, LanguageMenuBase, LB_GETCURSEL, 0, 0);
+            app->CloseLanguageMenu(true);
+            if (selected >= 0) app->ChangeLanguage(static_cast<size_t>(selected));
+            return 0;
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wparam) == WA_INACTIVE) app->CloseLanguageMenu(false);
+        return 0;
+    case WM_CLOSE: app->CloseLanguageMenu(true); return 0;
+    case WM_NCDESTROY:
+        if (app->languagePopup == window) app->languagePopup = nullptr;
+        break;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+void App::DrawLanguageMenu(HDC dc, const RECT& bounds) {
+    FillRect(dc, &bounds, surface);
+    Rounded(dc, bounds, S(LanguageMenuRadius), colors.surface, colors.divider, static_cast<float>(dpi) / 96.0f);
+}
+void App::CloseLanguageMenu(bool restoreFocus) {
+    if (!languagePopup) return;
+    const HWND popup = languagePopup; languagePopup = nullptr;
+    DestroyWindow(popup);
+    if (restoreFocus && window && !closing) { SetForegroundWindow(window); SetFocus(Get(LanguageButton)); }
+    if (Get(LanguageButton)) InvalidateRect(Get(LanguageButton), nullptr, FALSE);
+}
+bool App::LanguageMenuMessage(MSG& message) {
+    if (!languagePopup || (message.hwnd != languagePopup && !IsChild(languagePopup, message.hwnd))) return false;
+    if (message.message == WM_KEYDOWN) {
+        if (message.wParam == VK_ESCAPE || message.wParam == VK_TAB) { CloseLanguageMenu(true); return true; }
+        if (message.wParam == VK_RETURN || message.wParam == VK_SPACE) {
+            SendMessageW(languagePopup, WM_COMMAND, IDOK, 0); return true;
+        }
+    }
+    return IsDialogMessageW(languagePopup, &message) != FALSE;
+}
 void App::LanguageMenu() {
+    if (languagePopup) { CloseLanguageMenu(true); return; }
     if (busy || detectingPort) return;
-    HMENU menu = CreatePopupMenu(); if (!menu) return;
-    // WM_THEMECHANGED may replace App::surface while the native menu runs its message loop.
-    HBRUSH menuBackground = CreateSolidBrush(colors.surface);
-    MENUINFO style{sizeof(style)}; style.fMask = MIM_BACKGROUND; style.hbrBack = menuBackground; SetMenuInfo(menu, &style);
+    WNDCLASSEXW cls{sizeof(cls)}; cls.hInstance = instance; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    cls.lpfnWndProc = LanguagePopupProc; cls.lpszClassName = L"ChatGPTSetupLanguagePopup"; cls.style = CS_DROPSHADOW;
+    if (!RegisterClassExW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
+    int width = 0, height = S(2 * LanguageMenuPadding);
     for (size_t i = 0; i <= l10n::Count(); ++i) {
-        MENUITEMINFOW item{sizeof(item)};
-        item.fMask = MIIM_ID | MIIM_FTYPE | MIIM_DATA | MIIM_STRING | MIIM_STATE;
-        item.fType = MFT_OWNERDRAW; item.wID = LanguageMenuBase + static_cast<UINT>(i); item.dwItemData = i;
-        item.dwTypeData = const_cast<PWSTR>(LanguageMenuText(i));
-        item.fState = LanguageMenuSelected(i) ? MFS_CHECKED : MFS_UNCHECKED;
-        InsertMenuItemW(menu, static_cast<UINT>(i), TRUE, &item);
+        MEASUREITEMSTRUCT item{}; item.itemData = i; MeasureLanguageItem(item);
+        width = std::max(width, static_cast<int>(item.itemWidth)); height += item.itemHeight;
     }
     RECT bounds{}; GetWindowRect(Get(LanguageButton), &bounds);
-    const UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN,
-        bounds.right, bounds.bottom + S(6), window, nullptr);
-    DestroyMenu(menu);
-    if (menuBackground) DeleteObject(menuBackground);
-    if (command >= LanguageMenuBase && command <= LanguageMenuBase + l10n::Count()) ChangeLanguage(command - LanguageMenuBase);
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST), &monitor)) return;
+    const RECT work = monitor.rcWork;
+    const int maxHeight = std::max(S(48), static_cast<int>(work.bottom - work.top) - S(12));
+    if (height > maxHeight) { height = maxHeight; width += GetSystemMetricsForDpi(SM_CXVSCROLL, dpi); }
+    width = std::min(width, static_cast<int>(work.right - work.left));
+    int x = std::clamp(bounds.right - width, work.left, work.right - width);
+    int y = bounds.bottom + S(6);
+    if (y + height > work.bottom) y = bounds.top - S(6) - height;
+    y = std::max(y, static_cast<int>(work.top));
+    languagePopup = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, Text(LanguageButton).c_str(),
+        WS_POPUP | WS_CLIPCHILDREN, x, y, width, height, window, nullptr, instance, this);
+    if (!languagePopup) return;
+    // Own the complete frame. A region also keeps corners consistent on Windows 10.
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, S(LanguageMenuRadius * 2), S(LanguageMenuRadius * 2));
+    if (region && !SetWindowRgn(languagePopup, region, FALSE)) DeleteObject(region);
+    const int inset = S(LanguageMenuPadding);
+    HWND list = CreateWindowExW(0, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+        LBS_NOTIFY | LBS_HASSTRINGS | LBS_OWNERDRAWVARIABLE | LBS_NOINTEGRALHEIGHT,
+        inset, inset, width - inset * 2, height - inset * 2, languagePopup,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(LanguageMenuBase)), instance, nullptr);
+    if (!list) { CloseLanguageMenu(false); return; }
+    SetWindowTheme(list, L"", L"");
+    if (!SetWindowSubclass(list, LanguageListProc, 1, 0)) { CloseLanguageMenu(false); return; }
+    SendMessageW(list, WM_SETFONT, reinterpret_cast<WPARAM>(fonts[0]), FALSE);
+    for (size_t i = 0; i <= l10n::Count(); ++i) {
+        const auto index = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(LanguageMenuText(i)));
+        if (index < 0) { CloseLanguageMenu(false); return; }
+        SendMessageW(list, LB_SETITEMDATA, index, i);
+        if (LanguageMenuSelected(i)) SendMessageW(list, LB_SETCURSEL, index, 0);
+    }
+    ShowWindow(languagePopup, SW_SHOW); SetForegroundWindow(languagePopup); SetFocus(list);
+    InvalidateRect(Get(LanguageButton), nullptr, FALSE);
 }
 void App::DrawLanguageItem(const DRAWITEMSTRUCT& item) {
     const bool hover = (item.itemState & ODS_SELECTED) != 0;
-    const COLORREF fill = hover ? colors.selected : colors.surface;
-    HBRUSH brush = CreateSolidBrush(fill); FillRect(item.hDC, &item.rcItem, brush); DeleteObject(brush);
-    SetBkMode(item.hDC, TRANSPARENT); SetTextColor(item.hDC, hover ? colors.selectedText : colors.text);
+    const bool selected = LanguageMenuSelected(item.itemData);
+    HBRUSH brush = CreateSolidBrush(colors.surface); FillRect(item.hDC, &item.rcItem, brush); DeleteObject(brush);
+    RECT row = item.rcItem; InflateRect(&row, 0, -S(2));
+    if (!item.itemData) row.bottom -= S(8);
+    const COLORREF fill = selected || (contrast && hover) ? colors.selected : colors.hover;
+    if (selected || hover) Rounded(item.hDC, row, S(LanguageMenuRadius - LanguageMenuPadding), fill, fill);
+    const COLORREF textColor = selected || (contrast && hover) ? colors.selectedText : colors.text;
+    SetBkMode(item.hDC, TRANSPARENT); SetTextColor(item.hDC, textColor);
     // Use the entry's font so language names remain readable from any active language.
-    LOGFONTW info{}; GetObjectW(fonts[0], sizeof(info), &info);
-    wcscpy_s(info.lfFaceName, item.itemData ? l10n::At(item.itemData - 1).font : l10n::Current().font);
-    HFONT font = CreateFontIndirectW(&info); const auto old = SelectObject(item.hDC, font ? font : fonts[0]);
-    RECT text = item.rcItem; text.left += S(36); text.right -= S(16);
+    HFONT font = LanguageMenuFont(item.itemData); const auto old = SelectObject(item.hDC, font ? font : fonts[0]);
+    RECT text = row; text.left = item.rcItem.left + S(30); text.right = item.rcItem.right - S(12);
     DrawTextW(item.hDC, LanguageMenuText(item.itemData), -1, &text, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-    if (LanguageMenuSelected(item.itemData)) {
-        HPEN pen = CreatePen(PS_SOLID, S(2), hover ? colors.selectedText : colors.accent);
+    if (selected) {
+        HPEN pen = CreatePen(PS_SOLID, S(2), textColor);
         const auto oldPen = SelectObject(item.hDC, pen);
-        const int x = item.rcItem.left + S(14), y = (item.rcItem.top + item.rcItem.bottom) / 2;
+        const int x = item.rcItem.left + S(10), y = (row.top + row.bottom) / 2;
         MoveToEx(item.hDC, x, y, nullptr); LineTo(item.hDC, x + S(3), y + S(3)); LineTo(item.hDC, x + S(10), y - S(4));
         SelectObject(item.hDC, oldPen); DeleteObject(pen);
     }
     SelectObject(item.hDC, old); if (font) DeleteObject(font);
+    if (!item.itemData) {
+        HPEN pen = CreatePen(PS_SOLID, 1, colors.divider); const auto oldPen = SelectObject(item.hDC, pen);
+        const int y = item.rcItem.bottom - S(4);
+        MoveToEx(item.hDC, item.rcItem.left + S(8), y, nullptr); LineTo(item.hDC, item.rcItem.right - S(8), y);
+        SelectObject(item.hDC, oldPen); DeleteObject(pen);
+    }
 }
 void App::ChangeLanguage(size_t menuIndex) {
     if (busy || detectingPort || menuIndex > l10n::Count()) return;
@@ -481,17 +635,20 @@ void App::TranslateControls() {
 }
 
 void App::Layout() {
+    CloseLanguageMenu(false);
     if (!body) return;
     if (tooltip) SendMessageW(tooltip, TTM_POP, 0, 0);
     ++layoutPasses;
     RECT root{}; GetClientRect(window, &root);
-    const int footerHeight = S(FooterHeight);
+    const int rootWidth = MulDiv(root.right, 96, static_cast<int>(dpi));
+    footerTextHeight = std::max(32, CaptionHeight(Footer, 4, rootWidth - 64));
+    const int footerHeight = S(footerTextHeight + 64);
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
     const int envOffset = Checked(Proxy) ? 48 : 0;
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
-    const int languageWidth = std::clamp(CaptionWidth(LanguageButton, 3) + 40, 96, 180);
+    const int languageWidth = std::clamp(CaptionWidth(LanguageButton, 0) + 40, 112, 180);
     const int languageLeft = width - 80 - languageWidth;
     const int titleWidth = CaptionWidth(Title, 2), versionWidth = CaptionWidth(SetupVersion, 3);
     const int versionOffset = 44 + titleWidth + versionWidth > languageLeft - 16 ? 24 : 0;
@@ -509,8 +666,8 @@ void App::Layout() {
     };
     place(Title, 32, 24, titleWidth + 2, 34);
     place(SetupVersion, versionOffset ? 32 : 44 + titleWidth, versionOffset ? 64 : 39, versionWidth, 20);
-    place(LanguageButton, languageLeft, 24, languageWidth, 36);
-    place(ThemeToggle, width - 68, 24, 36, 36);
+    place(LanguageButton, languageLeft, 24, languageWidth, HeaderButtonHeight);
+    place(ThemeToggle, width - 68, 24, HeaderButtonHeight, HeaderButtonHeight);
     place(State, 32, 66 + versionOffset, width - 64, stateHeight);
     place(StartTitle, 32, 108, width - 64, 20, !advanced);
     place(Startup, 48, 152, inner, 36, !advanced);
@@ -564,12 +721,13 @@ void App::Layout() {
         if (footerBatch) footerBatch = DeferWindowPos(footerBatch, Get(id), nullptr, x, y, w, h, flags);
         else SetWindowPos(Get(id), nullptr, x, y, w, h, flags);
     };
-    footer(Footer, S(32), footerTop + S(4), root.right - S(64), S(32));
+    footer(Footer, S(32), footerTop + S(4), root.right - S(64), S(footerTextHeight));
     const int applyWidth = std::max(116, CaptionWidth(ApplyButton, 1) + 40);
     const int closeWidth = std::max(80, CaptionWidth(CloseButton, 0) + 32);
-    footer(Advanced, S(32), footerTop + S(40), S(std::max(92, CaptionWidth(Advanced, 4) + 40)), S(40));
-    footer(CloseButton, root.right - S(44 + applyWidth + closeWidth), footerTop + S(40), S(closeWidth), S(40));
-    footer(ApplyButton, root.right - S(32 + applyWidth), footerTop + S(40), S(applyWidth), S(40));
+    const int buttonTop = root.bottom - S(56);
+    footer(Advanced, S(32), buttonTop, S(std::max(92, CaptionWidth(Advanced, 4) + 40)), S(40));
+    footer(CloseButton, root.right - S(44 + applyWidth + closeWidth), buttonTop, S(closeWidth), S(40));
+    footer(ApplyButton, root.right - S(32 + applyWidth), buttonTop, S(applyWidth), S(40));
     if (footerBatch) EndDeferWindowPos(footerBatch);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
@@ -698,6 +856,7 @@ void App::PollWorkers() {
 void App::StopWorkers() {
     if (closing) return;
     closing = true;
+    CloseLanguageMenu(false);
     if (window) KillTimer(window, WorkerTimer);
     // Workers only post messages. They never wait for this window to process them.
     if (worker.joinable()) worker.join();
@@ -720,6 +879,7 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
     UpdateState(loaded);
     loading = false; dirty = false;
     Refresh(false);
+    Layout();
 }
 void App::UpdateState(const setup::Loaded& loaded) {
     const std::wstring deployment = loaded.deployed
@@ -955,7 +1115,7 @@ void App::DrawSurface(HWND target, HDC dc) {
     } else {
         HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
         HGDIOBJ old = SelectObject(dc, pen);
-        MoveToEx(dc, 0, rect.bottom - S(FooterHeight), nullptr); LineTo(dc, rect.right, rect.bottom - S(FooterHeight));
+        MoveToEx(dc, 0, rect.bottom - S(footerTextHeight + 64), nullptr); LineTo(dc, rect.right, rect.bottom - S(footerTextHeight + 64));
         SelectObject(dc, old); DeleteObject(pen);
     }
 }
@@ -1046,7 +1206,8 @@ void App::DrawControl(HWND control, HDC dc) {
         SelectObject(dc, old); return;
     } else if (id == ThemeToggle) {
         const COLORREF fill = enabled ? Blend(colors.surface, colors.hover, pressed ? 1.0f : hover) : colors.surface;
-        Rounded(dc, rect, S(10), fill, focusVisible ? colors.accent : colors.divider, focusVisible ? 2.0f : 1.0f);
+        Rounded(dc, rect, S(HeaderButtonRadius), fill, focusVisible ? colors.accent : colors.divider,
+            (focusVisible ? 2.0f : 1.0f) * static_cast<float>(dpi) / 96.0f);
         Gdiplus::Graphics graphics(dc);
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         const float scale = static_cast<float>(dpi) / 96.0f;
@@ -1074,13 +1235,18 @@ void App::DrawControl(HWND control, HDC dc) {
         }
         return; // The window caption remains available to accessibility tools, but is not painted.
     } else if (id == LanguageButton) {
-        Rounded(dc, rect, S(10), Blend(colors.surface, colors.hover, pressed ? 1.0f : hover),
-            focusVisible ? colors.accent : colors.divider, focusVisible ? 2.0f : 1.0f);
+        const float scale = static_cast<float>(dpi) / 96.0f;
+        Rounded(dc, rect, S(HeaderButtonRadius), Blend(colors.surface, colors.hover, pressed || languagePopup ? 1.0f : hover),
+            focusVisible ? colors.accent : colors.divider, (focusVisible ? 2.0f : 1.0f) * scale);
         text.left += S(12); text.right -= S(28);
-        HPEN pen = CreatePen(PS_SOLID, std::max(1, S(1)), textColor); const auto old = SelectObject(dc, pen);
-        const int x = rect.right - S(16), y = rect.bottom / 2;
-        MoveToEx(dc, x - S(3), y - S(1), nullptr); LineTo(dc, x, y + S(2)); LineTo(dc, x + S(4), y - S(2));
-        SelectObject(dc, old); DeleteObject(pen);
+        Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(textColor), GetGValue(textColor), GetBValue(textColor)), 1.5f * scale);
+        pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
+        const float x = static_cast<float>(rect.right - S(16)), y = rect.bottom / 2.0f + (pressed ? scale : 0);
+        const float direction = languagePopup ? -1.0f : 1.0f;
+        const Gdiplus::PointF points[]{{x - 3.5f * scale, y - 1.75f * scale * direction},
+            {x, y + 1.75f * scale * direction}, {x + 3.5f * scale, y - 1.75f * scale * direction}};
+        graphics.DrawLines(&pen, points, 3);
     } else if (IsSwitch(id)) {
         RECT track{ rect.right - S(49), (rect.bottom - S(26)) / 2, rect.right - S(5), (rect.bottom + S(26)) / 2 };
         if (focusVisible) {
@@ -1134,7 +1300,7 @@ void App::DrawControl(HWND control, HDC dc) {
         }
     }
     SetTextColor(dc, textColor);
-    HGDIOBJ old = SelectObject(dc, fonts[id == ApplyButton ? 1 : id == Advanced ? 4 : IsSegment(id) || id == LanguageButton ? 3 : 0]);
+    HGDIOBJ old = SelectObject(dc, fonts[id == ApplyButton ? 1 : id == Advanced ? 4 : IsSegment(id) ? 3 : 0]);
     const std::wstring caption = Text(id);
     DrawTextW(dc, caption.c_str(), -1, &text, textFlags);
     SelectObject(dc, old);
@@ -1330,6 +1496,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         auto limits = reinterpret_cast<MINMAXINFO*>(lparam);
         limits->ptMinTrackSize = { app->S(620), app->S(500) }; return 0;
     }
+    case WM_MOUSEACTIVATE:
+        if (app->languagePopup) { app->CloseLanguageMenu(false); return MA_ACTIVATEANDEAT; }
+        break;
     case WM_SIZE: app->Layout(); return 0;
     case WM_DPICHANGED: {
         app->dpi = HIWORD(wparam); app->Theme();
@@ -1345,20 +1514,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         break;
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
-        if (item && item->CtlType == ODT_MENU) { app->DrawLanguageItem(*item); return TRUE; }
         if (item && (IsOwnerDrawButton(static_cast<int>(item->CtlID)) || item->CtlID == Footer)) {
             app->PaintControl(item->hwndItem, item->hDC); return TRUE;
-        }
-        break;
-    }
-    case WM_MEASUREITEM: {
-        const auto item = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
-        if (item && item->CtlType == ODT_MENU) {
-            HDC dc = GetDC(window); const auto old = SelectObject(dc, app->fonts[0]); SIZE size{};
-            PCWSTR caption = LanguageMenuText(item->itemData);
-            GetTextExtentPoint32W(dc, caption, static_cast<int>(wcslen(caption)), &size);
-            SelectObject(dc, old); ReleaseDC(window, dc);
-            item->itemWidth = static_cast<UINT>(size.cx + app->S(60)); item->itemHeight = app->S(36); return TRUE;
         }
         break;
     }
@@ -1433,6 +1590,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
                 MSG message{};
                 BOOL status = 0;
                 while ((status = GetMessageW(&message, nullptr, 0, 0)) > 0) {
+                    if (app.LanguageMenuMessage(message)) continue;
                     const bool tabbed = message.message == WM_KEYDOWN && message.wParam == VK_TAB;
                     if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
                         if (app.advanced) app.Command(Advanced, BN_CLICKED);

@@ -1,3 +1,5 @@
+[简体中文](taskbar-repair.md) | [English](taskbar-repair.en.md) | [日本語](taskbar-repair.ja.md)
+
 # 更新后的任务栏图标修复
 
 目标：已确认开始菜单快捷方式残留旧版本路径时，让启动器在启动前自动修复，避免每次应用更新后手工处理。

@@ -1,3 +1,5 @@
+[简体中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
+
 # ChatGPT 图标
 
 `ChatGPT.ico` 提取自已安装的 ChatGPT Windows 应用（应用包版本 26.1007.2314.0）的 `ChatGPT.exe` 图标资源，保留原有图像，未重新绘制。包含 16、20、24、32、40、48、64、256 像素尺寸。

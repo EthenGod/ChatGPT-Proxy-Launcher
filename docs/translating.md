@@ -1,3 +1,5 @@
+[简体中文](translating.md) | [English](translating.en.md) | [日本語](translating.ja.md)
+
 # 社区翻译指南
 
 中文是基准。英语可作参考。界面、帮助、错误提示、启动器通知和 PowerShell 下载提示都在 `locales/`，无需修改 C++。翻译随程序发布，不需要用户另外下载语言包。
@@ -46,12 +48,16 @@ cmd /c tests\test-build.cmd
 cmd /c tests\analyze.cmd
 ```
 
-再打开 `outputs/ChatGPTLauncherSetup.exe`，从右上角选择新语言。检查主页面、高级页面、问号帮助和浅深色。缩小窗口，并检查 100%、150%、200% 显示缩放。按钮、开关和问号不能重叠，重要提示不能被截断。
+再打开 `outputs/ChatGPTLauncherSetup.exe`，从右上角选择新语言。检查主页面、高级页面、语言菜单、问号帮助和浅深色。缩小窗口，并检查 100%、125%、150%、175%、200% 显示缩放。按钮、开关和问号不能重叠。空输入框提示、较长错误和组合提示不能被截断。
 
 自动测试只用隔离目录和替身，不部署到真实自启目录，不关闭 ChatGPT。截图留在 `work/`，不要提交带个人路径的截图。
 
 新增功能时先更新中文基准，再更新英语、日语和调用代码。已有键的含义不变时保留键名；含义变化时检查所有译文。删掉不用的键时同步所有语言文件。`schemaVersion` 只在语言文件结构发生不兼容变化时升级。
 
-## For community translators
+## 翻译用户文档
 
-Chinese (`zh-CN.json`) is the source and fallback language. Use `en-US.json` as an additional reference. Edit string values only; keep keys and named placeholders unchanged. Register a new locale in `languages.json`; no C++ edits are needed. Missing or empty entries fall back to Chinese when `complete` is `false`. Run the two commands above and include the regenerated `setup.ps1` in your pull request. Please check the actual UI for clipping and report which screens you reviewed.
+中文正文保留原文件名。英语和日语分别使用 `.en.md`、`.ja.md`。当前包括根目录 `README`、`docs/translating`、`docs/taskbar-repair`、`docs/release-upload` 和 `assets/README`。每份文档第一行都提供三种语言链接。
+
+翻译时同步步骤、限制、按钮名称和链接。按钮名称以对应语言文件为准；命令、参数、环境变量和文件名保持原样。链接优先指向同语言文档；尚未翻译的开发文档标明“中文”。发布说明会复制到 GitHub Release 正文，顶部语言链接必须使用完整 GitHub 地址，版本号和下载地址也要同步。
+
+运行 `powershell -NoProfile -ExecutionPolicy Bypass -File tests/documentation-tests.ps1` 检查语言链接、本地链接和命令示例。新增语言文档时，更新该测试中的文档组及语言后缀，并将文件加入 `release.ps1` 的源码清单。仅增加界面语言时不需要翻译所有文档。不要翻译 `AGENTS.md`、`HANDOFF.md` 等内部工作记录。

@@ -39,13 +39,15 @@ function Write-VerifiedZip([string]$Path, [System.Collections.IDictionary]$Files
 
 # Explicit list: never sweep the repository, work directory, Git data or private files.
 $sourceNames = @(
-    '.editorconfig', '.gitattributes', '.gitignore', 'AGENTS.md', 'HANDOFF.md', 'LICENSE', 'README.md', 'build.cmd', 'release.cmd', 'release.ps1', 'setup.ps1',
+    '.editorconfig', '.gitattributes', '.gitignore', 'AGENTS.md', 'HANDOFF.md', 'LICENSE', 'README.md', 'README.en.md', 'README.ja.md', 'build.cmd', 'release.cmd', 'release.ps1', 'setup.ps1',
     'tools/msvc-env.cmd', 'tools/locales.ps1', 'locales/languages.json', 'locales/catalog.schema.json',
-    'assets/ChatGPT.ico', 'assets/README.md',
+    'assets/ChatGPT.ico', 'assets/README.md', 'assets/README.en.md', 'assets/README.ja.md',
     'docs/launcher-review.md', 'docs/maintainability-review.md', 'docs/performance-review.md', 'docs/release-upload.md', 'docs/setup-design.md', 'docs/taskbar-repair.md',
     'docs/automation-design.md', 'docs/automation-usage.md', 'docs/automation-review.md', 'docs/companion-protocol-v1.md',
     'docs/developer-guide.md', 'docs/automation-maintenance.md',
     'docs/memory-thread-review.md', 'docs/localization-design.md', 'docs/translating.md',
+    'docs/translating.en.md', 'docs/translating.ja.md', 'docs/taskbar-repair.en.md', 'docs/taskbar-repair.ja.md',
+    'docs/release-upload.en.md', 'docs/release-upload.ja.md',
     'docs/schemas/deploy-v1.schema.json', 'docs/schemas/companion-v1.schema.json',
     'docs/schemas/companion-config-v1.schema.json', 'docs/schemas/companion-policy-v1.schema.json', 'docs/schemas/companion-reply-v1.schema.json',
     'docs/examples/deploy-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-context.ps1',
@@ -66,7 +68,7 @@ $sourceNames = @(
     'src/StartupIntegration.cpp', 'src/StartupIntegration.h', 'src/TaskbarShortcut.cpp', 'src/TaskbarShortcut.h',
     'tests/analyze.cmd', 'tests/codex-close-tests.cpp', 'tests/companion-tests.cpp', 'tests/download-tests.ps1',
     'tests/automation-tests.cpp', 'tests/chain-tests.cpp', 'tests/headless-download-tests.ps1', 'tests/protocol-example-tests.ps1',
-    'tests/contract-tests.cpp', 'tests/localization-tests.cpp', 'tests/localization-tests.ps1',
+    'tests/contract-tests.cpp', 'tests/localization-tests.cpp', 'tests/localization-tests.ps1', 'tests/documentation-tests.ps1',
     'tests/memory-tests.cpp', 'tests/MemoryFault.h',
     'tests/launcher-tests.cpp', 'tests/preview-download.ps1', 'tests/proxy-tests.cpp',
     'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
