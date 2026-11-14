@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "StartupIntegration.h"
+#include "NativeMemory.h"
 #include <appmodel.h>
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -25,11 +26,11 @@ bool Matches(const std::wstring& command, const std::vector<std::wstring>& execu
     int count = 0;
     PWSTR* args = CommandLineToArgvW(command.c_str(), &count);
     if (!args) return false;
+    native::LocalPtr<PWSTR> ownedArguments(args);
     bool found = false;
     for (const auto& executable : executables) {
         if (count && SamePath(args[0], executable)) { found = true; break; }
     }
-    LocalFree(args);
     return found;
 }
 bool ValidTaskId(const std::wstring& id) {

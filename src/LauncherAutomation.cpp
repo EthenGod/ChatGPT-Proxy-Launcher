@@ -2,6 +2,7 @@
 #include "LauncherAutomation.h"
 #include "AppVersion.h"
 #include "DeploymentDiscovery.h"
+#include "NativeMemory.h"
 #include <shlobj.h>
 #include <shellapi.h>
 #include <commctrl.h>
@@ -22,7 +23,8 @@ bool Token(PCWSTR& cursor, std::wstring& value) {
     if (quoted) throw automation::Invalid("unclosed-option-quote");
     int count = 0; auto argv = CommandLineToArgvW((L"launcher " + std::wstring(start, cursor)).c_str(), &count);
     if (!argv) throw automation::Invalid("invalid-option");
-    if (count == 2) value = argv[1]; LocalFree(argv);
+    native::LocalPtr<LPWSTR> ownedArguments(argv);
+    if (count == 2) value = argv[1];
     if (count != 2) throw automation::Invalid("invalid-option"); return true;
 }
 HRESULT CALLBACK NotifyCallback(HWND window, UINT notification, WPARAM elapsed, LPARAM, LONG_PTR) {

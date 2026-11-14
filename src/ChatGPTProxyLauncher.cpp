@@ -171,7 +171,7 @@ static int ReportError(DWORD error) {
     return static_cast<int>(error);
 }
 
-int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int) {
+int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int) try {
     chain::Invocation invocation;
     const int parsed = invocation.Parse(arguments);
     if (parsed) return parsed;
@@ -220,4 +220,7 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _I
         }
         return 0; // An optional extension failure must not change the ChatGPT launch result.
     }
+} catch (...) {
+    // Even an empty JSON value can allocate. Do not allocate another error report here.
+    return 70;
 }

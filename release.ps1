@@ -43,6 +43,7 @@ $sourceNames = @(
     'docs/launcher-review.md', 'docs/maintainability-review.md', 'docs/performance-review.md', 'docs/release-upload.md', 'docs/setup-design.md', 'docs/taskbar-repair.md',
     'docs/automation-design.md', 'docs/automation-usage.md', 'docs/automation-review.md', 'docs/companion-protocol-v1.md',
     'docs/developer-guide.md', 'docs/automation-maintenance.md',
+    'docs/memory-thread-review.md',
     'docs/schemas/deploy-v1.schema.json', 'docs/schemas/companion-v1.schema.json',
     'docs/schemas/companion-config-v1.schema.json', 'docs/schemas/companion-policy-v1.schema.json', 'docs/schemas/companion-reply-v1.schema.json',
     'docs/examples/deploy-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-context.ps1',
@@ -56,6 +57,7 @@ $sourceNames = @(
     'src/CompanionRunner.cpp', 'src/CompanionRunner.h', 'src/LauncherAutomation.cpp', 'src/LauncherAutomation.h', 'src/Launcher.manifest',
     'src/CodexClose.cpp', 'src/CodexClose.h',
     'src/CodexEnv.cpp', 'src/CodexEnv.h',
+    'src/NativeMemory.h',
     'src/LauncherResources.rc', 'src/ProxyDetection.cpp', 'src/ProxyDetection.h',
     'src/Setup.manifest', 'src/SetupArguments.cpp', 'src/SetupCore.cpp', 'src/SetupCore.h',
     'src/SetupResources.h', 'src/SetupResources.rc', 'src/StartupApps.cpp', 'src/StartupApps.h',
@@ -63,6 +65,7 @@ $sourceNames = @(
     'tests/analyze.cmd', 'tests/codex-close-tests.cpp', 'tests/companion-tests.cpp', 'tests/download-tests.ps1',
     'tests/automation-tests.cpp', 'tests/chain-tests.cpp', 'tests/headless-download-tests.ps1', 'tests/protocol-example-tests.ps1',
     'tests/contract-tests.cpp',
+    'tests/memory-tests.cpp', 'tests/MemoryFault.h',
     'tests/launcher-tests.cpp', 'tests/preview-download.ps1', 'tests/proxy-tests.cpp',
     'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
     'tests/taskbar-tests.cpp', 'tests/test-build.cmd'

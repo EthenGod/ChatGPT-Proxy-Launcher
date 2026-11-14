@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "AutomationIO.h"
+#include "NativeMemory.h"
 #include <sddl.h>
 #include <cwctype>
 #include <algorithm>
@@ -91,7 +92,8 @@ DWORD UserLock::Acquire(const std::wstring& identity, DWORD waitMs) {
     if (!GetTokenInformation(token.value, TokenUser, storage.data(), size, &size)) return GetLastError();
     LPWSTR sid = nullptr;
     if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(storage.data())->User.Sid, &sid)) return GetLastError();
-    std::wstring user(sid); LocalFree(sid);
+    native::LocalPtr<wchar_t> ownedSid(sid);
+    std::wstring user(sid);
     // Stable per-user/per-root identity across sessions, independent of GUI lifetime.
     unsigned long long hash = 14695981039346656037ull;
     for (auto c : identity) { hash ^= static_cast<unsigned>(towupper(c)); hash *= 1099511628211ull; }

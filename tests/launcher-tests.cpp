@@ -9,9 +9,15 @@
 #include "../src/TaskbarShortcut.h"
 #include "../src/StartupApps.h"
 #include "../src/CompanionRunner.h"
+#include "MemoryFault.h"
 static unsigned companionCalls = 0;
+static unsigned companionFailure = 0;
 void companions::Run(PCWSTR, Start) noexcept { ++companionCalls; }
-automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) noexcept {
+automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) {
+    if (companionFailure) {
+        if (companionFailure == 2) memory_fault::remaining = 0;
+        throw std::bad_alloc();
+    }
     ++companionCalls; auto result = automation::Json::Object(); result[L"entries"] = automation::Json::Array();
     result[L"chainStatus"] = automation::Json(L"completed"); result[L"exitCode"] = automation::Json::Number(0); return result;
 }
@@ -191,7 +197,7 @@ static int CheckLookup() {
     return 0;
 }
 
-static int CheckEntryAndLifetime() {
+static int CheckEntryAndLifetime(PCWSTR outputPrefix) {
     fakePackages = true; fakeCreate = true; createSuccess = true; scenario = Scenario::Normal;
     const HANDLE oldOut = GetStdHandle(STD_OUTPUT_HANDLE), oldError = GetStdHandle(STD_ERROR_HANDLE);
     HANDLE sink = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -244,6 +250,19 @@ static int CheckEntryAndLifetime() {
         REQUIRE(StartApplication(path, L"--test") == 0);
         REQUIRE(liveAllocations == 0);
     }
+    for (unsigned failure = 1; failure <= 2; ++failure) {
+        companionFailure = failure;
+        for (unsigned explicitChain = 0; explicitChain <= 1; ++explicitChain) {
+            const auto output = std::wstring(outputPrefix) + L"-failure-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(failure) + L".json";
+            std::wstring tail = explicitChain ? L"--launcher-chain --result \"" + output + L"\" --feedback quiet --" : L"--test";
+            int code = -1;
+            { memory_fault::Scope fault; code = wWinMain(nullptr, nullptr, tail.data(), 0); }
+            REQUIRE(code == (explicitChain ? failure == 2 ? 70 : 10 : 0));
+            REQUIRE(liveAllocations == 0);
+        }
+    }
+    companionFailure = 0;
+    puts("PASS launcher allocation failure boundary: ordinary launch retains success; explicit mode returns 10 or 70 without termination");
     fakePackages = false; fakeCreate = false; createSuccess = false;
     return 0;
 }
@@ -283,7 +302,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (argc != 2) return 2;
     REQUIRE(CheckLookup() == 0);
-    REQUIRE(CheckEntryAndLifetime() == 0);
+    REQUIRE(CheckEntryAndLifetime(argv[1]) == 0);
     messageCalls = 0;
     REQUIRE(ReportError(0) == 0 && messageCalls == 0);
     wchar_t executable[32768], command[32768];

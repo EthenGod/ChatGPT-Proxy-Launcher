@@ -9,7 +9,7 @@
 void RepairTaskbarShortcut(PCWSTR) noexcept {}
 // This suite imports the launcher's process builder, not its automation entry points.
 std::wstring chain::RootDirectory() { return {}; }
-automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) noexcept { return {}; }
+automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) { return {}; }
 int chain::Invocation::Parse(PCWSTR raw) noexcept { forwarded = raw; return 0; }
 int chain::Invocation::Info() noexcept { return 20; }
 int chain::Invocation::Finish(DWORD, const automation::Json&) noexcept { return 70; }

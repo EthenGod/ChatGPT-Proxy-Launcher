@@ -8,8 +8,16 @@
 #include <algorithm>
 #include <psapi.h>
 #include <thread>
+#include "MemoryFault.h"
 static unsigned notifications = 0, closeSignals = 0, legacyCalls = 0;
 static bool rejectJob = false, rejectJobQuery = false;
+static thread_local PCWSTR syntheticEnvironment = nullptr;
+static LPWCH WINAPI TestEnvironmentStrings() {
+    return syntheticEnvironment ? const_cast<LPWCH>(syntheticEnvironment) : GetEnvironmentStringsW();
+}
+static BOOL WINAPI TestFreeEnvironment(LPWCH block) {
+    return block == syntheticEnvironment ? TRUE : FreeEnvironmentStringsW(block);
+}
 static HANDLE WINAPI TestCreateJob(LPSECURITY_ATTRIBUTES attributes, LPCWSTR name) {
     if (rejectJob) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
     return CreateJobObjectW(attributes, name);
@@ -34,9 +42,13 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #undef GetUserObjectInformationW
 #define CreateJobObjectW TestCreateJob
 #define QueryInformationJobObject TestQueryJob
+#define GetEnvironmentStringsW TestEnvironmentStrings
+#define FreeEnvironmentStringsW TestFreeEnvironment
 #include "../src/CompanionRunner.cpp"
 #undef CreateJobObjectW
 #undef QueryInformationJobObject
+#undef GetEnvironmentStringsW
+#undef FreeEnvironmentStringsW
 using automation::Json;
 using automation::Handle;
 using automation::Invalid;
@@ -171,6 +183,51 @@ int wmain(int argc, wchar_t** argv) {
         const auto base = Join(argv[1], L"chain-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         REQUIRE(CreateDirectoryW(base.c_str(), nullptr)); wchar_t self[32768]{}; GetModuleFileNameW(nullptr, self, 32768);
         if (benchmark) { const auto code = Benchmark(base, self); CoUninitialize(); return code; }
+        {
+            syntheticEnvironment = L"Alpha=old\0=C:=C:\\example\0Keep=value\0";
+            const std::map<std::wstring, std::wstring> changes{{L"alpha", L"新 值"}, {L"Beta", L"a=b"}};
+            const wchar_t expected[] = L"=C:=C:\\example\0Alpha=新 值\0Beta=a=b\0Keep=value\0";
+            const auto block = chain::Environment(changes);
+            REQUIRE(block == std::vector<wchar_t>(expected, expected + _countof(expected)));
+            syntheticEnvironment = L"\0";
+            REQUIRE(chain::Environment({}) == std::vector<wchar_t>({0, 0}));
+            syntheticEnvironment = nullptr;
+        }
+        chain::RunOptions emptyOptions{Join(base, L"allocation-faults"), self, 0};
+        REQUIRE(CreateDirectoryW(emptyOptions.root.c_str(), nullptr));
+        REQUIRE(CreateDirectoryW(Join(emptyOptions.root, companions::Folder).c_str(), nullptr));
+        chain::Run(emptyOptions, L"ChatGPT.exe", Legacy); // Warm up Windows security/CRT state before counting handles.
+        DWORD handlesBeforeFaults = 0, handlesAfterFaults = 0;
+        REQUIRE(GetProcessHandleCount(GetCurrentProcess(), &handlesBeforeFaults));
+        unsigned failedReports = 0, completedReports = 0;
+        for (int fail = 0; fail < 128; ++fail) {
+            Json report;
+            try { memory_fault::Scope fault(fail); report = chain::Run(emptyOptions, L"ChatGPT.exe", Legacy); }
+            catch (const std::bad_alloc&) { ++failedReports; }
+            if (report.type != Json::Type::Null) {
+                ++completedReports;
+                REQUIRE(report.At(L"exitCode").Integer(0, 255) == 0);
+            }
+            REQUIRE(chain::legacyResults == nullptr && chain::activeRecords == nullptr);
+        }
+        REQUIRE(failedReports > 0 && completedReports > 0);
+        REQUIRE(GetProcessHandleCount(GetCurrentProcess(), &handlesAfterFaults));
+        if (handlesBeforeFaults != handlesAfterFaults) printf("Fault-loop handles: %lu -> %lu\n", handlesBeforeFaults, handlesAfterFaults);
+        REQUIRE(handlesBeforeFaults == handlesAfterFaults);
+        {
+            const std::wstring emptyTail;
+            memory_fault::Scope fault(0);
+            REQUIRE(setup::RunSetupCommandLine(nullptr, emptyTail) == 50);
+        }
+        const auto failedOutput = Join(base, L"allocation-result.json");
+        {
+            chain::Invocation invocation;
+            REQUIRE(invocation.Parse((L"--launcher-chain --result " + automation::Quote(failedOutput) + L" --feedback quiet --").c_str()) == 0);
+            const auto report = Json::Object();
+            memory_fault::Scope fault(0);
+            REQUIRE(invocation.Finish(0, report) == 70);
+        }
+        puts("PASS chain allocation failures: 128 positions, exceptions reach caller, no leaked handles or dangling callbacks; result failure returns 70");
         const chain::ReplyIdentity identity{L"run", L"attempt", L"token"};
         auto reply = automation::ParseJson("{\"schemaVersion\":1,\"runId\":\"run\",\"attemptId\":\"attempt\",\"token\":\"token\",\"status\":\"failed\",\"errorCode\":\"invalid-config\",\"retryable\":true}");
         REQUIRE(!chain::ParseReadyReply(automation::WriteJson(reply), identity).retryable);

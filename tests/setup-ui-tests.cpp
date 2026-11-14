@@ -6,6 +6,20 @@
 #include <chrono>
 #include <shellapi.h>
 #include <uxtheme.h>
+#include <atomic>
+static std::atomic<bool> dropCompletionMessages{false};
+static bool failWorkerTimer = false;
+static HANDLE proxyGate = nullptr, proxyEntered = nullptr, saveGate = nullptr, saveEntered = nullptr;
+static BOOL WINAPI TestPostMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (dropCompletionMessages && (message == WM_APP + 1 || message == WM_APP + 3)) {
+        SetLastError(ERROR_NOT_ENOUGH_QUOTA); return FALSE;
+    }
+    return PostMessageW(window, message, wparam, lparam);
+}
+static UINT_PTR WINAPI TestSetTimer(HWND window, UINT_PTR id, UINT elapsed, TIMERPROC callback) {
+    if (failWorkerTimer && id == 2) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return 0; }
+    return SetTimer(window, id, elapsed, callback);
+}
 static bool trackPaintBuffer = false;
 static RECT paintBufferBounds{};
 static HPAINTBUFFER WINAPI TestPaintBuffer(HDC target, const RECT* bounds, BP_BUFFERFORMAT format,
@@ -20,7 +34,7 @@ static std::wstring lastDialog, lastFolder;
 static bool settingsAfterReminder = false;
 static DWORD settingsError = 0;
 static setup::ProxyDetection proxyResult;
-static unsigned proxyCalls = 0;
+static std::atomic<unsigned> proxyCalls{0};
 static unsigned codexCloseCalls = 0;
 static setup::ChatGPTCloseResult closeResult = setup::ChatGPTCloseResult::Closed;
 static std::wstring envFileForClose;
@@ -60,10 +74,12 @@ static LSTATUS WINAPI TestThemeWrite(HKEY key, LPCWSTR path, LPCWSTR name, DWORD
 namespace setup {
 ChatGPTCloseResult TryCloseChatGPT() {
     ++codexCloseCalls;
+    if (saveGate) { SetEvent(saveEntered); WaitForSingleObject(saveGate, 5000); }
     envSavedBeforeClose = envSavedBeforeClose && GetFileAttributesW(envFileForClose.c_str()) != INVALID_FILE_ATTRIBUTES;
     return closeResult;
 }
 ProxyDetection DetectProxyPort(const std::wstring&, const std::wstring&) {
+    if (proxyGate) { SetEvent(proxyEntered); WaitForSingleObject(proxyGate, 5000); }
     ++proxyCalls; Sleep(20); return proxyResult;
 }
 StartupReport TryDisableOfficialStartup() { ++disableCalls; return {0, 0, 0, true}; }
@@ -88,6 +104,8 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #define RegGetValueW TestThemeRead
 #define RegSetKeyValueW TestThemeWrite
 #define BeginBufferedPaint TestPaintBuffer
+#define PostMessageW TestPostMessage
+#define SetTimer TestSetTimer
 #define wWinMain SetupEntryForTest
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
@@ -96,6 +114,8 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #undef RegGetValueW
 #undef RegSetKeyValueW
 #undef BeginBufferedPaint
+#undef PostMessageW
+#undef SetTimer
 
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
 struct ButtonPaintProbe { unsigned paints = 0, captions = 0; };
@@ -413,6 +433,17 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(app.Text(Port) == L"12345");
     // Drain completion messages before running unrelated UI regression checks.
     while (PeekMessageW(&detectMessage, app.window, PortDetectedMessage, PortDetectedMessage, PM_REMOVE)) DispatchMessageW(&detectMessage);
+    dropCompletionMessages = true;
+    app.Set(Port, L""); app.DetectPort();
+    REQUIRE(app.detectingPort);
+    const auto detectionDeadline = GetTickCount64() + 3000;
+    while (app.detectingPort && GetTickCount64() < detectionDeadline) {
+        while (PeekMessageW(&detectMessage, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&detectMessage);
+        if (app.detectingPort) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, 0);
+    }
+    REQUIRE(!app.detectingPort && !app.portWorker.joinable() && app.Text(Port) == L"12345");
+    REQUIRE(!KillTimer(app.window, WorkerTimer)); // No idle polling after completion.
+    dropCompletionMessages = false;
     SetFocus(app.body);
     app.RestoreOptions(initial);
     puts("PASS async proxy fill, preview, manual input preservation, protocol/host/save invalidation, fallback and click retry (mock discovery)");
@@ -645,7 +676,16 @@ static int RunTests(PCWSTR folder) {
     app.Check(Startup, true);
     app.Check(Proxy, true); app.Set(Port, L"12345"); app.Refresh(true);
     SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
+    failWorkerTimer = true;
+    app.Command(ApplyButton, BN_CLICKED);
+    REQUIRE(!app.busy && !app.worker.joinable() && !app.pendingSave);
+    failWorkerTimer = false;
+    dropCompletionMessages = true;
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
+    dropCompletionMessages = false;
+    REQUIRE(!app.pendingSave && !app.worker.joinable() && !KillTimer(app.window, WorkerTimer));
+    SendMessageW(app.window, SavedMessage, 0, 0);
+    SendMessageW(app.window, SavedMessage, 0, 0); // Duplicate notifications carry no pointer/ownership.
     REQUIRE(app.Checked(Desktop) && IsWindowEnabled(app.Get(Desktop)));
     REQUIRE(GetFileAttributesW(app.paths.codexEnvFile.c_str()) != INVALID_FILE_ATTRIBUTES);
     REQUIRE(storedCodexEnv == 1 && app.Checked(CodexEnv));
@@ -716,7 +756,7 @@ static int RunTests(PCWSTR folder) {
     failure->result = {ERROR_ALREADY_EXISTS, L"Shortcut conflict", shortcutDirectory};
     openFolderSucceeds = false;
     const unsigned dialogsBefore = reminderCalls;
-    SendMessageW(app.window, SavedMessage, 0, reinterpret_cast<LPARAM>(failure.release()));
+    app.FinishSave(std::move(failure));
     REQUIRE(folderCalls == 2 && lastFolder == shortcutDirectory && folderRequestValid);
     REQUIRE(reminderCalls == dialogsBefore + 2 && lastDialog.find(shortcutDirectory) != std::wstring::npos);
     REQUIRE(lastDialog.find(L"无法打开文件夹") != std::wstring::npos);
@@ -727,7 +767,7 @@ static int RunTests(PCWSTR folder) {
     auto savedWithSettingsFailure = std::make_unique<Completion>();
     savedWithSettingsFailure->checkStartup = true;
     settingsError = ERROR_ACCESS_DENIED;
-    SendMessageW(app.window, SavedMessage, 0, reinterpret_cast<LPARAM>(savedWithSettingsFailure.release()));
+    app.FinishSave(std::move(savedWithSettingsFailure));
     REQUIRE(!app.busy && !app.dirty && IsWindowEnabled(app.Get(CloseButton)));
     REQUIRE(app.Text(CloseButton) == L"完成" && app.Text(ApplyButton) == L"已保存");
     REQUIRE(lastDialog.find(L"配置已保存") != std::wstring::npos);
@@ -738,6 +778,31 @@ static int RunTests(PCWSTR folder) {
     MSG finishKey{}; finishKey.hwnd = GetFocus(); finishKey.message = WM_KEYDOWN; finishKey.wParam = VK_RETURN;
     REQUIRE(IsDialogMessageW(app.window, &finishKey));
     REQUIRE(!IsWindow(app.window) && reminderCalls == finalReminders);
+    {
+        App closingApp; closingApp.instance = app.instance; closingApp.paths = app.paths; closingApp.payload = app.payload;
+        REQUIRE(CreateWindowExW(0, L"SetupTestWindow", L"Worker lifetime test", WS_OVERLAPPEDWINDOW,
+            -20000, -20000, 720, 812, nullptr, nullptr, app.instance, &closingApp));
+        automation::Handle proxyEvent(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        automation::Handle proxyStarted(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        automation::Handle saveEvent(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        automation::Handle saveStarted(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        REQUIRE(proxyEvent && proxyStarted && saveEvent && saveStarted);
+        proxyGate = proxyEvent.value; proxyEntered = proxyStarted.value;
+        saveGate = saveEvent.value; saveEntered = saveStarted.value;
+        closingApp.Check(Proxy, true); closingApp.Check(CodexEnv, true); closingApp.Check(Startup, false);
+        closingApp.Set(Directory, root); closingApp.Set(Port, L"");
+        closingApp.DetectPort(); REQUIRE(closingApp.detectingPort);
+        closingApp.Set(Port, L"12345"); closingApp.BeginSave(); REQUIRE(closingApp.busy);
+        HANDLE workerStartedEvents[]{proxyEntered, saveEntered};
+        REQUIRE(WaitForMultipleObjects(2, workerStartedEvents, TRUE, 5000) == WAIT_OBJECT_0);
+        std::thread releaseWorkers([&] { Sleep(20); SetEvent(proxyGate); SetEvent(saveGate); });
+        DestroyWindow(closingApp.window); // System/owner teardown may bypass WM_CLOSE's busy guard.
+        releaseWorkers.join();
+        REQUIRE(closingApp.closing && !closingApp.window && !closingApp.pendingSave);
+        REQUIRE(!closingApp.worker.joinable() && !closingApp.portWorker.joinable());
+        proxyGate = proxyEntered = saveGate = saveEntered = nullptr;
+    }
+    puts("PASS worker ownership: lost messages, duplicate notifications, timer failure, idle timer cleanup and concurrent save/detection during window teardown");
     printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
     puts("PASS dirty-region buffers and pixel-identical partial/full surface painting across themes, scaling and scrolling");
     puts("PASS save focus: successful completion selects Done, failures select Save, Enter closes after success");

@@ -27,6 +27,10 @@ cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work
 if errorlevel 1 exit /b %errorlevel%
 work\setup-tests.exe "%CD%\work" "%CD%\outputs\ChatGPTProxyLauncher.exe" "%CD%\outputs\ChatGPTLauncherSetup.exe"
 if errorlevel 1 exit /b %errorlevel%
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\memory-tests.obj /Fe:work\memory-tests.exe tests\memory-tests.cpp %SETUP_VALUE_OBJECTS% /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib shlwapi.lib version.lib
+if errorlevel 1 exit /b %errorlevel%
+work\memory-tests.exe
+if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\startup-tests.obj /Fe:work\startup-tests.exe tests\startup-tests.cpp work\SetupCore.obj %SETUP_VALUE_OBJECTS% /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib shlwapi.lib advapi32.lib xmllite.lib version.lib
 if errorlevel 1 exit /b %errorlevel%
 work\startup-tests.exe

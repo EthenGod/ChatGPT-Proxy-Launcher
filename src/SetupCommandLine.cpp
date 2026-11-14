@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCommandLine.h"
+#include "NativeMemory.h"
 #include "SetupResources.h"
 #include "AppVersion.h"
 #include "CompanionManifest.h"
@@ -81,7 +82,8 @@ void ParseAutomationCommand(const std::wstring& tail, AutomationCommand& command
     command = {};
     int count = 0; LPWSTR* raw = CommandLineToArgvW((L"setup " + tail).c_str(), &count);
     if (!raw) throw Invalid("invalid-command-line");
-    std::vector<std::wstring> args(raw + 1, raw + count); LocalFree(raw);
+    native::LocalPtr<LPWSTR> ownedArguments(raw);
+    std::vector<std::wstring> args(raw + 1, raw + count);
     if (args.size() < 2 || args[0] != L"--headless") throw Invalid("expected-headless-command");
     command.operation = args[1];
     size_t firstOption = 2;
@@ -278,7 +280,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
     } catch (...) { Failure(result, 70, L"result-unavailable"); }
     return result;
 }
-int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail) noexcept {
+int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail) noexcept try {
     AutomationCommand command;
     try {
         ParseAutomationCommand(tail, command);
@@ -302,5 +304,8 @@ int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail) noexcept {
         } catch (...) { return 70; }
         return 20;
     } catch (...) { return 50; }
+} catch (...) {
+    // AutomationCommand contains JSON storage, which may fail before the inner try.
+    return 50;
 }
 }

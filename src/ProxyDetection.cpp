@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <winsock2.h>
 #include <windows.h>
+#include "NativeMemory.h"
 #include <iphlpapi.h>
 #include <tlhelp32.h>
 #include <shlobj.h>
@@ -207,7 +208,8 @@ bool Listening(unsigned port, const std::vector<Listener>& listeners, const std:
 std::wstring KnownFolder(REFKNOWNFOLDERID id) {
     PWSTR path = nullptr;
     if (FAILED(SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, nullptr, &path))) return {};
-    std::wstring result(path); CoTaskMemFree(path); return result;
+    native::TaskPtr<wchar_t> ownedPath(path);
+    return path;
 }
 std::wstring ProcessImage(DWORD id) {
     Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id)};
@@ -350,7 +352,8 @@ ProxyDetection DetectProxyPort(const std::wstring& protocol, const std::wstring&
     DiscoverV2rayN(candidates, protocol, listeners, io);
     PWSTR roaming = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY, nullptr, &roaming))) {
-        const std::wstring root(roaming); CoTaskMemFree(roaming);
+        native::TaskPtr<wchar_t> ownedRoaming(roaming);
+        const std::wstring root(roaming);
         const struct { PCWSTR path; PCWSTR process; PCWSTR name; } sources[] = {
             {L"\\io.github.clash-verge-rev.clash-verge-rev\\clash-verge.yaml", L"verge-mihomo.exe", L"Clash Verge Rev"},
             {L"\\com.follow\\clash\\config.yaml", L"FlClashCore.exe", L"FlClash"},

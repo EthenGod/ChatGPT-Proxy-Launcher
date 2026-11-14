@@ -18,6 +18,8 @@
 #include <memory>
 #include <thread>
 #include <vector>
+#include <atomic>
+#include "NativeMemory.h"
 
 namespace {
 constexpr UINT SavedMessage = WM_APP + 1;
@@ -25,6 +27,7 @@ constexpr UINT DetectPortMessage = WM_APP + 2;
 constexpr UINT PortDetectedMessage = WM_APP + 3;
 constexpr int FooterHeight = 96;
 constexpr UINT_PTR MotionTimer = 1;
+constexpr UINT_PTR WorkerTimer = 2;
 enum ControlId {
     Title = 1000, SetupVersion, ThemeToggle, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, PortHelp, Port,
@@ -153,12 +156,15 @@ struct App {
     std::vector<Control> controls;
     std::thread worker;
     std::thread portWorker;
+    std::unique_ptr<Completion> pendingSave;
+    std::atomic<bool> saveFinished{false}, portFinished{false};
+    bool closing = false;
     bool detectingPort = false;
     unsigned editRevision = 0, detectionRevision = 0;
     setup::ProxyDetection detectedPort;
     ~App() {
-        if (worker.joinable()) worker.join();
-        if (portWorker.joinable()) portWorker.join();
+        StopWorkers();
+        if (window) DestroyWindow(window);
         for (HFONT font : fonts) if (font) DeleteObject(font);
         if (background) DeleteObject(background);
         if (surface) DeleteObject(surface);
@@ -189,6 +195,8 @@ struct App {
     void Refresh(bool edited);
     void DetectPort();
     void FinishPortDetection();
+    void PollWorkers();
+    void StopWorkers();
     void RestoreOptions(const setup::Loaded& loaded);
     void Command(int id, int notification);
     void BeginSave();
@@ -518,18 +526,23 @@ void App::Refresh(bool edited) {
     Set(CloseButton, savedThisSession && !dirty ? L"完成" : L"关闭");
 }
 void App::DetectPort() {
-    if (loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
+    if (closing || loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
     const auto options = Options();
     detectingPort = true; detectionRevision = editRevision;
     Set(Footer, L"正在读取本机代理端口…也可以直接手动填写。");
     try {
+        detectedPort = {}; // Allocate the fallback before starting the worker.
+        portFinished.store(false, std::memory_order_relaxed);
+        if (!SetTimer(window, WorkerTimer, 100, nullptr)) throw std::bad_alloc();
         portWorker = std::thread([this, protocol = options.protocol, host = options.host] {
             try { detectedPort = setup::DetectProxyPort(protocol, host); }
-            catch (...) { detectedPort = {}; }
+            catch (...) {} // Keep the preallocated fallback; do not allocate in this handler.
+            portFinished.store(true, std::memory_order_release);
             PostMessageW(window, PortDetectedMessage, 0, 0);
         });
     } catch (...) {
         detectingPort = false;
+        if (!busy) KillTimer(window, WorkerTimer);
         Set(Footer, setup::ProxyDetection{}.message);
     }
 }
@@ -537,6 +550,7 @@ void App::FinishPortDetection() {
     if (!detectingPort) return;
     if (portWorker.joinable()) portWorker.join();
     detectingPort = false;
+    if (!busy) KillTimer(window, WorkerTimer);
     // Editing, loading or saving while discovery runs invalidates that result.
     if (busy || loading || editRevision != detectionRevision || !Checked(Proxy) || !Text(Port).empty()) return;
     if (!detectedPort.port.empty()) {
@@ -544,6 +558,25 @@ void App::FinishPortDetection() {
         SendMessageW(Get(Port), EM_SETSEL, 0, -1);
     }
     Set(Footer, detectedPort.message);
+}
+void App::PollWorkers() {
+    if (closing) return;
+    if (detectingPort && portFinished.load(std::memory_order_acquire)) FinishPortDetection();
+    if (busy && saveFinished.load(std::memory_order_acquire)) {
+        if (worker.joinable()) worker.join();
+        if (pendingSave) FinishSave(std::move(pendingSave));
+    }
+    if (!busy && !detectingPort) KillTimer(window, WorkerTimer);
+}
+void App::StopWorkers() {
+    if (closing) return;
+    closing = true;
+    if (window) KillTimer(window, WorkerTimer);
+    // Workers only post messages. They never wait for this window to process them.
+    if (worker.joinable()) worker.join();
+    if (portWorker.joinable()) portWorker.join();
+    pendingSave.reset();
+    busy = detectingPort = false;
 }
 void App::RestoreOptions(const setup::Loaded& loaded) {
     loading = true;
@@ -608,6 +641,7 @@ void App::Command(int id, int notification) {
         const bool selectProgram = id == AddProgram;
         IFileOpenDialog* dialog = nullptr;
         HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+        native::ComPtr<IFileOpenDialog> ownedDialog(dialog);
         if (SUCCEEDED(hr)) {
             DWORD flags = 0;
             hr = dialog->GetOptions(&flags);
@@ -635,7 +669,9 @@ void App::Command(int id, int notification) {
                 IShellItem* item = nullptr;
                 hr = dialog->GetResult(&item);
                 if (SUCCEEDED(hr)) {
+                    native::ComPtr<IShellItem> ownedItem(item);
                     PWSTR path = nullptr; hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+                    native::TaskPtr<wchar_t> ownedPath(path);
                     if (SUCCEEDED(hr)) {
                         if (selectProgram) {
                             const auto added = setup::AddCompanionProgram(paths, path);
@@ -643,12 +679,9 @@ void App::Command(int id, int notification) {
                             else Set(Footer, savedThisSession ? L"已添加，下次通过启动器打开 ChatGPT 时生效。"
                                 : L"已添加。请部署并保存新版启动器。");
                         } else Set(Directory, path);
-                        CoTaskMemFree(path);
                     }
-                    item->Release();
                 }
             }
-            dialog->Release();
         }
         if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED))
             MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), selectProgram ? L"无法选择程序" : L"无法选择目录", MB_OK | MB_ICONERROR);
@@ -662,7 +695,7 @@ void App::Command(int id, int notification) {
 }
 
 void App::BeginSave() {
-    if (busy || fatal) return;
+    if (closing || busy || fatal) return;
     if (savedThisSession && !dirty) {
         Set(Footer, L"配置已保存，可以点击「完成」关闭本工具，无需再次部署。"); return;
     }
@@ -675,10 +708,17 @@ void App::BeginSave() {
         completion->checkStartup = options.startup && !startupReminderShown;
         completion->codexEnv = options.codexEnv;
         completion->wroteCodexEnv = options.proxy && options.codexEnv;
+        std::wstring failureMessage = L"保存未完成。请重新打开工具检查配置后重试。";
+        pendingSave = std::move(completion);
+        saveFinished.store(false, std::memory_order_relaxed);
+        if (!SetTimer(window, WorkerTimer, 100, nullptr)) throw std::bad_alloc();
         // System operations run here; only FinishSave updates controls after completion.
-        worker = std::thread([this, options, completion = std::move(completion)]() mutable {
+        worker = std::thread([this, options, completion = pendingSave.get(), failureMessage = std::move(failureMessage)]() mutable {
             const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            if (FAILED(com)) completion->result = { static_cast<DWORD>(com), L"无法初始化 Windows 快捷方式组件。" };
+            if (FAILED(com)) {
+                completion->result.code = static_cast<DWORD>(com);
+                completion->result.message.swap(failureMessage);
+            }
             else {
                 automation::UserLock operation;
                 try {
@@ -686,7 +726,10 @@ void App::BeginSave() {
                     completion->result = locked ? setup::Result{locked, L"其他操作正在保存配置，请稍后重试。"}
                         : setup::Apply(paths, options, payload, completion->target);
                 }
-                catch (...) { completion->result = { ERROR_NOT_ENOUGH_MEMORY, L"保存未完成。请重新打开工具检查配置后重试。" }; }
+                catch (...) {
+                    completion->result.code = ERROR_NOT_ENOUGH_MEMORY;
+                    completion->result.message.swap(failureMessage);
+                }
                 if (completion->result && completion->checkStartup) {
                     try { completion->startupReport = setup::TryDisableOfficialStartup(); }
                     catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
@@ -697,9 +740,12 @@ void App::BeginSave() {
                 }
                 CoUninitialize();
             }
-            if (PostMessageW(window, SavedMessage, 0, reinterpret_cast<LPARAM>(completion.get()))) completion.release();
+            saveFinished.store(true, std::memory_order_release);
+            PostMessageW(window, SavedMessage, 0, 0);
         });
     } catch (...) {
+        pendingSave.reset();
+        if (!detectingPort) KillTimer(window, WorkerTimer);
         Set(Footer, L"未能开始保存。设置仍在，请重试。");
         return;
     }
@@ -711,6 +757,7 @@ void App::BeginSave() {
 void App::FinishSave(std::unique_ptr<Completion> done) {
     if (worker.joinable()) worker.join();
     busy = false;
+    if (!detectingPort) KillTimer(window, WorkerTimer);
     for (const auto& control : controls) EnableWindow(control.window, TRUE);
     if (done->result) {
         const bool preferenceSaved = SaveCodexEnvPreference(done->codexEnv);
@@ -1142,6 +1189,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     case WM_SETTINGCHANGE: case WM_THEMECHANGED: app->Theme(); app->Layout(); return 0;
     case WM_TIMER:
         if (wparam == MotionTimer) { app->TickMotion(); return 0; }
+        if (wparam == WorkerTimer) { app->PollWorkers(); return 0; }
         break;
     case WM_DRAWITEM: {
         const auto item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
@@ -1158,16 +1206,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     case WM_COMMAND: app->Command(LOWORD(wparam), HIWORD(wparam)); return 0;
     case WM_MOUSEWHEEL: return SendMessageW(app->body, message, wparam, lparam);
     case DetectPortMessage: app->DetectPort(); return 0;
-    case PortDetectedMessage: app->FinishPortDetection(); return 0;
-    case SavedMessage:
-        app->FinishSave(std::unique_ptr<Completion>(reinterpret_cast<Completion*>(lparam)));
-        return 0;
+    case PortDetectedMessage: case SavedMessage: app->PollWorkers(); return 0;
     case WM_CLOSE:
         if (app->busy) return 0;
         if (app->dirty && MessageBoxW(window, L"还有尚未保存的更改。要放弃这些更改并关闭吗？",
             L"关闭配置工具", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return 0;
         DestroyWindow(window); return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY: app->StopWorkers(); app->window = nullptr; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(window, message, wparam, lparam);
 }

@@ -2,6 +2,7 @@
 #include "CompanionRunner.h"
 #include "CompanionProtocol.h"
 #include "AppVersion.h"
+#include "NativeMemory.h"
 #include <shlobj.h>
 #include <bcrypt.h>
 #include <sddl.h>
@@ -27,26 +28,28 @@ std::wstring Sid(HANDLE process) {
     if (!n || !GetTokenInformation(token.value, TokenUser, bytes.data(), n, &n)) throw automation::IoError(GetLastError());
     LPWSTR text = nullptr;
     if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(bytes.data())->User.Sid, &text)) throw automation::IoError(GetLastError());
-    std::wstring result(text); LocalFree(text); return result;
+    native::LocalPtr<wchar_t> ownedText(text);
+    return text;
 }
 struct AttemptFiles {
-    std::wstring folder, context, reply;
+    std::wstring folder, context, reply, replyTemp;
     bool owned = false;
     void Create(const std::wstring& token) {
         wchar_t temp[MAX_PATH]{}; const DWORD n = GetTempPathW(MAX_PATH, temp);
         if (!n || n >= MAX_PATH) throw Invalid("temporary-path-unavailable");
         folder = Join(temp, L"ChatGPTLauncher-chain-" + token); automation::CheckPlainPath(folder);
+        context = Join(folder, L"context.json"); reply = Join(folder, L"reply.json"); replyTemp = reply + L".tmp";
         const auto dacl = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;" + Sid(GetCurrentProcess()) + L")";
         PSECURITY_DESCRIPTOR sd = nullptr;
         if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(dacl.c_str(), SDDL_REVISION_1, &sd, nullptr)) throw automation::IoError(GetLastError());
         SECURITY_ATTRIBUTES sa{sizeof(sa), sd, FALSE}; const BOOL created = CreateDirectoryW(folder.c_str(), &sa); const DWORD error = GetLastError(); LocalFree(sd);
         if (!created) throw automation::IoError(error);
-        owned = true; context = Join(folder, L"context.json"); reply = Join(folder, L"reply.json");
+        owned = true;
     }
     ~AttemptFiles() {
         if (!owned) return;
         try { automation::CheckPlainPath(folder); } catch (...) { return; }
-        DeleteFileW(context.c_str()); DeleteFileW(reply.c_str()); DeleteFileW((reply + L".tmp").c_str()); RemoveDirectoryW(folder.c_str());
+        DeleteFileW(context.c_str()); DeleteFileW(reply.c_str()); DeleteFileW(replyTemp.c_str()); RemoveDirectoryW(folder.c_str());
     }
 };
 struct Watch {
@@ -77,10 +80,14 @@ std::vector<wchar_t> Environment(const std::map<std::wstring, std::wstring>& val
         if (sep != item.npos) items[item.substr(0, sep)] = item.substr(sep + 1);
     }
     for (const auto& v : values) items[v.first] = v.second;
-    std::vector<wchar_t> out;
+    size_t size = 1;
+    for (const auto& item : items) size += item.first.size() + item.second.size() + 2;
+    std::vector<wchar_t> out; out.reserve(std::max(size, size_t{2}));
     for (const auto& item : items) {
-        const auto text = item.first + L"=" + item.second; out.insert(out.end(), text.begin(), text.end()); out.push_back(0);
+        out.insert(out.end(), item.first.begin(), item.first.end()); out.push_back(L'=');
+        out.insert(out.end(), item.second.begin(), item.second.end()); out.push_back(0);
     }
+    if (out.empty()) out.push_back(0);
     out.push_back(0); return out;
 }
 std::wstring DeadlineUtc(DWORD remaining) {
@@ -248,9 +255,10 @@ bool Succeeded(const Json& item) { return rules::ItemSucceeded(item.At(L"status"
 std::wstring RootDirectory() {
     PWSTR path = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, nullptr, &path))) throw Invalid("local-data-unavailable");
-    const auto root = Join(path, companions::Root); CoTaskMemFree(path); return root;
+    native::TaskPtr<wchar_t> ownedPath(path);
+    return Join(path, companions::Root);
 }
-Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) noexcept {
+Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) {
     auto report = Json::Object(); report[L"entries"] = Json::Array(); report[L"chainStatus"] = Json(L"completed"); report[L"exitCode"] = Json::Number(0);
     bool notify = options.feedback != 0;
     try {

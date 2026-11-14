@@ -4,6 +4,7 @@
 #include "StartupApps.h"
 #include "DeploymentDiscovery.h"
 #include "AppVersion.h"
+#include "NativeMemory.h"
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <utility>
@@ -77,6 +78,7 @@ struct TempFile {
     ~TempFile() { if (!path.empty()) DeleteFileW(path.c_str()); }
 };
 Result NewTemp(const std::wstring& target, TempFile& temp) {
+    temp.path.reserve(MAX_PATH); // No allocation may fail after the file is created.
     wchar_t name[MAX_PATH]{};
     if (!GetTempFileNameW(Parent(target).c_str(), L"cgl", 0, name))
         return Fail(GetLastError(), L"无法在目标目录创建临时文件。");
@@ -151,8 +153,8 @@ std::wstring ErrorText(DWORD error) {
     PWSTR message = nullptr;
     FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         nullptr, error, 0, reinterpret_cast<PWSTR>(&message), 0, nullptr);
+    native::LocalPtr<wchar_t> ownedMessage(message);
     std::wstring result = message ? message : L"Windows 未提供详细说明。";
-    if (message) LocalFree(message);
     while (!result.empty() && (result.back() == L'\r' || result.back() == L'\n')) result.pop_back();
     return result + L"（错误码 " + std::to_wstring(error) + L"）";
 }
@@ -162,23 +164,23 @@ std::wstring Join(const std::wstring& directory, const std::wstring& file) {
 Result GetPaths(Paths& paths) {
     PWSTR local = nullptr, startup = nullptr;
     HRESULT hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local);
+    native::TaskPtr<wchar_t> ownedLocal(local);
     if (FAILED(hr)) return Hr(hr, L"无法获取用户程序目录。");
     paths.defaultDirectory = Join(local, companions::Root);
-    CoTaskMemFree(local);
     paths.settingsLink = Join(paths.defaultDirectory, automation::contract::SettingsLink);
     hr = SHGetKnownFolderPath(FOLDERID_Startup, 0, nullptr, &startup);
+    native::TaskPtr<wchar_t> ownedStartup(startup);
     if (FAILED(hr)) return Hr(hr, L"无法获取当前用户的启动文件夹。");
     paths.startupLink = Join(startup, LinkName);
-    CoTaskMemFree(startup);
     PWSTR desktop = nullptr;
     hr = SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop);
+    native::TaskPtr<wchar_t> ownedDesktop(desktop);
     // The optional desktop entry must not prevent deployment when the desktop is unavailable.
     paths.desktopLink = SUCCEEDED(hr) ? Join(desktop, LinkName) : L"";
-    CoTaskMemFree(desktop);
     PWSTR profile = nullptr;
     hr = SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &profile);
+    native::TaskPtr<wchar_t> ownedProfile(profile);
     paths.codexEnvFile = SUCCEEDED(hr) ? Join(Join(profile, L".codex"), L".env") : L"";
-    CoTaskMemFree(profile);
     return {};
 }
 Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
