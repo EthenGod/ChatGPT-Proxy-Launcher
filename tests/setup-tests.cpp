@@ -7,12 +7,23 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include "MemoryFault.h"
+#include "../src/AutomationIO.h"
 
 // Fault injection exists only in this translation unit, never in the release binary.
 static unsigned moveCalls = 0, failMoveAt = 0, failSecondMoveAt = 0;
+static unsigned throwMoveAt = 0, exhaustMemoryAfterMove = 0;
 static PCWSTR collisionTarget = nullptr;
+static PCWSTR redirectedPath = nullptr;
+namespace automation {
+static void TestCheckPlainPath(const std::wstring& path) {
+    if (redirectedPath && SamePath(path, redirectedPath)) throw Invalid("redirected-path");
+    CheckPlainPath(path);
+}
+}
 static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
     if (++moveCalls == failMoveAt || moveCalls == failSecondMoveAt) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
+    if (moveCalls == throwMoveAt) throw std::bad_alloc();
     if (collisionTarget && !_wcsicmp(to, collisionTarget)) {
         collisionTarget = nullptr;
         HANDLE h = CreateFileW(to, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -22,10 +33,14 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
         CloseHandle(h);
         if (!ok || written != 7) return FALSE;
     }
-    return MoveFileExW(from, to, flags);
+    const BOOL moved = MoveFileExW(from, to, flags);
+    if (moved && moveCalls == exhaustMemoryAfterMove) memory_fault::remaining = 0;
+    return moved;
 }
 #define MoveFileExW TestMove
+#define CheckPlainPath TestCheckPlainPath
 #include "../src/SetupCore.cpp"
+#undef CheckPlainPath
 #undef MoveFileExW
 #include "../src/SetupResources.h"
 #include "../src/AppVersion.h"
@@ -245,7 +260,22 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     options.desktop = true;
     options.extra = L"--title=\"中文 空格\" \"\"";
     std::wstring target, arguments;
+    {
+        const auto exe = Join(options.directory, LauncherName);
+        redirectedPath = exe.c_str(); moveCalls = 0;
+        const auto rejected = Preflight(paths, options, payload);
+        redirectedPath = nullptr;
+        REQUIRE(!rejected && rejected.code == ERROR_BAD_PATHNAME && moveCalls == 0);
+    }
     REQUIRE(Apply(paths, options, payload, target));
+    {
+        Options removal = options; removal.desktop = false;
+        redirectedPath = paths.desktopLink.c_str(); moveCalls = 0;
+        const auto rejected = Preflight(paths, removal, payload);
+        redirectedPath = nullptr;
+        REQUIRE(!rejected && rejected.code == ERROR_BAD_PATHNAME && moveCalls == 0);
+    }
+    puts("PASS preflight checks redirected launcher files and desktop shortcuts being removed");
     Snapshot envBefore, envAfter;
     REQUIRE(ReadFileBytes(paths.codexEnvFile, envBefore) && envBefore.exists);
     REQUIRE(std::string(envBefore.data.begin(), envBefore.data.end()).find("all_proxy=http://127.0.0.1:7897") == 0);
@@ -309,6 +339,46 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
         REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
         REQUIRE(!Exists(Join(changed.directory, LauncherName)));
+        // Exceptions after any earlier commit must follow the same rollback path as API errors.
+        for (unsigned step = 2; step <= 6; ++step) {
+            moveCalls = 0; throwMoveAt = step;
+            Result failure; bool escaped = false;
+            try { failure = Apply(paths, changed, payload, target); }
+            catch (...) { escaped = true; }
+            throwMoveAt = 0;
+            REQUIRE(!escaped && !failure && failure.commit == CommitState::RolledBack && target.empty());
+            REQUIRE(ReadFileBytes(discoveryPath, file) && file.data == discoveryBefore.data);
+            REQUIRE(ReadFileBytes(paths.codexEnvFile, file) && file.data == envBefore.data);
+            REQUIRE(ReadFileBytes(paths.desktopLink, file) && file.data == desktop.data);
+            REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
+            REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
+            REQUIRE(!Exists(Join(changed.directory, LauncherName)));
+        }
+        // One failed restore must not skip the remaining files.
+        moveCalls = 0; failMoveAt = 6; throwMoveAt = 7;
+        const auto restoreFailure = Apply(paths, changed, payload, target);
+        failMoveAt = 0; throwMoveAt = 0;
+        REQUIRE(!restoreFailure && restoreFailure.commit == CommitState::Incomplete && target.empty());
+        REQUIRE(ReadFileBytes(paths.desktopLink, file) && file.data == desktop.data);
+        REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
+        REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
+        REQUIRE(!Exists(Join(changed.directory, LauncherName)));
+        REQUIRE(WriteAtomic(paths.codexEnvFile, envBefore.data));
+        // With persistent allocation failure, still remove a newly written EXE and return an honest state.
+        moveCalls = 0; exhaustMemoryAfterMove = 2;
+        Result exhausted; bool escaped = false;
+        {
+            memory_fault::Scope fault;
+            try { exhausted = Apply(paths, changed, payload, target); }
+            catch (...) { escaped = true; }
+        }
+        exhaustMemoryAfterMove = 0;
+        REQUIRE(!escaped && !exhausted && exhausted.code == ERROR_NOT_ENOUGH_MEMORY);
+        REQUIRE(exhausted.commit == CommitState::Incomplete && !exhausted.message.empty() && target.empty());
+        REQUIRE(!Exists(Join(changed.directory, LauncherName)));
+        REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
+        REQUIRE(WriteAtomic(paths.settingsLink, settings.data));
+        puts("PASS deployment exceptions: all commit boundaries, independent rollback and persistent allocation failure");
         // A read lock permits preflight but blocks atomic replacement: all link changes roll back.
         changed.directory = options.directory;
         HANDLE envLock = CreateFileW(paths.codexEnvFile.c_str(), GENERIC_READ, FILE_SHARE_READ,

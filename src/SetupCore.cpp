@@ -9,6 +9,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <utility>
+#include <new>
 
 namespace setup {
 namespace {
@@ -96,7 +97,7 @@ Result CommitTemp(TempFile& temp, const std::wstring& target, bool replace = tru
     temp.path.clear();
     return {};
 }
-Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool replace = true) {
+Result WriteAtomicBytes(const std::wstring& path, const BYTE* data, size_t size, bool replace) {
     TempFile temp;
     Result result = NewTemp(path, temp);
     if (!result) return result;
@@ -106,11 +107,14 @@ Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool
             FILE_ATTRIBUTE_NORMAL, nullptr);
         if (handle.h == INVALID_HANDLE_VALUE) return Fail(GetLastError(), l10n::Text("error.files.opentemp"));
         DWORD written = 0;
-        if (!WriteFile(handle.h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr)
-            || written != data.size() || !FlushFileBuffers(handle.h))
+        if (!WriteFile(handle.h, data, static_cast<DWORD>(size), &written, nullptr)
+            || written != size || !FlushFileBuffers(handle.h))
             return Fail(GetLastError(), l10n::Text("error.files.write"));
     }
     return CommitTemp(temp, path, replace);
+}
+Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool replace = true) {
+    return WriteAtomicBytes(path, data.data(), data.size(), replace);
 }
 Result Restore(const std::wstring& path, const Snapshot& snapshot) {
     if (snapshot.exists) return WriteAtomic(path, snapshot.data);
@@ -366,13 +370,15 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     Loaded previous;
     result = Load(paths, previous);
     if (!result) return result;
-    const std::wstring target = Join(directory, LauncherName);
+    std::wstring target = Join(directory, LauncherName);
     Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv, oldDiscovery;
     const auto discoveryPath = Join(paths.defaultDirectory, automation::contract::DiscoveryFile);
+    const bool touchDesktop = options.desktop || previous.options.desktop;
+    const bool touchEnv = options.proxy && options.codexEnv;
     try {
-        for (const auto& path : {directory, paths.settingsLink, paths.startupLink, discoveryPath}) automation::CheckPlainPath(path);
-        if (options.desktop && !paths.desktopLink.empty()) automation::CheckPlainPath(paths.desktopLink);
-        if (options.proxy && options.codexEnv && !paths.codexEnvFile.empty()) automation::CheckPlainPath(paths.codexEnvFile);
+        for (const auto& path : {target, paths.settingsLink, paths.startupLink, discoveryPath}) automation::CheckPlainPath(path);
+        if (touchDesktop && !paths.desktopLink.empty()) automation::CheckPlainPath(paths.desktopLink);
+        if (touchEnv && !paths.codexEnvFile.empty()) automation::CheckPlainPath(paths.codexEnvFile);
     } catch (const automation::Invalid&) { return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.directory.invalid")); }
     catch (const automation::IoError& e) { return Fail(e.code, l10n::Text("error.directory.check")); }
     result = ReadFileBytes(discoveryPath, oldDiscovery); if (!result) return result;
@@ -384,7 +390,6 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         } catch (...) { return Conflict(l10n::Text("error.discovery.read"), paths.defaultDirectory); }
     }
     std::vector<BYTE> envBytes;
-    const bool touchEnv = options.proxy && options.codexEnv;
     if (touchEnv) {
         if (paths.codexEnvFile.empty()) return Fail(ERROR_PATH_NOT_FOUND, l10n::Text("error.paths.env"));
         const DWORD attributes = GetFileAttributesW(paths.codexEnvFile.c_str());
@@ -396,7 +401,6 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     result = ReadFileBytes(target, oldExe); if (!result) return result;
     result = ReadFileBytes(paths.settingsLink, oldSettings); if (!result) return result;
     result = ReadFileBytes(paths.startupLink, oldStartup); if (!result) return result;
-    const bool touchDesktop = options.desktop || previous.options.desktop;
     if (touchDesktop) {
         if (paths.desktopLink.empty()) return Fail(ERROR_PATH_NOT_FOUND, l10n::Text("error.paths.desktop"));
         result = ReadFileBytes(paths.desktopLink, oldDesktop); if (!result) return result;
@@ -407,8 +411,11 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
                 return Conflict(l10n::Text("error.desktop.conflict"), Parent(paths.desktopLink));
         }
     }
-    const std::vector<BYTE> bytes(payload.data, payload.data + payload.size);
-    if (oldExe.exists && !Same(target, previous.managedTarget) && oldExe.data != bytes)
+    const auto matchesPayload = [&](const Snapshot& file) {
+        return file.exists && file.data.size() == payload.size && !memcmp(file.data.data(), payload.data, payload.size);
+    };
+    const bool exeMatches = matchesPayload(oldExe);
+    if (oldExe.exists && !Same(target, previous.managedTarget) && !exeMatches)
         return Conflict(l10n::Text("error.deployment.conflict"), directory);
     if (oldStartup.exists) {
         Link existing;
@@ -417,80 +424,100 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
             return Conflict(l10n::Text("error.startup.conflict"), Parent(paths.startupLink));
     }
     if (preflight) return {};
+    // Prepare immutable data and fallback messages before the first file is changed.
+    // The embedded EXE stays in its resource; no second payload-sized buffer is needed.
+    const Link value{ target, arguments, directory, Marker };
+    const auto record = automation::MakeDiscoveryRecord(target, automation::FromUtf8(APP_VERSION_TEXT));
+    const auto text = automation::WriteJson(record);
+    const std::vector<BYTE> discoveryBytes(text.begin(), text.end());
+    Result exceptionFailure{ERROR_GEN_FAILURE, l10n::Text("error.deployment.interrupted")};
+    std::wstring restoredFallback = exceptionFailure.message + l10n::Text("error.rollback.complete");
+    std::wstring incompleteFallback = exceptionFailure.message + l10n::Text("error.rollback.exception");
     result = EnsureDirectory(directory); if (!result) return result;
     result = EnsureDirectory(Parent(paths.settingsLink)); if (!result) return result;
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
     if (options.desktop) { result = EnsureDirectory(Parent(paths.desktopLink)); if (!result) return result; }
     if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
     bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false, discoveryChanged = false;
-    auto rollback = [&](Result failure) {
+    auto rollback = [&](Result failure) noexcept {
+        bool incomplete = false, detailsUnavailable = false;
         std::wstring restoreErrors;
-        auto note = [&](const Result& restored) { if (!restored) restoreErrors += L"\n" + restored.message; };
-        if (discoveryChanged) note(Restore(discoveryPath, oldDiscovery));
-        if (envChanged) note(Restore(paths.codexEnvFile, oldEnv));
-        if (desktopChanged) note(Restore(paths.desktopLink, oldDesktop));
-        if (startupChanged) note(Restore(paths.startupLink, oldStartup));
-        if (settingsChanged) note(Restore(paths.settingsLink, oldSettings));
-        if (exeChanged) note(Restore(target, oldExe));
-        failure.message += restoreErrors.empty() ? l10n::Text("error.rollback.complete") : l10n::Format("error.rollback.incomplete", {{"errors", restoreErrors}});
-        failure.commit = restoreErrors.empty() ? CommitState::RolledBack : CommitState::Incomplete;
+        auto restore = [&](bool changed, const std::wstring& path, const Snapshot& before) noexcept {
+            if (!changed) return;
+            try {
+                const Result restored = Restore(path, before);
+                if (!restored) { incomplete = true; restoreErrors += L"\n" + restored.message; }
+            } catch (...) { incomplete = true; detailsUnavailable = true; }
+        };
+        // A failed restore or diagnostic allocation must not skip the remaining files.
+        restore(discoveryChanged, discoveryPath, oldDiscovery);
+        restore(envChanged, paths.codexEnvFile, oldEnv);
+        restore(desktopChanged, paths.desktopLink, oldDesktop);
+        restore(startupChanged, paths.startupLink, oldStartup);
+        restore(settingsChanged, paths.settingsLink, oldSettings);
+        restore(exeChanged, target, oldExe);
+        failure.commit = incomplete ? CommitState::Incomplete : CommitState::RolledBack;
+        try {
+            if (detailsUnavailable) failure.message += l10n::Text("error.rollback.exception");
+            else failure.message += incomplete ? l10n::Format("error.rollback.incomplete", {{"errors", restoreErrors}})
+                : l10n::Text("error.rollback.complete");
+        } catch (...) { failure.message.swap(incomplete ? incompleteFallback : restoredFallback); }
         return failure;
     };
-    if (!oldExe.exists || oldExe.data != bytes) {
-        result = WriteAtomic(target, bytes, oldExe.exists); if (!result) return rollback(result);
-        exeChanged = true;
-    }
-    Snapshot check;
-    result = ReadFileBytes(target, check);
-    if (!result) return rollback(result);
-    if (!check.exists || check.data != bytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.deployment.verify")));
-    const Link value{ target, arguments, directory, Marker };
-    result = WriteLink(paths.settingsLink, value, oldSettings.exists); if (!result) return rollback(result);
-    settingsChanged = true;
-    if (options.startup) {
-        result = WriteLink(paths.startupLink, value, oldStartup.exists); if (!result) return rollback(result);
-        startupChanged = true;
-    } else if (oldStartup.exists) {
-        if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.startup.disable")));
-        startupChanged = true;
-    }
-    if (options.desktop) {
-        result = WriteLink(paths.desktopLink, value, oldDesktop.exists); if (!result) return rollback(result);
-        desktopChanged = true;
-    } else if (previous.options.desktop && oldDesktop.exists) {
-        if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.desktop.remove")));
-        desktopChanged = true;
-    }
-    Loaded verify;
-    result = Load(paths, verify);
-    if (!result) return rollback(result);
-    if (!verify.deployed || verify.options.startup != options.startup || verify.options.desktop != options.desktop
-        || !Same(verify.managedTarget, target))
-        return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.settings.verify")));
-    if (touchEnv && (!oldEnv.exists || oldEnv.data != envBytes)) {
-        result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
-        if (check.exists != oldEnv.exists || check.data != oldEnv.data)
-            return rollback(Fail(ERROR_RETRY, l10n::Text("error.env.concurrent")));
-        result = WriteAtomic(paths.codexEnvFile, envBytes, oldEnv.exists); if (!result) return rollback(result);
-        envChanged = true;
-        result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(result);
-        if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.env.verify")));
-    }
     try {
-        const auto record = automation::MakeDiscoveryRecord(target, automation::FromUtf8(APP_VERSION_TEXT));
-        const auto text = automation::WriteJson(record);
-        const std::vector<BYTE> discoveryBytes(text.begin(), text.end());
-        result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);
+        if (!exeMatches) {
+            result = WriteAtomicBytes(target, payload.data, payload.size, oldExe.exists); if (!result) return rollback(std::move(result));
+            exeChanged = true;
+        }
+        Snapshot check;
+        result = ReadFileBytes(target, check);
+        if (!result) return rollback(std::move(result));
+        if (!matchesPayload(check)) return rollback(Fail(ERROR_CRC, l10n::Text("error.deployment.verify")));
+        result = WriteLink(paths.settingsLink, value, oldSettings.exists); if (!result) return rollback(std::move(result));
+        settingsChanged = true;
+        if (options.startup) {
+            result = WriteLink(paths.startupLink, value, oldStartup.exists); if (!result) return rollback(std::move(result));
+            startupChanged = true;
+        } else if (oldStartup.exists) {
+            if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.startup.disable")));
+            startupChanged = true;
+        }
+        if (options.desktop) {
+            result = WriteLink(paths.desktopLink, value, oldDesktop.exists); if (!result) return rollback(std::move(result));
+            desktopChanged = true;
+        } else if (previous.options.desktop && oldDesktop.exists) {
+            if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.desktop.remove")));
+            desktopChanged = true;
+        }
+        Loaded verify;
+        result = Load(paths, verify);
+        if (!result) return rollback(std::move(result));
+        if (!verify.deployed || verify.options.startup != options.startup || verify.options.desktop != options.desktop
+            || !Same(verify.managedTarget, target))
+            return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.settings.verify")));
+        if (touchEnv && (!oldEnv.exists || oldEnv.data != envBytes)) {
+            result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(std::move(result));
+            if (check.exists != oldEnv.exists || check.data != oldEnv.data)
+                return rollback(Fail(ERROR_RETRY, l10n::Text("error.env.concurrent")));
+            result = WriteAtomic(paths.codexEnvFile, envBytes, oldEnv.exists); if (!result) return rollback(std::move(result));
+            envChanged = true;
+            result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(std::move(result));
+            if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.env.verify")));
+        }
+        result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(std::move(result));
         if (check.exists != oldDiscovery.exists || check.data != oldDiscovery.data)
             return rollback(Fail(ERROR_RETRY, l10n::Text("error.discovery.concurrent")));
         if (!oldDiscovery.exists || discoveryBytes != oldDiscovery.data) {
-            result = WriteAtomic(discoveryPath, discoveryBytes, oldDiscovery.exists); if (!result) return rollback(result);
+            result = WriteAtomic(discoveryPath, discoveryBytes, oldDiscovery.exists); if (!result) return rollback(std::move(result));
             discoveryChanged = true;
-            result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(result);
+            result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(std::move(result));
             if (!check.exists || check.data != discoveryBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.discovery.verify")));
         }
-    } catch (...) { return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.discovery.generate"))); }
-    deployedTarget = target;
+    } catch (const std::bad_alloc&) {
+        exceptionFailure.code = ERROR_NOT_ENOUGH_MEMORY;
+        return rollback(std::move(exceptionFailure));
+    } catch (...) { return rollback(std::move(exceptionFailure)); }
+    deployedTarget.swap(target); // Publishing a committed result must not allocate.
     Result success; success.commit = CommitState::Committed; return success;
 }
 Result Apply(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget) {

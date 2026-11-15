@@ -544,6 +544,18 @@ static int LanguageTests(App& app, PCWSTR folder) {
     }
     if (!completionPreserved) puts("FAIL language preference warning replaced the ChatGPT completion instruction");
     REQUIRE(closedOnScroll && completionPreserved);
+    themeWriteResult = ERROR_ACCESS_DENIED;
+    for (size_t i = 0; i < l10n::Count(); ++i) for (const auto key : {"setup.quit.closed", "setup.quit.manual"}) {
+        app.completionKey = key; app.ChangeLanguage(i + 1); app.Theme(0);
+        const auto previous = app.Text(Footer);
+        SendMessageW(app.Get(ThemeToggle), BM_CLICK, 0, 0);
+        const auto expected = previous + L"\n" + l10n::Text("setup.status.themeunsaved");
+        REQUIRE(app.Text(Footer) == expected);
+        REQUIRE(WrappedTextFits(app.Get(Footer), app.fonts[4], expected) && FooterAligned(app));
+        SendMessageW(app.Get(ThemeToggle), BM_CLICK, 0, 0);
+        REQUIRE(app.Text(Footer) == expected); // Repeated failures must not grow the footer indefinitely.
+    }
+    themeWriteResult = ERROR_SUCCESS;
     app.savedThisSession = false; app.dirty = true; app.envPreferenceWarning = false; app.completionKey.clear();
     languageWriteResult = ERROR_SUCCESS; app.ChangeLanguage(1);
     app.busy = true; app.Refresh(false); app.ChangeLanguage(2);

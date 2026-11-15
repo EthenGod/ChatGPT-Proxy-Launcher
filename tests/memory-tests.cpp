@@ -103,5 +103,40 @@ int main() {
     }
     REQUIRE(literalAllocations == stringAllocations);
     puts("PASS JSON lookup: no temporary allocations, missing fields unchanged and insertion/round trip preserved");
+    const std::wstring input = L"C:\\Synthetic long folder\\configuration\\..\\中文 path\\discovery.json";
+    const std::wstring expected = L"C:\\Synthetic long folder\\中文 path\\discovery.json";
+    REQUIRE(automation::FullPath(input) == expected);
+    size_t pathAllocations = 0, pathBytes = 0;
+    bool pathsCorrect = true;
+    constexpr unsigned rounds = 20000;
+    LARGE_INTEGER frequency{}, start{}, finish{};
+    QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&start);
+    {
+        memory_fault::Scope count;
+        for (unsigned i = 0; i < rounds; ++i) pathsCorrect = pathsCorrect && automation::FullPath(input) == expected;
+        pathAllocations = memory_fault::calls; pathBytes = memory_fault::bytes;
+    }
+    QueryPerformanceCounter(&finish);
+    printf("Path normalization: %.2f allocations, %.0f requested bytes, %.3f us per call (%u synthetic rounds)\n",
+        static_cast<double>(pathAllocations) / rounds, static_cast<double>(pathBytes) / rounds,
+        static_cast<double>(finish.QuadPart - start.QuadPart) * 1000000 / frequency.QuadPart / rounds, rounds);
+    REQUIRE(automation::FullPath(L"C:\\") == L"C:\\");
+    REQUIRE(automation::FullPath(L"C:\\one\\..\\two\\.\\") == L"C:\\two");
+    for (const size_t length : {size_t(259), size_t(260), size_t(261), size_t(4096), size_t(32766)}) {
+        const std::wstring longPath = L"C:\\" + std::wstring(length - 3, L'x');
+        REQUIRE(automation::FullPath(longPath) == longPath);
+    }
+    for (const auto& invalid : {L"relative\\file", L"C:file", L"C:\\con.txt", L"C:\\a\\Nul", L"C:\\Com1.log",
+        L"C:\\lPt9", L"C:\\COM\u00b9.txt", L"C:\\LPT\u00b2", L"C:\\COM\u00b3", L"C:\\file:stream", L"C:\\a*", L"\\\\server\\share"}) {
+        bool rejected = false;
+        try { automation::FullPath(invalid); } catch (const automation::Invalid&) { rejected = true; }
+        REQUIRE(rejected);
+    }
+    bool rejected = false;
+    try { automation::FullPath(L"C:\\" + std::wstring(32764, L'x')); } catch (const automation::Invalid&) { rejected = true; }
+    REQUIRE(rejected);
+    REQUIRE(automation::FullPath(L"C:\\COM10.txt") == L"C:\\COM10.txt");
+    REQUIRE(pathsCorrect && pathBytes / rounds < 4096);
+    puts("PASS path normalization: short/long buffer boundaries, Unicode, parent segments and reserved/invalid names");
     return 0;
 }

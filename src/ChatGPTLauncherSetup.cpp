@@ -198,6 +198,7 @@ struct App {
     int CaptionWidth(int id, int font) const;
     int CaptionHeight(int id, int font, int width) const;
     void ResizeCaption(int id);
+    void AppendFooterWarning(PCWSTR warning);
     HFONT LanguageMenuFont(size_t index) const;
     void MeasureLanguageItem(MEASUREITEMSTRUCT& item) const;
     void LanguageMenu();
@@ -424,6 +425,10 @@ void App::ResizeCaption(int id) {
         : bounds.right != S(std::max(80, CaptionWidth(id, 0) + 32));
     if (changed) Layout();
 }
+void App::AppendFooterWarning(PCWSTR warning) {
+    const auto current = Text(Footer);
+    if (current.find(warning) == std::wstring::npos) Set(Footer, current + L"\n" + warning);
+}
 HFONT App::LanguageMenuFont(size_t index) const {
     LOGFONTW info{}; GetObjectW(fonts[0], sizeof(info), &info);
     wcscpy_s(info.lfFaceName, index ? l10n::At(index - 1).font : l10n::Current().font);
@@ -601,7 +606,7 @@ void App::ChangeLanguage(size_t menuIndex) {
     if (!menuIndex) l10n::UseSystem(); else l10n::Select(l10n::At(menuIndex - 1).tag);
     TranslateControls();
     // Keep deployment/quit instructions visible if only the appearance preference fails.
-    if (!SaveLanguagePreference()) Set(Footer, Text(Footer) + L"\n" + l10n::Text("setup.language.unsaved"));
+    if (!SaveLanguagePreference()) AppendFooterWarning(l10n::Text("setup.language.unsaved"));
 }
 void App::TranslateControls() {
     // Change captions only. Do not restore options, overwrite edits or reset dirty state.
@@ -903,7 +908,7 @@ void App::Command(int id, int notification) {
         if (contrast) return;
         preferredDark = !dark;
         Theme(); Layout();
-        if (!SaveDarkPreference(preferredDark)) Set(Footer, l10n::Text("setup.status.themeunsaved"));
+        if (!SaveDarkPreference(preferredDark)) AppendFooterWarning(l10n::Text("setup.status.themeunsaved"));
         return;
     }
     if (IsSegment(id) && notification == BN_CLICKED) {

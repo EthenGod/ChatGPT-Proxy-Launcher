@@ -4,6 +4,7 @@
 #include <sddl.h>
 #include <cwctype>
 #include <algorithm>
+#include <string_view>
 
 namespace automation {
 std::wstring Quote(const std::wstring& value) {
@@ -21,16 +22,28 @@ std::wstring FullPath(const std::wstring& input) {
     if (input.size() < 3 || input.size() >= 32767 || !((input[0] >= L'A' && input[0] <= L'Z') || (input[0] >= L'a' && input[0] <= L'z')) || input[1] != L':' || input[2] != L'\\'
         || input.find_first_of(L"\"<>|?*\r\n\t/") != input.npos || input.find(L'\0') != input.npos
         || input.find(L':', 2) != input.npos || std::any_of(input.begin(), input.end(), [](wchar_t c) { return c < 32; })) throw Invalid("invalid-local-path");
-    std::wstring full(32768, L'\0');
-    const DWORD n = GetFullPathNameW(input.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
-    if (!n || n >= full.size()) throw Invalid("invalid-local-path");
-    full.resize(n);
+    // Most paths fit on the stack. Allocate a larger buffer only when Windows requests it.
+    wchar_t buffer[MAX_PATH];
+    const DWORD needed = GetFullPathNameW(input.c_str(), _countof(buffer), buffer, nullptr);
+    if (!needed || needed > 32768) throw Invalid("invalid-local-path");
+    std::wstring full;
+    if (needed < _countof(buffer)) full.assign(buffer, needed);
+    else {
+        full.resize(needed);
+        const DWORD written = GetFullPathNameW(input.c_str(), needed, full.data(), nullptr);
+        if (!written || written >= needed) throw Invalid("invalid-local-path");
+        full.resize(written);
+    }
     while (full.size() > 3 && full.back() == L'\\') full.pop_back();
     for (size_t start = 3; start < full.size();) {
         const auto end = full.find(L'\\', start);
-        const auto part = full.substr(start, end == full.npos ? end : end - start);
+        const auto part = std::wstring_view(full).substr(start, end == full.npos ? end : end - start);
         auto stem = part.substr(0, part.find(L'.'));
-        for (auto& c : stem) c = static_cast<wchar_t>(towupper(c));
+        wchar_t deviceName[4];
+        if (stem.size() == 3 || stem.size() == 4) {
+            for (size_t i = 0; i < stem.size(); ++i) deviceName[i] = static_cast<wchar_t>(towupper(stem[i]));
+            stem = std::wstring_view(deviceName, stem.size());
+        }
         if (part.empty() || part.back() == L'.' || part.back() == L' '
             || stem == L"CON" || stem == L"PRN" || stem == L"AUX" || stem == L"NUL"
             || (stem.size() == 4 && (stem.substr(0, 3) == L"COM" || stem.substr(0, 3) == L"LPT")
@@ -42,14 +55,16 @@ std::wstring FullPath(const std::wstring& input) {
     return full;
 }
 void CheckPlainPath(const std::wstring& path) {
-    const auto full = FullPath(path);
+    auto full = FullPath(path);
     for (size_t p = 3;;) {
         const auto end = full.find(L'\\', p);
-        const auto part = full.substr(0, end);
-        const DWORD a = GetFileAttributesW(part.c_str());
+        // Temporarily terminate each prefix instead of allocating a copy for every ancestor.
+        if (end != full.npos) full[end] = L'\0';
+        const DWORD a = GetFileAttributesW(full.c_str());
+        const DWORD error = GetLastError();
+        if (end != full.npos) full[end] = L'\\';
         if (a == INVALID_FILE_ATTRIBUTES) {
-            const DWORD e = GetLastError();
-            if (e != ERROR_FILE_NOT_FOUND && e != ERROR_PATH_NOT_FOUND) throw IoError(e);
+            if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) throw IoError(error);
         } else if (a & FILE_ATTRIBUTE_REPARSE_POINT) throw Invalid("redirected-path");
         if (end == full.npos) break;
         p = end + 1;
