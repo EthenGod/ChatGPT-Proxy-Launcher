@@ -15,6 +15,22 @@ static unsigned moveCalls = 0, failMoveAt = 0, failSecondMoveAt = 0;
 static unsigned throwMoveAt = 0, exhaustMemoryAfterMove = 0;
 static PCWSTR collisionTarget = nullptr;
 static PCWSTR redirectedPath = nullptr;
+static PCWSTR failDeletePath = nullptr, replaceOnDeleteFailure = nullptr;
+static PCWSTR changeLegacyPath = nullptr, changeLegacyTrigger = nullptr;
+static void ReplaceFixture(PCWSTR path) {
+    HANDLE h = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) throw std::bad_alloc();
+    DWORD written = 0;
+    const BOOL ok = WriteFile(h, "foreign", 7, &written, nullptr); CloseHandle(h);
+    if (!ok || written != 7) throw std::bad_alloc();
+}
+static BOOL WINAPI TestDelete(PCWSTR path) {
+    if (failDeletePath && !_wcsicmp(path, failDeletePath)) {
+        if (replaceOnDeleteFailure) { ReplaceFixture(replaceOnDeleteFailure); replaceOnDeleteFailure = nullptr; }
+        SetLastError(ERROR_ACCESS_DENIED); return FALSE;
+    }
+    return DeleteFileW(path);
+}
 namespace automation {
 static void TestCheckPlainPath(const std::wstring& path) {
     if (redirectedPath && SamePath(path, redirectedPath)) throw Invalid("redirected-path");
@@ -34,14 +50,19 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
         if (!ok || written != 7) return FALSE;
     }
     const BOOL moved = MoveFileExW(from, to, flags);
+    if (moved && changeLegacyPath && !_wcsicmp(to, changeLegacyTrigger)) {
+        ReplaceFixture(changeLegacyPath); changeLegacyPath = nullptr;
+    }
     if (moved && moveCalls == exhaustMemoryAfterMove) memory_fault::remaining = 0;
     return moved;
 }
 #define MoveFileExW TestMove
+#define DeleteFileW TestDelete
 #define CheckPlainPath TestCheckPlainPath
 #include "../src/SetupCore.cpp"
 #undef CheckPlainPath
 #undef MoveFileExW
+#undef DeleteFileW
 #include "../src/SetupResources.h"
 #include "../src/AppVersion.h"
 #include "../src/CodexEnv.h"
@@ -57,6 +78,80 @@ static bool DecodeArguments(const std::wstring& text, std::vector<std::wstring>&
     if (!args.value || count < 1) return false;
     values.assign(args.value + 1, args.value + count);
     return true;
+}
+static int ShortcutMigrationTests(const std::wstring& root, setup::Payload payload) {
+    using namespace setup;
+    REQUIRE(std::wstring(LinkName) == L"ChatGPT Launcher.lnk");
+    for (int scenario = 0; scenario <= 10; ++scenario) {
+        const auto base = Join(root, L"rename-" + std::to_wstring(scenario));
+        Paths paths{base, Join(Join(base, L"Startup"), LinkName), Join(base, L"settings.lnk"),
+            Join(Join(base, L"桌面 Desktop"), LinkName), {}};
+        paths.legacyStartupLink = Join(Parent(paths.startupLink), LegacyLinkName);
+        paths.legacyDesktopLink = Join(Parent(paths.desktopLink), LegacyLinkName);
+        Paths old = paths; old.startupLink = paths.legacyStartupLink; old.desktopLink = paths.legacyDesktopLink;
+        old.legacyStartupLink.clear(); old.legacyDesktopLink.clear();
+        Options options; options.directory = base; options.startup = options.desktop = options.proxy = true;
+        options.codexEnv = false; options.port = L"12345"; options.extra = L"--title=\"中文 空格\" \"\"";
+        std::wstring target, arguments;
+        REQUIRE(Apply(old, options, payload, target) && BuildArguments(options, arguments));
+        Loaded loaded;
+        REQUIRE(Load(paths, loaded) && loaded.options.startup && loaded.options.desktop && loaded.options.port == options.port);
+        std::vector<std::wstring> restoredArgs, originalArgs;
+        REQUIRE(DecodeArguments(loaded.options.extra, restoredArgs) && DecodeArguments(options.extra, originalArgs) && restoredArgs == originalArgs);
+        Snapshot startup, desktop, settings, current;
+        REQUIRE(ReadFileBytes(old.startupLink, startup) && ReadFileBytes(old.desktopLink, desktop)
+            && ReadFileBytes(old.settingsLink, settings));
+        REQUIRE(Preflight(paths, options, payload));
+        REQUIRE(!Exists(paths.startupLink) && !Exists(paths.desktopLink) && Exists(old.startupLink) && Exists(old.desktopLink));
+        if (scenario == 1) options.startup = options.desktop = false;
+        if (scenario == 2) {
+            REQUIRE(WriteLink(paths.startupLink, {target, L"", base, L"foreign"}));
+            const auto conflict = Apply(paths, options, payload, target);
+            REQUIRE(!conflict && conflict.conflictDirectory == Parent(paths.startupLink));
+            REQUIRE(ReadFileBytes(old.startupLink, current) && current.data == startup.data);
+            continue;
+        }
+        if (scenario == 3 || scenario == 10) {
+            const Link other{Join(base, L"Other.exe"), L"", base, scenario == 3 ? L"foreign" : Marker};
+            REQUIRE(WriteLink(old.startupLink, other) && WriteLink(old.desktopLink, other));
+            REQUIRE(ReadFileBytes(old.startupLink, startup) && ReadFileBytes(old.desktopLink, desktop));
+        }
+        if (scenario == 4 || scenario == 7) failDeletePath = old.desktopLink.c_str();
+        if (scenario == 7) replaceOnDeleteFailure = old.startupLink.c_str();
+        if (scenario == 5) { options.directory = Join(base, L"new-target"); moveCalls = 0; failMoveAt = 5; }
+        if (scenario == 6) { changeLegacyPath = old.startupLink.c_str(); changeLegacyTrigger = paths.desktopLink.c_str(); }
+        if (scenario == 8) {
+            redirectedPath = old.startupLink.c_str();
+            REQUIRE(!Preflight(paths, options, payload)); redirectedPath = nullptr;
+            REQUIRE(ReadFileBytes(old.startupLink, current) && current.data == startup.data);
+            continue;
+        }
+        if (scenario == 9) {
+            const std::wstring preferred = L"--proxy-server=http://127.0.0.1:12346";
+            REQUIRE(WriteLink(paths.startupLink, {target, preferred, base, Marker}));
+            REQUIRE(Load(paths, loaded) && loaded.options.port == L"12346");
+            options = loaded.options; options.codexEnv = false;
+        }
+        const auto saved = Apply(paths, options, payload, target);
+        failDeletePath = replaceOnDeleteFailure = changeLegacyPath = changeLegacyTrigger = nullptr; failMoveAt = 0;
+        if (scenario >= 4 && scenario <= 7) {
+            REQUIRE(!saved && saved.commit == (scenario == 7 ? CommitState::Incomplete : CommitState::RolledBack));
+            REQUIRE(ReadFileBytes(old.startupLink, current) && current.exists);
+            REQUIRE((scenario == 6 || scenario == 7) ? current.data == std::vector<BYTE>({'f','o','r','e','i','g','n'}) : current.data == startup.data);
+            REQUIRE(ReadFileBytes(old.desktopLink, current) && current.data == desktop.data);
+            REQUIRE(ReadFileBytes(old.settingsLink, current) && current.data == settings.data);
+            REQUIRE(!Exists(paths.startupLink) && !Exists(paths.desktopLink));
+        } else {
+            REQUIRE(saved && Load(paths, loaded) && loaded.options.startup == options.startup && loaded.options.desktop == options.desktop);
+            if (scenario == 3 || scenario == 10) {
+                REQUIRE(ReadFileBytes(old.startupLink, current) && current.data == startup.data);
+                REQUIRE(ReadFileBytes(old.desktopLink, current) && current.data == desktop.data);
+            } else REQUIRE(!Exists(old.startupLink) && !Exists(old.desktopLink));
+            if (options.startup) { Link link; REQUIRE(ReadLink(paths.startupLink, link) && link.target == target && link.description == Marker); }
+        }
+    }
+    puts("PASS shortcut rename: legacy choices/arguments, current-name priority, opt-out, ownership, conflicts, concurrent edits and complete/incomplete rollback");
+    return 0;
 }
 static int EnvTests() {
     using namespace setup;
@@ -186,6 +281,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
+    REQUIRE(ShortcutMigrationTests(root, payload) == 0);
     {
         const std::string expected = APP_VERSION_TEXT;
         const std::wstring current(expected.begin(), expected.end());
@@ -251,7 +347,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         }
     }
     const Paths paths{ Join(root, L"settings"), Join(root, L"startup\\Managed.lnk"), Join(root, L"settings\\State.lnk"),
-        Join(root, L"桌面 Desktop\\ChatGPT Proxy Launcher.lnk"), Join(root, L"profile\\.codex\\.env") };
+        Join(Join(root, L"桌面 Desktop"), LinkName), Join(root, L"profile\\.codex\\.env") };
     Loaded state;
     REQUIRE(Load(paths, state) && !state.hasSettings && state.options.startup && state.options.silent);
     REQUIRE(!state.options.desktop);

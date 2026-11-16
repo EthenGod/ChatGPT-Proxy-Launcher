@@ -50,6 +50,12 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(Number(example, L"schemaVersion") == rules::ManifestSchema && chain::ValidId(example.At(L"id").String()));
         for (const auto& cap : example.At(L"requires").array) REQUIRE(rules::SupportsManifestCapability(cap.String()));
         REQUIRE(Number(example.At(L"retry"), L"maxAttempts") == 1 && !example.At(L"retry").At(L"safe").Bool());
+        const auto task = read(L"docs\\examples\\companion-task-v1.json");
+        REQUIRE(Number(task, L"schemaVersion") == rules::ManifestSchema && chain::ValidId(task.At(L"id").String()));
+        REQUIRE(task.At(L"requires").array.empty() && task.At(L"entry").At(L"runtime").String() == L"powershell");
+        REQUIRE(task.At(L"readiness").At(L"mode").String() == L"exit-code"
+            && task.At(L"readiness").At(L"successExitCodes").array[0].Integer(0, MAXDWORD) == 0);
+        REQUIRE(Number(task.At(L"readiness"), L"timeoutMs") <= rules::TimeoutMaxMs && !task.Has(L"retry"));
         const auto configure = read(L"docs\\examples\\companion-config-v1.json");
         REQUIRE(Number(configure, L"schemaVersion") == rules::SetupApi && configure.At(L"id").String() == example.At(L"id").String());
         chain::ValidateOverrides(configure.At(L"overrides"));

@@ -49,9 +49,11 @@ The setup tool follows the Windows display language by default. It supports ç®€ä
    - Click the empty **Port** field. If a number appears, check that it matches the port in your proxy app. If it is wrong or the field stays empty, open the proxy app settings, find the port for the selected protocol, and enter it here.
    - **Also configure Codex .env (recommended)** is on by default. It uses the same protocol, address, and port. Hover over **?** for details, or turn the option off if you do not need it.
 4. **Save.** **Launch options preview** updates automatically; you do not need to type there. For a first setup, you can skip **Advanced** and click **Deploy and save** at the bottom right. If already deployed, the button says **Save changes**.
-5. **If Deployment complete appears:** click **OK** to open Windows **Startup apps** settings. Make sure **ChatGPT** is **Off**, and **ChatGPT Proxy Launcher** is **On**, so sign-in startup uses the settings you just saved.
+5. **If Deployment complete appears:** click **OK** to open Windows **Startup apps** settings. Make sure **ChatGPT** is **Off**, and **ChatGPT Launcher** is **On**, so sign-in startup uses the settings you just saved.
 6. **Close the setup tool.** Once it shows **Saved**, click **Done**. There is no need to deploy again. With method 1, PowerShell removes the temporary downloads and shows a Star prompt. Press any key to open this project's page and exit, or wait 10 seconds for it to do so automatically. To exit without opening the page, close the PowerShell window. Download, verification, or cleanup failures leave the window open with an error.
-7. **Try starting ChatGPT.** Saving does not open ChatGPT. If you created a desktop shortcut, double-click **ChatGPT Proxy Launcher** on your desktop. If ChatGPT is already running, fully quit it first. If you only enabled sign-in startup, it will try to open ChatGPT the next time you sign in.
+7. **Try starting ChatGPT.** Saving does not open ChatGPT. If you created a desktop shortcut, double-click **ChatGPT Launcher** on your desktop. If ChatGPT is already running, fully quit it first. If you only enabled sign-in startup, it will try to open ChatGPT the next time you sign in.
+
+Older shortcuts may still be named **ChatGPT Proxy Launcher**. Saving with the updated setup tool migrates the shortcuts it manages to the new name.
 
 **To change settings later:** run method 1 again, or open the downloaded setup tool from method 2. Make your changes and click **Save changes**.
 

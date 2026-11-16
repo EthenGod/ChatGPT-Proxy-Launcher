@@ -96,7 +96,7 @@ foreach ($name in $developerDocs) {
         }
     }
 }
-foreach ($example in @('docs/examples/deploy-minimal-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-context.ps1')) {
+foreach ($example in @('docs/examples/deploy-minimal-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-task-v1.json', 'docs/examples/companion-context.ps1')) {
     if (!$releaseScript.Contains("'" + $example + "'")) { throw "Integration example missing from source package: $example" }
 }
 Write-Host "PASS developer docs: $($developerDocs.Count) documents, local links/anchors, $powerShellBlocks PowerShell examples, $jsonBlocks JSON examples and package inclusion"

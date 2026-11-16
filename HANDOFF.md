@@ -13,6 +13,7 @@
 ## 后台部署与链式启动
 
 - v1.1.0 提供后台部署与链式启动。先读 `docs/developer-guide.md`，完整命令见 `docs/automation-usage.md`，接口见 `docs/automation-design.md` 和 `docs/companion-protocol-v1.md`。Schema、PowerShell 回执辅助函数和示例位于 `docs/schemas/`、`docs/examples/`。复审见 `docs/automation-maintenance.md`。本地打包与 GitHub 上传是两步。
+- 指南只保留接入步骤，命令放在自动化用法，字段和场景约束统一放规范，避免多处复制规则。`companion-task-v1.json` 是一次性脚本的 exit-code 示例，不写就绪回执。已有实例、运行环境、依赖、私有配置、离线接入和升级回滚见规范的应用场景部分。
 - PowerShell 后台入口先检查下载 EXE 至少为 1.1.0。不能先执行 `--headless` 探测，否则旧版仍会打开界面。旧启动器会把未知参数转发给 ChatGPT，也不能用新查询命令探测旧版。在线命令还依赖默认分支脚本与 Release 实际发布。
 - 扩展安装按查询、按需预检与部署、能力检查、注册、列表确认的顺序进行。`docs/examples/deploy-minimal-v1.json` 保留已有设置，首次部署不启用代理、自启或桌面入口，不写 `.env`。清单示例默认只尝试一次。
 - 配置器发现对象在结果的 `data` 中，仅 `managed` 包含 `data.discovery`。`--launcher-info` 直接输出发现对象，没有 `data` 层。上下文的 `launcher.deploymentState` 只取 managed/standalone/unknown，与六种发现状态不同。缺少链式环境变量不代表未部署，注册成功也不代表插件已运行。
@@ -77,6 +78,7 @@
 
 ## 桌面快捷方式
 
+- 桌面和登录自启快捷方式使用 `ChatGPT Launcher.lnk`。`Paths` 显式保存旧 `ChatGPT Proxy Launcher.lnk` 路径；读取时恢复旧选项，两代同时存在时优先新自启入口的参数。保存只移除管理标记和目标均匹配的旧链接，并在移除前复查内容；失败时连同其他改动回滚。恢复已移除旧链接不能覆盖期间新出现的文件，遇到冲突应报告回滚不完整。迁移不放进启动器热路径。
 - `src/SetupCore.cpp` 用 Known Folder API 获取桌面位置。不要拼接用户目录，桌面可能已重定向。
 - 获取桌面位置失败不能阻止其他部署功能。仅在用户选择创建桌面快捷方式时报告位置不可用。
 - `Options.desktop` 由本工具桌面快捷方式的实际存在状态恢复。快捷方式必须同时匹配管理标记和已部署目标。桌面参数不反向覆盖配置。

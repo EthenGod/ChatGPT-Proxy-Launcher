@@ -13,8 +13,8 @@ BEGIN
  BEGIN
   BLOCK "040904B0"
   BEGIN
-   VALUE "FileDescription", "ChatGPT Proxy Launcher\0"
-   VALUE "ProductName", "ChatGPT Proxy Launcher\0"
+   VALUE "FileDescription", "ChatGPT Launcher\0"
+   VALUE "ProductName", "ChatGPT Launcher\0"
    VALUE "OriginalFilename", "ChatGPTProxyLauncher.exe\0"
    VALUE "LegalCopyright", "GPL-3.0-only; unofficial local launcher\0"
    VALUE "FileVersion", APP_VERSION_TEXT "\0"

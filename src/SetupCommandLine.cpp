@@ -53,6 +53,7 @@ void CheckResultLocation(const AutomationCommand& c, const Paths& p, const Optio
     const auto registry = Join(p.defaultDirectory, rules::RegistryFolder) + L"\\";
     if (output.size() >= registry.size() && automation::SamePath(output.substr(0, registry.size()), registry)) throw Invalid("result-is-registration");
     for (const auto& path : {c.requestPath, c.manifestPath, p.settingsLink, p.startupLink, p.desktopLink, p.codexEnvFile,
+            p.legacyStartupLink, p.legacyDesktopLink,
             Join(p.defaultDirectory, rules::DiscoveryFile), Join(p.defaultDirectory, rules::PolicyFile), Join(p.defaultDirectory, LauncherName)}) {
         if (!path.empty() && automation::SamePath(output, automation::FullPath(path))) throw Invalid("result-is-managed-file");
     }
@@ -72,6 +73,8 @@ Json PlanData(const Options& o, const Paths& paths, const Json& request) {
     change(L"settings", L"save", paths.settingsLink);
     change(L"startup", o.startup ? L"save" : L"remove-if-managed", paths.startupLink);
     change(L"desktop", o.desktop ? L"save" : L"remove-if-managed", paths.desktopLink);
+    if (!paths.legacyStartupLink.empty()) change(L"startup", L"remove-if-managed", paths.legacyStartupLink);
+    if (!paths.legacyDesktopLink.empty()) change(L"desktop", L"remove-if-managed", paths.legacyDesktopLink);
     change(L"discovery", L"save", Join(paths.defaultDirectory, rules::DiscoveryFile));
     if (o.codexEnv) change(L"codex-env", L"merge", paths.codexEnvFile);
     j[L"actions"] = request.Has(L"actions") ? request.At(L"actions") : Json::Object();

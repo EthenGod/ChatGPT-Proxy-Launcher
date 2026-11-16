@@ -48,13 +48,21 @@ int wmain(int argc, wchar_t** argv) {
             c.resultPath = Join(root, L"result-" + std::to_wstring(++resultNumber) + L".json"); return c;
         };
         // The documented minimum onboarding must preserve defaults and avoid system actions.
-        const Paths onboarding{Join(root, L"onboarding"), Join(root, L"onboarding-startup.lnk"),
+        Paths onboarding{Join(root, L"onboarding"), Join(root, L"onboarding-startup.lnk"),
             Join(root, L"onboarding\\settings.lnk"), Join(root, L"onboarding-desktop.lnk"), Join(root, L"onboarding.env")};
+        onboarding.legacyStartupLink = Join(root, L"legacy-startup.lnk");
+        onboarding.legacyDesktopLink = Join(root, L"legacy-desktop.lnk");
         const auto minimal = ParseJson(ReadBytes(Join(ParentPath(argv[1]), L"docs\\examples\\deploy-minimal-v1.json")));
         auto before = RunAutomation(Command(L"info", Json::Object()), onboarding, payload, Disable);
         REQUIRE(before.At(L"exitCode").Integer(0, 255) == 0 && before.At(L"data").At(L"state").String() == L"not-deployed");
         auto preview = RunAutomation(Command(L"plan", minimal), onboarding, payload, Disable);
         REQUIRE(preview.At(L"exitCode").Integer(0, 255) == 0 && !preview.At(L"committed").Bool());
+        unsigned legacyRemovals = 0;
+        for (const auto& change : preview.At(L"data").At(L"changes").array)
+            if (change.At(L"path").String() == onboarding.legacyStartupLink || change.At(L"path").String() == onboarding.legacyDesktopLink) {
+                REQUIRE(change.At(L"action").String() == L"remove-if-managed"); ++legacyRemovals;
+            }
+        REQUIRE(legacyRemovals == 2);
         REQUIRE(GetFileAttributesW(onboarding.defaultDirectory.c_str()) == INVALID_FILE_ATTRIBUTES);
         auto installed = RunAutomation(Command(L"deploy", minimal), onboarding, payload, Disable);
         REQUIRE(installed.At(L"exitCode").Integer(0, 255) == 0 && installed.At(L"committed").Bool());

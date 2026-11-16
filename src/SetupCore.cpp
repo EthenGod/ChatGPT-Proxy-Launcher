@@ -116,8 +116,8 @@ Result WriteAtomicBytes(const std::wstring& path, const BYTE* data, size_t size,
 Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool replace = true) {
     return WriteAtomicBytes(path, data.data(), data.size(), replace);
 }
-Result Restore(const std::wstring& path, const Snapshot& snapshot) {
-    if (snapshot.exists) return WriteAtomic(path, snapshot.data);
+Result Restore(const std::wstring& path, const Snapshot& snapshot, bool replace = true) {
+    if (snapshot.exists) return WriteAtomic(path, snapshot.data, replace);
     if (DeleteFileW(path.c_str()) || IsMissing(GetLastError())) return {};
     return Fail(GetLastError(), l10n::Format("error.files.undo", {{"path", path}}));
 }
@@ -178,11 +178,13 @@ Result GetPaths(Paths& paths) {
     native::TaskPtr<wchar_t> ownedStartup(startup);
     if (FAILED(hr)) return Hr(hr, l10n::Text("error.paths.startup"));
     paths.startupLink = Join(startup, LinkName);
+    paths.legacyStartupLink = Join(startup, LegacyLinkName);
     PWSTR desktop = nullptr;
     hr = SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop);
     native::TaskPtr<wchar_t> ownedDesktop(desktop);
     // The optional desktop entry must not prevent deployment when the desktop is unavailable.
     paths.desktopLink = SUCCEEDED(hr) ? Join(desktop, LinkName) : L"";
+    paths.legacyDesktopLink = SUCCEEDED(hr) ? Join(desktop, LegacyLinkName) : L"";
     PWSTR profile = nullptr;
     hr = SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &profile);
     native::TaskPtr<wchar_t> ownedProfile(profile);
@@ -318,22 +320,26 @@ Result Load(const Paths& paths, Loaded& loaded) {
         loaded.options.directory = Parent(saved.target);
         loaded.hasSettings = true;
     }
-    Link startup;
-    if (Exists(paths.startupLink)) {
-        Result result = ReadLink(paths.startupLink, startup);
+    // Prefer the current name's arguments when both generations are present.
+    for (const auto* path : {&paths.legacyStartupLink, &paths.startupLink}) {
+        if (path->empty() || !Exists(*path)) continue;
+        Link startup;
+        Result result = ReadLink(*path, startup);
         if (!result) return result;
         if (Owned(startup) && Same(startup.target, loaded.managedTarget)) {
             loaded.options.startup = true;
             saved.arguments = startup.arguments;
-        } else {
+        } else if (path == &paths.startupLink) {
             loaded.notice = l10n::Text("setup.notice.startupconflict");
         }
     }
     // Presence of our link records the choice; do not import desktop arguments over saved settings.
-    Link desktop;
-    if (Exists(paths.desktopLink) && ReadLink(paths.desktopLink, desktop)
-        && Owned(desktop) && Same(desktop.target, loaded.managedTarget))
-        loaded.options.desktop = true;
+    for (const auto* path : {&paths.legacyDesktopLink, &paths.desktopLink}) {
+        Link desktop;
+        if (!path->empty() && Exists(*path) && ReadLink(*path, desktop)
+            && Owned(desktop) && Same(desktop.target, loaded.managedTarget))
+            loaded.options.desktop = true;
+    }
     if (loaded.hasSettings) {
         Result parsed = ParseArguments(saved.arguments, loaded.options);
         loaded.validArguments = static_cast<bool>(parsed);
@@ -371,14 +377,27 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     result = Load(paths, previous);
     if (!result) return result;
     std::wstring target = Join(directory, LauncherName);
-    Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv, oldDiscovery;
+    Snapshot oldExe, oldSettings, oldStartup, oldDesktop, oldEnv, oldDiscovery, legacyStartup, legacyDesktop;
     const auto discoveryPath = Join(paths.defaultDirectory, automation::contract::DiscoveryFile);
     const bool touchDesktop = options.desktop || previous.options.desktop;
     const bool touchEnv = options.proxy && options.codexEnv;
+    auto readLegacy = [&](const std::wstring& path, Snapshot& snapshot) -> Result {
+        if (path.empty() || previous.managedTarget.empty()) return {};
+        Snapshot candidate;
+        Result read = ReadFileBytes(path, candidate); if (!read || !candidate.exists) return read;
+        Link link; read = ReadLink(path, link); if (!read) return read;
+        if (Owned(link) && Same(link.target, previous.managedTarget)) {
+            automation::CheckPlainPath(path);
+            snapshot = std::move(candidate);
+        }
+        return {};
+    };
     try {
         for (const auto& path : {target, paths.settingsLink, paths.startupLink, discoveryPath}) automation::CheckPlainPath(path);
         if (touchDesktop && !paths.desktopLink.empty()) automation::CheckPlainPath(paths.desktopLink);
         if (touchEnv && !paths.codexEnvFile.empty()) automation::CheckPlainPath(paths.codexEnvFile);
+        result = readLegacy(paths.legacyStartupLink, legacyStartup); if (!result) return result;
+        result = readLegacy(paths.legacyDesktopLink, legacyDesktop); if (!result) return result;
     } catch (const automation::Invalid&) { return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.directory.invalid")); }
     catch (const automation::IoError& e) { return Fail(e.code, l10n::Text("error.directory.check")); }
     result = ReadFileBytes(discoveryPath, oldDiscovery); if (!result) return result;
@@ -439,19 +458,22 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     if (options.desktop) { result = EnsureDirectory(Parent(paths.desktopLink)); if (!result) return result; }
     if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
     bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false, discoveryChanged = false;
+    bool legacyStartupRemoved = false, legacyDesktopRemoved = false;
     auto rollback = [&](Result failure) noexcept {
         bool incomplete = false, detailsUnavailable = false;
         std::wstring restoreErrors;
-        auto restore = [&](bool changed, const std::wstring& path, const Snapshot& before) noexcept {
+        auto restore = [&](bool changed, const std::wstring& path, const Snapshot& before, bool replace = true) noexcept {
             if (!changed) return;
             try {
-                const Result restored = Restore(path, before);
+                const Result restored = Restore(path, before, replace);
                 if (!restored) { incomplete = true; restoreErrors += L"\n" + restored.message; }
             } catch (...) { incomplete = true; detailsUnavailable = true; }
         };
         // A failed restore or diagnostic allocation must not skip the remaining files.
         restore(discoveryChanged, discoveryPath, oldDiscovery);
         restore(envChanged, paths.codexEnvFile, oldEnv);
+        restore(legacyDesktopRemoved, paths.legacyDesktopLink, legacyDesktop, false);
+        restore(legacyStartupRemoved, paths.legacyStartupLink, legacyStartup, false);
         restore(desktopChanged, paths.desktopLink, oldDesktop);
         restore(startupChanged, paths.startupLink, oldStartup);
         restore(settingsChanged, paths.settingsLink, oldSettings);
@@ -489,6 +511,21 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
             if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.desktop.remove")));
             desktopChanged = true;
         }
+        auto retireLegacy = [&](const std::wstring& path, const Snapshot& before, bool& removed, const char* errorKey) -> Result {
+            if (!before.exists) return {};
+            automation::CheckPlainPath(path);
+            Snapshot current;
+            Result read = ReadFileBytes(path, current); if (!read) return read;
+            if (!current.exists || current.data != before.data)
+                return Fail(ERROR_RETRY, l10n::Text("error.link.concurrent"));
+            if (!DeleteFileW(path.c_str())) return Fail(GetLastError(), l10n::Text(errorKey));
+            removed = true;
+            return {};
+        };
+        result = retireLegacy(paths.legacyStartupLink, legacyStartup, legacyStartupRemoved, "error.startup.disable");
+        if (!result) return rollback(std::move(result));
+        result = retireLegacy(paths.legacyDesktopLink, legacyDesktop, legacyDesktopRemoved, "error.desktop.remove");
+        if (!result) return rollback(std::move(result));
         Loaded verify;
         result = Load(paths, verify);
         if (!result) return rollback(std::move(result));

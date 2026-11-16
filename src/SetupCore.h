@@ -12,7 +12,8 @@
 
 namespace setup {
 inline constexpr wchar_t LauncherName[] = L"ChatGPTProxyLauncher.exe";
-inline constexpr wchar_t LinkName[] = L"ChatGPT Proxy Launcher.lnk";
+inline constexpr wchar_t LinkName[] = L"ChatGPT Launcher.lnk";
+inline constexpr wchar_t LegacyLinkName[] = L"ChatGPT Proxy Launcher.lnk";
 inline constexpr wchar_t Marker[] = L"ChatGPT Launcher Setup / v1";
 inline constexpr size_t MaxArguments = 8191; // Conservative, verified by Shell round trip.
 struct Options {
@@ -21,7 +22,11 @@ struct Options {
     std::wstring protocol = L"http", host = L"127.0.0.1", port;
     std::wstring bypass, extra, directory;
 };
-struct Paths { std::wstring defaultDirectory, startupLink, settingsLink, desktopLink, codexEnvFile; };
+struct Paths {
+    std::wstring defaultDirectory, startupLink, settingsLink, desktopLink, codexEnvFile;
+    // Explicit paths keep legacy migration inside the caller's/test's chosen folders.
+    std::wstring legacyStartupLink{}, legacyDesktopLink{};
+};
 struct Link { std::wstring target, arguments, directory, description; };
 enum class CommitState { NotStarted, Committed, RolledBack, Incomplete };
 struct Result {

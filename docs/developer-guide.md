@@ -1,6 +1,6 @@
 # 开发者接入指南
 
-面向希望随 ChatGPT 启动的程序、脚本和插件作者。原生接口适用于 v1.1.0 及后续兼容版本，JSON 和链式协议仍为 v1。本文修订于 2026-11-16。
+面向希望随 ChatGPT 启动的程序、脚本和插件作者。适用于 v1.1.0 及后续兼容版本，接口仍为 v1。
 
 接入分两部分：**安装时查询、按需部署和注册；运行时读取上下文、初始化并报告状态**。不要每次启动插件都下载配置器、部署或注册。
 
@@ -23,18 +23,7 @@
 
 本地 EXE 要先核对来源及数值文件版本至少为 1.1.0，再调用后台命令。不要向旧 EXE 发送新参数试探支持情况。配置器不会随启动器长期留在部署目录中。
 
-查询成功后读取 `report.data.state`：
-
-| 状态 | 含义 | 接入程序怎么做 |
-| --- | --- | --- |
-| `managed` | 管理记录、目标文件与发现信息一致 | 检查下述协议版本和能力，符合后注册 |
-| `not-deployed` | 未发现管理快捷方式 | 用户同意后执行 `plan → deploy → info` |
-| `legacy` | 有部署，但缺少 v1 发现记录；可能是旧版 | 提示升级；获授权后保留原设置重新部署，再查询 |
-| `missing` | 管理记录中的启动器文件已丢失 | 提示修复；获授权后预检和重新部署，再查询 |
-| `invalid` | 记录损坏、版本不一致或归属不明 | 停止自动写入，提示检查具体安装 |
-| `unknown` | 权限或读取失败，无法确认 | 保留现状，解决读取问题后重新查询 |
-
-`not-deployed` 不保证目标目录完全没有文件；预检仍可能返回同名文件冲突。不要把所有非 `managed` 状态合并成“未安装”。
+读取 `report.data.state`：`managed` 检查能力后注册；`not-deployed` 进入下一节；`legacy`、`missing` 按明确的升级或修复处理；`invalid`、`unknown` 停止自动写入。[完整状态表](companion-protocol-v1.md#查询结果形状)解释各状态。不要把所有非 `managed` 状态当成未安装。
 
 对于 `managed`，检查 `report.data.discovery`：
 
@@ -46,16 +35,7 @@
 
 ## 3. 没有部署时，使用最小请求
 
-从 [deploy-minimal-v1.json](examples/deploy-minimal-v1.json) 开始：
-
-```json
-{
-  "schemaVersion": 1,
-  "base": "preserve",
-  "settings": {},
-  "actions": {"codexEnv": "leave", "officialStartup": "leave"}
-}
-```
+复制 [deploy-minimal-v1.json](examples/deploy-minimal-v1.json)。不要每次启动扩展都部署；安装器也不能用自己附带的旧配置器覆盖更高版本。
 
 首次部署时会写入启动器、管理快捷方式和发现信息；默认不启用代理、不建桌面和登录自启快捷方式。已有配置时保留设置。注册目录与程序文件互相独立。
 
@@ -66,7 +46,7 @@
 
 需要桌面入口或 Windows 登录自启时，在用户选择后显式设置 `settings.desktop` 或 `settings.startup`。代理和 `.env` 是额外功能，不是链式启动前提。[完整部署示例](examples/deploy-v1.json)会修改这些项目，不应直接当作默认安装请求。
 
-退出码 41、70、72 或 `committed:null` 时，先查询实际状态，不循环重试部署。未知归属的文件不能靠删除来绕过保护。具体恢复表见[结果处理](automation-usage.md#结果与恢复)。
+退出码 41、70、72 或 `committed:null` 时，先查询实际状态，不循环重试部署。未知归属的文件不能靠删除来绕过保护。恢复方法见[结果处理](automation-usage.md#结果与恢复)。
 
 ## 4. 给扩展添加清单
 
@@ -123,16 +103,9 @@ Send-CglReply -Context $context -Status ready
 
 ## 7. 配置、升级和卸载
 
-| 场景 | 操作与约束 |
-| --- | --- |
-| 更改参数或扩展配置 | `companion configure`；整个 `overrides` 替换，不是补丁合并 |
-| 临时停用 | `overrides.enabled=false`；清单损坏时仍可停用，但也会替换此前所有覆盖项 |
-| 恢复默认配置 | 提交 `overrides:{}`，会按清单重新启用并完整校验 |
-| 原目录升级扩展 | 保持 ID、清单路径稳定；用户覆盖项继续有效 |
-| 迁移目录 | 显式 `register --replace`；保留覆盖项，不删除旧程序 |
-| 卸载扩展 | `companion remove --id <ID>`；只移除自己的注册，再由扩展卸载器处理自己的文件 |
+使用 `companion configure` 修改配置或停用；它整体替换 `overrides`，不是补丁合并。原目录升级保留 ID 和清单路径；换目录使用 `register --replace`；卸载只 `remove` 自己的 ID。[维护命令](automation-usage.md#配置停用和移除)可直接复制。
 
-不要在卸载一个扩展时删除共享启动器、其他注册项或用户配置。移除和停用不会停止已经运行的扩展。依赖其他扩展时先注册被依赖项；依赖不可用会影响后继，详见[调度与重试](companion-protocol-v1.md#5-顺序总预算与重试)。
+按需阅读[应用场景](companion-protocol-v1.md#8-常见接入场景)：已有实例、脚本宿主、一次性任务、多组件依赖、配置与代理、离线安装，以及升级回滚。移除注册不会停止正在运行的扩展，也不应删除共享启动器。
 
 ## 8. 接入完成前检查
 
@@ -145,13 +118,6 @@ Send-CglReply -Context $context -Status ready
 
 ## 修改本项目时看哪里
 
-| 内容 | 维护位置 |
-| --- | --- |
-| 公共版本、能力、限制 | `src/AutomationContract.h`；与产品版本分开 |
-| 发现状态 | `src/DeploymentDiscovery.*`；两个 EXE 共用 |
-| 后台请求和文件提交 | `SetupCommandLine.cpp`、`SetupCore.cpp` |
-| 下载转发和清理 | `setup.ps1`；测试 `tests/headless-download-tests.ps1` |
-| 清单、覆盖项、依赖和注册 | `CompanionManifest.*`、`CompanionRegistry.cpp` |
-| 回执校验和限时调度 | `CompanionProtocol.*`、`CompanionRunner.cpp` |
+模块分工见[实现位置](automation-design.md#5-模块)。公共版本、能力和限制统一维护在 `src/AutomationContract.h`。
 
 接口变更同步[Schema](schemas/)、[示例](examples/)和文档。新增公共字段不能直接塞进 v1；扩展私有设置优先放 `config`。修改本项目后运行 `cmd /c tests\test-build.cmd`，原生代码改动再运行 `cmd /c tests\analyze.cmd`。新增文件同步 `release.ps1`。校验与已知边界见[维护记录](automation-maintenance.md)。

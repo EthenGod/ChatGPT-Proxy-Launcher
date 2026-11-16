@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.initialize-task",
+  "name": "示例初始化任务",
+  "version": "1.0.0",
+  "requires": [],
+  "entry": {
+    "runtime": "powershell",
+    "path": "Initialize.ps1",
+    "arguments": [],
+    "window": "hidden"
+  },
+  "readiness": {
+    "mode": "exit-code",
+    "timeoutMs": 15000,
+    "successExitCodes": [0]
+  },
+  "config": {}
+}
