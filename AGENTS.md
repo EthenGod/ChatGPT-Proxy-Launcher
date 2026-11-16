@@ -4,6 +4,8 @@
 - 这是 Windows x64 原生 C++ ChatGPT 启动器，不是 OpenAI 官方产品。
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法，英语和日语对应 `README.en.md`、`README.ja.md`。
 - 图形配置工具入口为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
+- 新 UI 位于 `frontend/src/`，Tauri/Rust 位于 `frontend/src-tauri/`，C ABI 连接层为 `src/SetupBridge.*`。当前为第 1 阶段只读预览，默认构建仍使用原生 GUI；阶段约定与验证见 `docs/ui-refactor.md`。
+- 新 UI 构建入口为 `frontend/desktop.ps1`。测试源码统一放在 `tests/frontend/`、`tests/rust/` 和 `tests/setup-bridge-*`；测试包及缓存放在 `work/`。`test-harness` 只编入隔离测试包，不进入普通预览或发布。
 - 用户可见名称为 `ChatGPT Launcher`。新旧快捷方式名在 `SetupCore.h`，读取、迁移和回滚在 `SetupCore.cpp`；EXE 文件名、配置根目录和协议标记保持兼容。测试须显式传入隔离的新旧路径。
 - `src/SetupArguments.cpp` 只处理启动参数的生成、解析和校验；`src/CodexEnv.cpp` 只合并 `.env` 字节。文件读写、所有权检查与回滚统一留在 `src/SetupCore.cpp`。
 - 构建：根目录运行 `cmd /c build.cmd`，需要 Visual Studio / Build Tools 的 C++ 桌面开发组件和 Windows SDK；产物在 `outputs/`。

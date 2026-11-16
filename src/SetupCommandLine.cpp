@@ -283,25 +283,31 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
     } catch (...) { Failure(result, 70, L"result-unavailable"); }
     return result;
 }
-int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail) noexcept try {
+int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail,
+    const Paths* isolatedPaths, StartupReport (*disableStartup)()) noexcept try {
     AutomationCommand command;
     try {
         ParseAutomationCommand(tail, command);
-        Paths paths; const auto got = GetPaths(paths); if (!got) return 50;
+        Paths paths;
+        if (isolatedPaths) paths = *isolatedPaths;
+        else if (!GetPaths(paths)) return 50;
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(com)) return 50;
         struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
         HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_LAUNCHER), RT_RCDATA);
         HGLOBAL loaded = resource ? LoadResource(instance, resource) : nullptr;
         Payload payload{loaded ? static_cast<const BYTE*>(LockResource(loaded)) : nullptr, resource ? SizeofResource(instance, resource) : 0};
-        auto result = RunAutomation(command, paths, payload);
+        auto result = RunAutomation(command, paths, payload, disableStartup);
         return static_cast<int>(result.At(L"exitCode").Integer(0, 255));
     } catch (const Invalid& e) {
         try {
             auto result = NewResult(command.operation); Failure(result, 20, automation::FromUtf8(e.what())); result[L"stage"] = Json(L"parse");
             // No request file is opened on a command syntax error.
             if (!command.resultPath.empty() && (command.requestPath.empty() || !automation::SamePath(command.resultPath, command.requestPath))) {
-                Paths paths; if (!GetPaths(paths)) return 50; CheckResultLocation(command, paths);
+                Paths paths;
+                if (isolatedPaths) paths = *isolatedPaths;
+                else if (!GetPaths(paths)) return 50;
+                CheckResultLocation(command, paths);
                 automation::ResultFile file; file.Reserve(command.resultPath); file.Write(result);
             }
         } catch (...) { return 70; }

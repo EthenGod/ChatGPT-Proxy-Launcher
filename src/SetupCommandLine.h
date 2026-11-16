@@ -15,5 +15,7 @@ void ParseAutomationCommand(const std::wstring& tail, AutomationCommand& command
 Options ResolveAutomationOptions(const automation::Json& request, const Paths& paths, const Loaded& loaded);
 automation::Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload payload,
     StartupReport (*disableStartup)() = TryDisableOfficialStartup);
-int RunSetupCommandLine(HINSTANCE instance, const std::wstring& arguments) noexcept;
+int RunSetupCommandLine(HINSTANCE instance, const std::wstring& arguments,
+    const Paths* isolatedPaths = nullptr,
+    StartupReport (*disableStartup)() = TryDisableOfficialStartup) noexcept;
 }

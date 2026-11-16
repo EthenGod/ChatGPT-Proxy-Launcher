@@ -61,7 +61,7 @@ Write-Host "PASS documentation: $count documents, language navigation, local lin
 
 # Developer docs are Chinese reference material. Validate their local links and runnable syntax too.
 $developerDocs = @('docs/developer-guide.md', 'docs/automation-usage.md', 'docs/automation-design.md',
-    'docs/companion-protocol-v1.md', 'docs/automation-maintenance.md')
+    'docs/companion-protocol-v1.md', 'docs/automation-maintenance.md', 'docs/ui-refactor.md')
 $powerShellBlocks = 0; $jsonBlocks = 0
 foreach ($name in $developerDocs) {
     $path = Join-Path $ProjectRoot $name

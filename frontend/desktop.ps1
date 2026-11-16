@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-only
+param(
+    [ValidateSet('build', 'dev', 'check', 'test', 'harness')][string]$Command = 'build',
+    [string]$RustBin = $env:CHATGPT_RUST_BIN
+)
+$ErrorActionPreference = 'Stop'
+$projectRoot = Split-Path $PSScriptRoot
+$previous = @{}
+foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache', 'CHATGPT_UI_DIST', 'TAURI_CONFIG')) {
+    $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+function Check-Exit([string]$Step) { if ($LASTEXITCODE -ne 0) { throw "$Step failed: $LASTEXITCODE" } }
+try {
+    if ($RustBin) { $env:PATH = [IO.Path]::GetFullPath($RustBin) + ';' + $env:PATH }
+    $extraTools = Join-Path $projectRoot 'work\ui-toolchain\bin'
+    if (Test-Path -LiteralPath $extraTools) { $env:PATH = $extraTools + ';' + $env:PATH }
+    if (!(Get-Command cargo.exe -ErrorAction SilentlyContinue)) { throw 'Rust MSVC toolchain required. Pass -RustBin or set CHATGPT_RUST_BIN.' }
+    $env:CARGO_HOME = Join-Path $projectRoot 'work\ui-toolchain\cargo'
+    $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'work\ui-target'
+    $env:npm_config_cache = Join-Path $projectRoot 'work\npm-cache'
+    # A fresh asset directory avoids embedding stale bundles, without deleting files.
+    $buildId = [guid]::NewGuid().ToString('N')
+    $env:CHATGPT_UI_DIST = Join-Path $projectRoot ('work\ui-assets\' + $buildId)
+    [IO.Directory]::CreateDirectory($env:CHATGPT_UI_DIST) | Out-Null
+    # A drive-qualified path is parsed as a URL by Tauri's untagged config enum.
+    $env:TAURI_CONFIG = @{build=@{frontendDist=('../../work/ui-assets/' + $buildId)}} | ConvertTo-Json -Compress
+    $configFile = Join-Path $projectRoot ('work\ui-assets\' + $buildId + '.tauri.json')
+    [IO.File]::WriteAllText($configFile, $env:TAURI_CONFIG)
+    if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'node_modules\typescript'))) { throw 'Run npm ci in frontend first.' }
+    Push-Location $projectRoot
+    try { & $env:ComSpec /d /c build.cmd; Check-Exit 'Native build' }
+    finally { Pop-Location }
+    Push-Location $PSScriptRoot
+    try {
+        if ($Command -eq 'test' -or $Command -eq 'check') {
+            & npm.cmd run typecheck; Check-Exit 'TypeScript'
+            & npm.cmd test; Check-Exit 'Frontend tests'
+            & npm.cmd run build; Check-Exit 'Frontend build'
+            & cargo.exe fmt --manifest-path src-tauri/Cargo.toml --check; Check-Exit 'Rust format'
+            & cargo.exe $Command --manifest-path src-tauri/Cargo.toml --locked --release --all-features; Check-Exit "Rust $Command"
+            & cargo.exe clippy --manifest-path src-tauri/Cargo.toml --locked --release --all-targets --all-features -- -D warnings; Check-Exit 'Clippy'
+        } elseif ($Command -eq 'dev') {
+            & npm.cmd exec -- tauri dev; Check-Exit 'Tauri dev'
+        } else {
+            $arguments = @('exec', '--', 'tauri', 'build', '--no-bundle', '--config', $configFile)
+            if ($Command -eq 'harness') { $arguments += @('--features', 'test-harness') }
+            $arguments += @('--', '--locked')
+            & npm.cmd @arguments; Check-Exit 'Tauri build'
+            $directory = Join-Path $projectRoot $(if ($Command -eq 'harness') { 'work\ui-stage1-test' } else { 'work\ui-stage1' })
+            [IO.Directory]::CreateDirectory($directory) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release\ChatGPTLauncherSetup.exe') -Destination $directory
+            $metadata = @{
+                setupSha256=(Get-FileHash -LiteralPath (Join-Path $directory 'ChatGPTLauncherSetup.exe') -Algorithm SHA256).Hash
+                launcherSha256=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe') -Algorithm SHA256).Hash
+                payloadBytes=(Get-Item -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length
+            }
+            [IO.File]::WriteAllText(($directory + '-build.json'), ($metadata | ConvertTo-Json))
+            Write-Host ('Built: ' + (Join-Path $directory 'ChatGPTLauncherSetup.exe'))
+        }
+    } finally { Pop-Location }
+} finally {
+    foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
+}

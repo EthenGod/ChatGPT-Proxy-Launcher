@@ -44,7 +44,7 @@ $sourceNames = @(
     'assets/ChatGPT.ico', 'assets/README.md', 'assets/README.en.md', 'assets/README.ja.md',
     'docs/launcher-review.md', 'docs/maintainability-review.md', 'docs/performance-review.md', 'docs/release-upload.md', 'docs/setup-design.md', 'docs/taskbar-repair.md',
     'docs/automation-design.md', 'docs/automation-usage.md', 'docs/automation-review.md', 'docs/companion-protocol-v1.md',
-    'docs/developer-guide.md', 'docs/automation-maintenance.md',
+    'docs/developer-guide.md', 'docs/automation-maintenance.md', 'docs/ui-refactor.md',
     'docs/memory-thread-review.md', 'docs/localization-design.md', 'docs/translating.md',
     'docs/translating.en.md', 'docs/translating.ja.md', 'docs/taskbar-repair.en.md', 'docs/taskbar-repair.ja.md',
     'docs/release-upload.en.md', 'docs/release-upload.ja.md',
@@ -55,7 +55,7 @@ $sourceNames = @(
     'src/AppIcon.h', 'src/AppVersion.h', 'src/ChatGPTLauncherSetup.cpp', 'src/ChatGPTProxyLauncher.cpp',
     'src/AutomationJson.cpp', 'src/AutomationJson.h', 'src/AutomationIO.cpp', 'src/AutomationIO.h',
     'src/AutomationContract.h', 'src/DeploymentDiscovery.cpp', 'src/DeploymentDiscovery.h',
-    'src/SetupCommandLine.cpp', 'src/SetupCommandLine.h',
+    'src/SetupCommandLine.cpp', 'src/SetupCommandLine.h', 'src/SetupBridge.cpp', 'src/SetupBridge.h',
     'src/CompanionManifest.cpp', 'src/CompanionManifest.h', 'src/CompanionRegistry.cpp',
     'src/CompanionProtocol.cpp', 'src/CompanionProtocol.h',
     'src/CompanionRunner.cpp', 'src/CompanionRunner.h', 'src/LauncherAutomation.cpp', 'src/LauncherAutomation.h', 'src/Launcher.manifest',
@@ -72,7 +72,17 @@ $sourceNames = @(
     'tests/memory-tests.cpp', 'tests/MemoryFault.h', 'tests/file-tests.cpp',
     'tests/launcher-tests.cpp', 'tests/preview-download.ps1', 'tests/proxy-tests.cpp',
     'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
-    'tests/taskbar-tests.cpp', 'tests/test-build.cmd'
+    'tests/taskbar-tests.cpp', 'tests/test-build.cmd',
+    'tests/SetupBridgeFixture.h', 'tests/setup-bridge-tests.cpp', 'tests/setup-bridge-runner.cpp', 'tests/test-bridge.cmd', 'tests/ui-stage1-tests.ps1',
+    'tests/fixtures/setup-snapshot.json', 'tests/frontend/contract.test.ts', 'tests/rust/bridge_contract.rs', 'tests/rust/embedded_assets.rs',
+    'frontend/.npmrc', 'frontend/.cargo/config.toml', 'frontend/desktop.ps1', 'frontend/index.html',
+    'frontend/package.json', 'frontend/package-lock.json', 'frontend/tsconfig.json', 'frontend/vite.config.ts',
+    'frontend/src/main.tsx', 'frontend/src/app/App.tsx', 'frontend/src/i18n/index.ts',
+    'frontend/src/platform/desktop.ts', 'frontend/src/platform/types.ts', 'frontend/src/styles/theme.css',
+    'frontend/src-tauri/Cargo.toml', 'frontend/src-tauri/Cargo.lock', 'frontend/src-tauri/build.rs',
+    'frontend/src-tauri/tauri.conf.json', 'frontend/src-tauri/capabilities/setup-readonly.json',
+    'frontend/src-tauri/src/main.rs', 'frontend/src-tauri/src/bootstrap.rs', 'frontend/src-tauri/src/bridge.rs',
+    'frontend/src-tauri/src/model.rs', 'frontend/src-tauri/src/harness.rs'
 )
 # Only explicitly registered catalogs enter the source package; never sweep arbitrary JSON files.
 $languages = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $projectRoot 'locales\languages.json')))
