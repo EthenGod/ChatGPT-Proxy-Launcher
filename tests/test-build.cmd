@@ -19,6 +19,10 @@ cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work
 if errorlevel 1 exit /b %errorlevel%
 work\contract-tests.exe "%CD%"
 if errorlevel 1 exit /b %errorlevel%
+cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\file-tests.obj /Fe:work\file-tests.exe tests\file-tests.cpp work\AutomationJson.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib advapi32.lib
+if errorlevel 1 exit /b %errorlevel%
+work\file-tests.exe "%CD%\work"
+if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /W4 /WX /O1 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /Fo:work\launcher-tests.obj /Fe:work\launcher-tests.exe tests\launcher-tests.cpp work\AutomationJson.obj work\AutomationIO.obj work\DeploymentDiscovery.obj work\CompanionManifest.obj work\LauncherAutomation.obj work\Localization.obj /link /LTCG /SUBSYSTEM:CONSOLE kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib version.lib user32.lib comctl32.lib
 if errorlevel 1 exit /b %errorlevel%
 work\launcher-tests.exe "%CD%\work\capture with spaces.txt"

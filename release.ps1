@@ -69,7 +69,7 @@ $sourceNames = @(
     'tests/analyze.cmd', 'tests/codex-close-tests.cpp', 'tests/companion-tests.cpp', 'tests/download-tests.ps1',
     'tests/automation-tests.cpp', 'tests/chain-tests.cpp', 'tests/headless-download-tests.ps1', 'tests/protocol-example-tests.ps1',
     'tests/contract-tests.cpp', 'tests/localization-tests.cpp', 'tests/localization-tests.ps1', 'tests/documentation-tests.ps1',
-    'tests/memory-tests.cpp', 'tests/MemoryFault.h',
+    'tests/memory-tests.cpp', 'tests/MemoryFault.h', 'tests/file-tests.cpp',
     'tests/launcher-tests.cpp', 'tests/preview-download.ps1', 'tests/proxy-tests.cpp',
     'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
     'tests/taskbar-tests.cpp', 'tests/test-build.cmd'

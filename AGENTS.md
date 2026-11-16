@@ -19,10 +19,10 @@
 - 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
 - `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。
-- `src/SetupCommandLine.cpp` 是后台部署及扩展注册入口。`AutomationJson` / `AutomationIO` 提供有界 JSON、路径、结果文件和用户锁；GUI 与后台共用 `SetupCore::Preflight/Apply`。
+- `src/SetupCommandLine.cpp` 是后台部署及扩展注册入口。`AutomationJson` / `AutomationIO` 提供有界 JSON、路径、结果文件和用户锁；GUI 与后台共用 `SetupCore::Preflight/Apply`。快捷方式和注册项通过 `AutomationIO::RemoveUnchangedFile` 核对并删除；并发、错误和句柄测试在 `tests/file-tests.cpp`。
 - `src/AutomationContract.h` 集中公共协议版本、能力和限制；`DeploymentDiscovery.*` 统一两个 EXE 的只读发现和版本判断；`CompanionProtocol.*` 只解析回执，完整校验后才交给进程逻辑。
 - `src/CompanionManifest.cpp` 校验清单和依赖；`CompanionRegistry.cpp` 保存注册及覆盖项；`CompanionRunner.cpp` 管理有限时长的就绪检查和重试；`LauncherAutomation.cpp` 提供发现查询、显式结果和限时提示。
-- 开发入口见 `docs/developer-guide.md`，完整命令见 `docs/automation-usage.md`，接口见 `docs/automation-design.md`、`docs/companion-protocol-v1.md`；Schema、示例位于 `docs/schemas/`、`docs/examples/`。`tests/contract-tests.cpp` 检查常量与 Schema、示例一致性；隔离行为测试在 `tests/automation-tests.cpp`、`tests/chain-tests.cpp`、`tests/headless-download-tests.ps1`、`tests/protocol-example-tests.ps1`。性能复测为 `work\chain-tests.exe "%CD%\work" --benchmark`。
+- 开发入口见 `docs/developer-guide.md`，完整命令见 `docs/automation-usage.md`，接口见 `docs/automation-design.md`、`docs/companion-protocol-v1.md`；Schema、示例位于 `docs/schemas/`、`docs/examples/`。`tests/contract-tests.cpp` 检查常量与 Schema、示例一致性；隔离行为测试在 `tests/automation-tests.cpp`、`tests/chain-tests.cpp`、`tests/headless-download-tests.ps1`、`tests/protocol-example-tests.ps1`。性能复测为 `work\chain-tests.exe "%CD%\work" --benchmark`；换成 `--benchmark-context` 可测上下文准备的分配和耗时。
 - `src/CodexClose.cpp` 在 `.env` 保存成功后请求整个 ChatGPT 桌面应用退出，并检查附属后台进程。只调用主窗口的应用退出入口，不向辅助窗口发送关闭消息。`tests/codex-close-tests.cpp` 替换进程、窗口、键盘输入、焦点和等待调用，不关闭真实应用。
 
 ## 工作方式

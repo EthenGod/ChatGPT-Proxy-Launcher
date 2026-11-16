@@ -157,7 +157,7 @@
     "error.link.save": "无法保存快捷方式。",
     "error.link.write": "写入快捷方式失败。",
     "error.link.verify": "快捷方式回读结果不一致，已停止保存。",
-    "error.link.concurrent": "旧快捷方式已被其他程序更改，已停止迁移。请检查后重试。",
+    "error.link.concurrent": "快捷方式已被其他程序更改，已停止保存。请检查后重试。",
     "error.system.nodetails": "Windows 未提供详细说明。",
     "error.paths.localappdata": "无法获取用户程序目录。",
     "error.paths.startup": "无法获取当前用户的启动文件夹。",

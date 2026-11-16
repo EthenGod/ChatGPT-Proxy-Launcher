@@ -5,6 +5,7 @@
 #include <cwctype>
 #include <algorithm>
 #include <string_view>
+#include <cstring>
 
 namespace automation {
 std::wstring Quote(const std::wstring& value) {
@@ -88,6 +89,29 @@ void WriteBytes(HANDLE file, const std::string& bytes) {
     if (!WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr)) throw IoError(GetLastError());
     if (written != bytes.size()) throw IoError(ERROR_WRITE_FAULT);
     if (!FlushFileBuffers(file)) throw IoError(GetLastError());
+}
+void RemoveUnchangedFile(const std::wstring& path, std::string_view expected) {
+    CheckPlainPath(path);
+    Handle file(CreateFileW(path.c_str(), GENERIC_READ | DELETE, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (!file) throw IoError(GetLastError());
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(file.value, &info)) throw IoError(GetLastError());
+    if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
+        || info.nFileSizeHigh || info.nFileSizeLow != expected.size()) throw IoError(ERROR_RETRY);
+    // Compare in bounded stack space instead of allocating a second complete snapshot.
+    char buffer[4096];
+    for (size_t offset = 0; offset < expected.size();) {
+        const DWORD count = static_cast<DWORD>(std::min(sizeof(buffer), expected.size() - offset));
+        DWORD got = 0;
+        if (!ReadFile(file.value, buffer, count, &got, nullptr)) throw IoError(GetLastError());
+        if (got != count) throw IoError(ERROR_READ_FAULT);
+        if (memcmp(buffer, expected.data() + offset, count)) throw IoError(ERROR_RETRY);
+        offset += count;
+    }
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    if (!SetFileInformationByHandle(file.value, FileDispositionInfo, &disposition, sizeof(disposition)))
+        throw IoError(GetLastError());
 }
 void ResultFile::Reserve(const std::wstring& input) {
     if (file) throw Invalid("result-already-reserved");

@@ -474,8 +474,9 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         restore(envChanged, paths.codexEnvFile, oldEnv);
         restore(legacyDesktopRemoved, paths.legacyDesktopLink, legacyDesktop, false);
         restore(legacyStartupRemoved, paths.legacyStartupLink, legacyStartup, false);
-        restore(desktopChanged, paths.desktopLink, oldDesktop);
-        restore(startupChanged, paths.startupLink, oldStartup);
+        // Removed links have no replacement to undo. Do not overwrite a file created meanwhile.
+        restore(desktopChanged, paths.desktopLink, oldDesktop, options.desktop);
+        restore(startupChanged, paths.startupLink, oldStartup, options.startup);
         restore(settingsChanged, paths.settingsLink, oldSettings);
         restore(exeChanged, target, oldExe);
         failure.commit = incomplete ? CommitState::Incomplete : CommitState::RolledBack;
@@ -485,6 +486,17 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
                 : l10n::Text("error.rollback.complete");
         } catch (...) { failure.message.swap(incomplete ? incompleteFallback : restoredFallback); }
         return failure;
+    };
+    auto removeShortcut = [&](const std::wstring& path, const Snapshot& before, bool& removed, const char* errorKey) -> Result {
+        if (!before.exists) return {};
+        try {
+            automation::RemoveUnchangedFile(path, std::string_view(
+                reinterpret_cast<const char*>(before.data.data()), before.data.size()));
+        } catch (const automation::IoError& e) {
+            return Fail(e.code, l10n::Text(e.code == ERROR_RETRY ? "error.link.concurrent" : errorKey));
+        }
+        removed = true;
+        return {};
     };
     try {
         if (!exeMatches) {
@@ -501,30 +513,19 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
             result = WriteLink(paths.startupLink, value, oldStartup.exists); if (!result) return rollback(std::move(result));
             startupChanged = true;
         } else if (oldStartup.exists) {
-            if (!DeleteFileW(paths.startupLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.startup.disable")));
-            startupChanged = true;
+            result = removeShortcut(paths.startupLink, oldStartup, startupChanged, "error.startup.disable");
+            if (!result) return rollback(std::move(result));
         }
         if (options.desktop) {
             result = WriteLink(paths.desktopLink, value, oldDesktop.exists); if (!result) return rollback(std::move(result));
             desktopChanged = true;
         } else if (previous.options.desktop && oldDesktop.exists) {
-            if (!DeleteFileW(paths.desktopLink.c_str())) return rollback(Fail(GetLastError(), l10n::Text("error.desktop.remove")));
-            desktopChanged = true;
+            result = removeShortcut(paths.desktopLink, oldDesktop, desktopChanged, "error.desktop.remove");
+            if (!result) return rollback(std::move(result));
         }
-        auto retireLegacy = [&](const std::wstring& path, const Snapshot& before, bool& removed, const char* errorKey) -> Result {
-            if (!before.exists) return {};
-            automation::CheckPlainPath(path);
-            Snapshot current;
-            Result read = ReadFileBytes(path, current); if (!read) return read;
-            if (!current.exists || current.data != before.data)
-                return Fail(ERROR_RETRY, l10n::Text("error.link.concurrent"));
-            if (!DeleteFileW(path.c_str())) return Fail(GetLastError(), l10n::Text(errorKey));
-            removed = true;
-            return {};
-        };
-        result = retireLegacy(paths.legacyStartupLink, legacyStartup, legacyStartupRemoved, "error.startup.disable");
+        result = removeShortcut(paths.legacyStartupLink, legacyStartup, legacyStartupRemoved, "error.startup.disable");
         if (!result) return rollback(std::move(result));
-        result = retireLegacy(paths.legacyDesktopLink, legacyDesktop, legacyDesktopRemoved, "error.desktop.remove");
+        result = removeShortcut(paths.legacyDesktopLink, legacyDesktop, legacyDesktopRemoved, "error.desktop.remove");
         if (!result) return rollback(std::move(result));
         Loaded verify;
         result = Load(paths, verify);

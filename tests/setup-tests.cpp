@@ -16,7 +16,7 @@ static unsigned throwMoveAt = 0, exhaustMemoryAfterMove = 0;
 static PCWSTR collisionTarget = nullptr;
 static PCWSTR redirectedPath = nullptr;
 static PCWSTR failDeletePath = nullptr, replaceOnDeleteFailure = nullptr;
-static PCWSTR changeLegacyPath = nullptr, changeLegacyTrigger = nullptr;
+static PCWSTR changeShortcutPath = nullptr, changeShortcutTrigger = nullptr;
 static void ReplaceFixture(PCWSTR path) {
     HANDLE h = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) throw std::bad_alloc();
@@ -24,14 +24,14 @@ static void ReplaceFixture(PCWSTR path) {
     const BOOL ok = WriteFile(h, "foreign", 7, &written, nullptr); CloseHandle(h);
     if (!ok || written != 7) throw std::bad_alloc();
 }
-static BOOL WINAPI TestDelete(PCWSTR path) {
-    if (failDeletePath && !_wcsicmp(path, failDeletePath)) {
-        if (replaceOnDeleteFailure) { ReplaceFixture(replaceOnDeleteFailure); replaceOnDeleteFailure = nullptr; }
-        SetLastError(ERROR_ACCESS_DENIED); return FALSE;
-    }
-    return DeleteFileW(path);
-}
 namespace automation {
+static void TestRemoveUnchangedFile(const std::wstring& path, std::string_view expected) {
+    if (failDeletePath && !_wcsicmp(path.c_str(), failDeletePath)) {
+        if (replaceOnDeleteFailure) { ReplaceFixture(replaceOnDeleteFailure); replaceOnDeleteFailure = nullptr; }
+        throw IoError(ERROR_ACCESS_DENIED);
+    }
+    RemoveUnchangedFile(path, expected);
+}
 static void TestCheckPlainPath(const std::wstring& path) {
     if (redirectedPath && SamePath(path, redirectedPath)) throw Invalid("redirected-path");
     CheckPlainPath(path);
@@ -50,19 +50,19 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
         if (!ok || written != 7) return FALSE;
     }
     const BOOL moved = MoveFileExW(from, to, flags);
-    if (moved && changeLegacyPath && !_wcsicmp(to, changeLegacyTrigger)) {
-        ReplaceFixture(changeLegacyPath); changeLegacyPath = nullptr;
+    if (moved && changeShortcutPath && !_wcsicmp(to, changeShortcutTrigger)) {
+        ReplaceFixture(changeShortcutPath); changeShortcutPath = nullptr;
     }
     if (moved && moveCalls == exhaustMemoryAfterMove) memory_fault::remaining = 0;
     return moved;
 }
 #define MoveFileExW TestMove
-#define DeleteFileW TestDelete
+#define RemoveUnchangedFile TestRemoveUnchangedFile
 #define CheckPlainPath TestCheckPlainPath
 #include "../src/SetupCore.cpp"
 #undef CheckPlainPath
 #undef MoveFileExW
-#undef DeleteFileW
+#undef RemoveUnchangedFile
 #include "../src/SetupResources.h"
 #include "../src/AppVersion.h"
 #include "../src/CodexEnv.h"
@@ -119,7 +119,7 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
         if (scenario == 4 || scenario == 7) failDeletePath = old.desktopLink.c_str();
         if (scenario == 7) replaceOnDeleteFailure = old.startupLink.c_str();
         if (scenario == 5) { options.directory = Join(base, L"new-target"); moveCalls = 0; failMoveAt = 5; }
-        if (scenario == 6) { changeLegacyPath = old.startupLink.c_str(); changeLegacyTrigger = paths.desktopLink.c_str(); }
+        if (scenario == 6) { changeShortcutPath = old.startupLink.c_str(); changeShortcutTrigger = paths.desktopLink.c_str(); }
         if (scenario == 8) {
             redirectedPath = old.startupLink.c_str();
             REQUIRE(!Preflight(paths, options, payload)); redirectedPath = nullptr;
@@ -133,7 +133,7 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
             options = loaded.options; options.codexEnv = false;
         }
         const auto saved = Apply(paths, options, payload, target);
-        failDeletePath = replaceOnDeleteFailure = changeLegacyPath = changeLegacyTrigger = nullptr; failMoveAt = 0;
+        failDeletePath = replaceOnDeleteFailure = changeShortcutPath = changeShortcutTrigger = nullptr; failMoveAt = 0;
         if (scenario >= 4 && scenario <= 7) {
             REQUIRE(!saved && saved.commit == (scenario == 7 ? CommitState::Incomplete : CommitState::RolledBack));
             REQUIRE(ReadFileBytes(old.startupLink, current) && current.exists);
@@ -151,6 +151,44 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
         }
     }
     puts("PASS shortcut rename: legacy choices/arguments, current-name priority, opt-out, ownership, conflicts, concurrent edits and complete/incomplete rollback");
+    return 0;
+}
+static int ShortcutRemovalTests(const std::wstring& root, setup::Payload payload) {
+    using namespace setup;
+    const std::vector<BYTE> foreign{'f','o','r','e','i','g','n'};
+    for (unsigned scenario = 0; scenario != 4; ++scenario) {
+        const auto base = Join(root, L"remove-" + std::to_wstring(scenario));
+        Paths paths{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), Join(base, L"desktop.lnk"), {}};
+        Options options; options.directory = base; options.startup = options.desktop = true;
+        options.proxy = options.codexEnv = false;
+        std::wstring target;
+        REQUIRE(Apply(paths, options, payload, target));
+        Snapshot startup, desktop, settings, current;
+        REQUIRE(ReadFileBytes(paths.startupLink, startup) && ReadFileBytes(paths.desktopLink, desktop)
+            && ReadFileBytes(paths.settingsLink, settings));
+        options.startup = options.desktop = false;
+        const auto& changed = scenario == 0 || scenario == 2 ? paths.startupLink : paths.desktopLink;
+        if (scenario < 2) {
+            changeShortcutPath = changed.c_str(); changeShortcutTrigger = paths.settingsLink.c_str();
+        } else {
+            if (scenario == 3) {
+                paths.legacyDesktopLink = Join(base, L"legacy-desktop.lnk");
+                REQUIRE(WriteLink(paths.legacyDesktopLink, {target, L"", base, Marker}));
+            }
+            failDeletePath = scenario == 2 ? paths.desktopLink.c_str() : paths.legacyDesktopLink.c_str();
+            replaceOnDeleteFailure = changed.c_str();
+        }
+        const auto saved = Apply(paths, options, payload, target);
+        failDeletePath = replaceOnDeleteFailure = changeShortcutPath = changeShortcutTrigger = nullptr;
+        REQUIRE(!saved && saved.commit == (scenario < 2 ? CommitState::RolledBack : CommitState::Incomplete));
+        REQUIRE(saved.code == static_cast<DWORD>(scenario < 2 ? ERROR_RETRY : ERROR_ACCESS_DENIED));
+        REQUIRE(ReadFileBytes(changed, current) && current.exists && current.data == foreign);
+        const bool changedStartup = scenario == 0 || scenario == 2;
+        REQUIRE(ReadFileBytes(changedStartup ? paths.desktopLink : paths.startupLink, current)
+            && current.data == (changedStartup ? desktop.data : startup.data));
+        REQUIRE(ReadFileBytes(paths.settingsLink, current) && current.data == settings.data);
+    }
+    puts("PASS shortcut removal: concurrent edits stop removal; rollback restores removed links without overwriting new files");
     return 0;
 }
 static int EnvTests() {
@@ -281,6 +319,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
+    REQUIRE(ShortcutRemovalTests(root, payload) == 0);
     REQUIRE(ShortcutMigrationTests(root, payload) == 0);
     {
         const std::string expected = APP_VERSION_TEXT;

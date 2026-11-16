@@ -7,8 +7,7 @@
 #include <bcrypt.h>
 #include <sddl.h>
 #include <algorithm>
-#include <memory>
-#include <set>
+#include <utility>
 
 namespace chain {
 using automation::Invalid;
@@ -19,7 +18,7 @@ using rules::Guard;
 std::wstring Random() {
     BYTE bytes[32]{};
     if (BCryptGenRandom(nullptr, bytes, sizeof(bytes), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) throw Invalid("random-unavailable");
-    constexpr wchar_t hex[] = L"0123456789abcdef"; std::wstring out;
+    constexpr wchar_t hex[] = L"0123456789abcdef"; std::wstring out; out.reserve(sizeof(bytes) * 2);
     for (const auto b : bytes) { out += hex[b >> 4]; out += hex[b & 15]; } return out;
 }
 std::wstring Sid(HANDLE process) {
@@ -121,21 +120,43 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
     const auto began = GetTickCount64();
     const auto deadline = std::min(globalDeadline, began + e.timeout);
     const auto token = Random(), attemptId = Random(); AttemptFiles files; files.Create(token);
-    auto context = Json::Object(); context[L"schemaVersion"] = Json::Number(rules::ContextSchema); context[L"protocolVersion"] = Json::Number(rules::ChainProtocol);
-    context[L"runId"] = Json(runId); context[L"attemptId"] = Json(attemptId); context[L"token"] = Json(token);
-    context[L"deadlineUtc"] = Json(DeadlineUtc(static_cast<DWORD>(deadline > began ? deadline - began : 0)));
-    auto launcher = Json::Object(); launcher[L"path"] = Json(options.launcher); launcher[L"version"] = Json(automation::FromUtf8(APP_VERSION_TEXT));
-    launcher[L"deploymentState"] = Json(L"standalone");
-    if (info.At(L"state").String() == L"managed" && automation::SamePath(info.At(L"launcherPath").String(), options.launcher)) launcher[L"deploymentState"] = Json(L"managed");
-    else if (info.At(L"state").String() == L"unknown" || info.At(L"state").String() == L"invalid") launcher[L"deploymentState"] = Json(L"unknown");
-    context[L"launcher"] = launcher;
-    auto entry = Json::Object(); entry[L"id"] = Json(e.id); entry[L"version"] = Json(e.version); entry[L"attempt"] = Json::Number(attempt); context[L"entry"] = entry;
-    auto input = Json::Object(); input[L"arguments"] = Json::Array(); for (const auto& a : e.arguments) input[L"arguments"].array.emplace_back(a);
-    input[L"config"] = e.config; context[L"input"] = input;
-    if (e.signal) context[L"replyPath"] = Json(files.reply);
-    auto chat = Json::Object(); chat[L"processCreated"] = Json(true); chat[L"readiness"] = Json(L"unknown"); context[L"chatgpt"] = chat;
-    const auto bytes = automation::WriteJson(context); if (bytes.size() > rules::JsonBytes) throw Invalid("context-too-large");
+    // Context and serialization buffers are no longer needed while waiting for the child.
     {
+        auto context = Json::Object();
+        context[L"schemaVersion"] = Json::Number(rules::ContextSchema);
+        context[L"protocolVersion"] = Json::Number(rules::ChainProtocol);
+        context[L"runId"] = Json(runId);
+        context[L"attemptId"] = Json(attemptId);
+        context[L"token"] = Json(token);
+        context[L"deadlineUtc"] = Json(DeadlineUtc(static_cast<DWORD>(deadline > began ? deadline - began : 0)));
+        auto launcher = Json::Object();
+        launcher[L"path"] = Json(options.launcher);
+        launcher[L"version"] = Json(automation::FromUtf8(APP_VERSION_TEXT));
+        launcher[L"deploymentState"] = Json(L"standalone");
+        const auto& state = info.At(L"state").String();
+        if (state == L"managed" && automation::SamePath(info.At(L"launcherPath").String(), options.launcher))
+            launcher[L"deploymentState"] = Json(L"managed");
+        else if (state == L"unknown" || state == L"invalid") launcher[L"deploymentState"] = Json(L"unknown");
+        context[L"launcher"] = std::move(launcher);
+        auto entry = Json::Object();
+        entry[L"id"] = Json(e.id);
+        entry[L"version"] = Json(e.version);
+        entry[L"attempt"] = Json::Number(attempt);
+        context[L"entry"] = std::move(entry);
+        auto input = Json::Object();
+        input[L"arguments"] = Json::Array();
+        auto& arguments = input[L"arguments"].array;
+        arguments.reserve(e.arguments.size());
+        for (const auto& a : e.arguments) arguments.emplace_back(a);
+        input[L"config"] = e.config;
+        context[L"input"] = std::move(input);
+        if (e.signal) context[L"replyPath"] = Json(files.reply);
+        auto chat = Json::Object();
+        chat[L"processCreated"] = Json(true);
+        chat[L"readiness"] = Json(L"unknown");
+        context[L"chatgpt"] = std::move(chat);
+        const auto bytes = automation::WriteJson(context);
+        if (bytes.size() > rules::JsonBytes) throw Invalid("context-too-large");
         Handle file(CreateFileW(files.context.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
         if (!file) throw automation::IoError(GetLastError()); automation::WriteBytes(file.value, bytes);
     }

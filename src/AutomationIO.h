@@ -8,6 +8,7 @@
 #endif
 #include <windows.h>
 #include "AutomationJson.h"
+#include <string_view>
 
 namespace automation {
 struct Handle {
@@ -28,6 +29,8 @@ std::wstring Quote(const std::wstring& value);
 void CheckPlainPath(const std::wstring& path); // Check existing path components; no writes.
 std::string ReadBytes(const std::wstring& path, size_t maximum = contract::JsonBytes);
 void WriteBytes(HANDLE file, const std::string& bytes);
+// Hold one read/delete handle through comparison and deletion. ERROR_RETRY means content changed.
+void RemoveUnchangedFile(const std::wstring& path, std::string_view expected);
 class ResultFile {
     Handle file;
 public:

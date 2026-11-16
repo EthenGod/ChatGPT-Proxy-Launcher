@@ -17,6 +17,25 @@ static DWORD WINAPI TestFileAttributes(PCWSTR path) {
     return GetFileAttributesW(path);
 }
 static thread_local PCWSTR syntheticEnvironment = nullptr;
+static std::wstring protocolTempRoot;
+static bool measureDispatch = false;
+static size_t dispatchAllocations = 0, dispatchBytes = 0;
+static LARGE_INTEGER dispatchStarted{}, dispatchCreated{};
+static DWORD WINAPI TestTempPath(DWORD capacity, LPWSTR buffer) {
+    if (protocolTempRoot.empty()) return GetTempPathW(capacity, buffer);
+    if (capacity <= protocolTempRoot.size()) return static_cast<DWORD>(protocolTempRoot.size() + 1);
+    CopyMemory(buffer, protocolTempRoot.c_str(), (protocolTempRoot.size() + 1) * sizeof(wchar_t));
+    return static_cast<DWORD>(protocolTempRoot.size());
+}
+static BOOL WINAPI TestCreateProcess(LPCWSTR app, LPWSTR command, LPSECURITY_ATTRIBUTES processSecurity,
+    LPSECURITY_ATTRIBUTES threadSecurity, BOOL inherit, DWORD flags, LPVOID environment,
+    LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION process) {
+    if (measureDispatch) {
+        dispatchAllocations = memory_fault::calls; dispatchBytes = memory_fault::bytes;
+        QueryPerformanceCounter(&dispatchCreated);
+    }
+    return CreateProcessW(app, command, processSecurity, threadSecurity, inherit, flags, environment, directory, startup, process);
+}
 static LPWCH WINAPI TestEnvironmentStrings() {
     return syntheticEnvironment ? const_cast<LPWCH>(syntheticEnvironment) : GetEnvironmentStringsW();
 }
@@ -50,12 +69,16 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #define GetEnvironmentStringsW TestEnvironmentStrings
 #define FreeEnvironmentStringsW TestFreeEnvironment
 #define GetFileAttributesW TestFileAttributes
+#define GetTempPathW TestTempPath
+#define CreateProcessW TestCreateProcess
 #include "../src/CompanionRunner.cpp"
 #undef CreateJobObjectW
 #undef QueryInformationJobObject
 #undef GetEnvironmentStringsW
 #undef FreeEnvironmentStringsW
 #undef GetFileAttributesW
+#undef GetTempPathW
+#undef CreateProcessW
 using automation::Json;
 using automation::Handle;
 using automation::Invalid;
@@ -146,6 +169,34 @@ static ULONGLONG CpuTime() {
     FILETIME born{}, end{}, kernel{}, user{}; GetProcessTimes(GetCurrentProcess(), &born, &end, &kernel, &user);
     return (static_cast<ULONGLONG>(kernel.dwHighDateTime) << 32) + kernel.dwLowDateTime + (static_cast<ULONGLONG>(user.dwHighDateTime) << 32) + user.dwLowDateTime;
 }
+static int ContextBenchmark(const std::wstring& base, const std::wstring& self) {
+    LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
+    std::vector<double> times;
+    for (unsigned i = 0; i != 6; ++i) {
+        Case item(base, (L"context-" + std::to_wstring(i)).c_str(), self, L"task");
+        item.document[L"config"][L"padding"] = Json(std::wstring(24000, L'x'));
+        item.document[L"entry"][L"arguments"].array.emplace_back(L"");
+        item.document[L"entry"][L"arguments"].array.emplace_back(L"中文 空格");
+        item.document[L"entry"][L"arguments"].array.emplace_back(L"quote\"tail");
+        item.Save(); item.Register();
+        syntheticEnvironment = L"PATH=C:\\Windows\\System32\0\0";
+        measureDispatch = true; dispatchAllocations = dispatchBytes = 0;
+        Json report;
+        QueryPerformanceCounter(&dispatchStarted);
+        { memory_fault::Scope count; report = item.Run(); }
+        measureDispatch = false; syntheticEnvironment = nullptr;
+        REQUIRE(Last(report).At(L"status").String() == L"completed" && dispatchAllocations);
+        const auto capture = item.Capture();
+        REQUIRE(capture.At(L"input").At(L"config").At(L"padding").String().size() == 24000);
+        REQUIRE(capture.At(L"input").At(L"arguments").array[1].String().empty());
+        REQUIRE(capture.At(L"args").array[2].String() == L"中文 空格" && capture.At(L"args").array[3].String() == L"quote\"tail");
+        if (i) times.push_back((dispatchCreated.QuadPart - dispatchStarted.QuadPart) * 1000.0 / frequency.QuadPart);
+    }
+    std::sort(times.begin(), times.end());
+    printf("CONTEXT preparation: %zu allocations, %zu requested bytes; p50=%.3f ms min=%.3f max=%.3f (24 KB config; includes local IO, excludes process creation)\n",
+        dispatchAllocations, dispatchBytes, times[2], times.front(), times.back());
+    return 0;
+}
 static int Benchmark(const std::wstring& base, const std::wstring& self) {
     chain::RunOptions options; options.root = Join(base, L"empty"); options.feedback = 0;
     LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
@@ -184,12 +235,15 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (!Env(L"CGL_CONTEXT_FILE").empty()) return Fixture(argc, argv);
         const bool benchmark = argc == 3 && !wcscmp(argv[2], L"--benchmark");
-        if (argc != 2 && !benchmark) return 2;
+        const bool contextBenchmark = argc == 3 && !wcscmp(argv[2], L"--benchmark-context");
+        if (argc != 2 && !benchmark && !contextBenchmark) return 2;
         REQUIRE(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)));
         SetEnvironmentVariableW(L"CHATGPT_PROXY_LAUNCHER_COMPANION", nullptr);
         const auto base = Join(argv[1], L"chain-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         REQUIRE(CreateDirectoryW(base.c_str(), nullptr)); wchar_t self[32768]{}; GetModuleFileNameW(nullptr, self, 32768);
+        protocolTempRoot = base + L"\\";
         if (benchmark) { const auto code = Benchmark(base, self); CoUninitialize(); return code; }
+        if (contextBenchmark) { const auto code = ContextBenchmark(base, self); CoUninitialize(); return code; }
         Case unreadablePolicy(base, L"unreadable-policy", self, L"task"); unreadablePolicy.Register();
         deniedPolicyPath = Join(unreadablePolicy.paths.defaultDirectory, L"companion-policy.json");
         const auto policyFailure = unreadablePolicy.Run(); deniedPolicyPath.clear();

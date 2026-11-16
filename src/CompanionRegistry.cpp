@@ -35,16 +35,11 @@ void AtomicRecord(const std::wstring& path, const std::string& bytes, const std:
     cleanup.owned = false;
 }
 void RemoveRecord(const std::wstring& path, const std::string& previous) {
-    automation::CheckPlainPath(path);
-    automation::Handle file(CreateFileW(path.c_str(), GENERIC_READ | DELETE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-    if (!file) throw automation::IoError(GetLastError());
-    BY_HANDLE_FILE_INFORMATION info{};
-    if (!GetFileInformationByHandle(file.value, &info)) throw automation::IoError(GetLastError());
-    if (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) || info.nFileSizeHigh || info.nFileSizeLow != previous.size()) throw Invalid("registration-changed");
-    std::string check(previous.size(), '\0'); DWORD got = 0;
-    if (!ReadFile(file.value, check.data(), static_cast<DWORD>(check.size()), &got, nullptr) || got != check.size() || check != previous) throw Invalid("registration-changed");
-    FILE_DISPOSITION_INFO disposition{TRUE};
-    if (!SetFileInformationByHandle(file.value, FileDispositionInfo, &disposition, sizeof(disposition))) throw automation::IoError(GetLastError());
+    try { automation::RemoveUnchangedFile(path, previous); }
+    catch (const automation::IoError& e) {
+        if (e.code == ERROR_RETRY || e.code == ERROR_READ_FAULT) throw Invalid("registration-changed");
+        throw;
+    }
 }
 void CheckLegacy(const setup::Paths& paths, const Entry& e) {
     const auto folder = Join(paths.defaultDirectory, companions::Folder);
