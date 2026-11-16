@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <string>
 #include <vector>
@@ -17,6 +18,35 @@ static PCWSTR collisionTarget = nullptr;
 static PCWSTR redirectedPath = nullptr;
 static PCWSTR failDeletePath = nullptr, replaceOnDeleteFailure = nullptr;
 static PCWSTR changeShortcutPath = nullptr, changeShortcutTrigger = nullptr;
+struct ShellNotice {
+    LONG event;
+    UINT flags;
+    wchar_t path[MAX_PATH];
+    bool hasSecondItem;
+    DWORD attributes;
+    unsigned moves;
+};
+static ShellNotice shellNotices[16]{};
+static size_t shellNoticeCount = 0;
+// Never notify the real Shell from these tests. Fixed storage also works under OOM injection.
+static void WINAPI TestNotify(LONG event, UINT flags, LPCVOID item1, LPCVOID item2) noexcept {
+    if (shellNoticeCount < _countof(shellNotices)) {
+        auto& notice = shellNotices[shellNoticeCount];
+        notice.event = event; notice.flags = flags; notice.hasSecondItem = item2 != nullptr;
+        notice.path[0] = L'\0';
+        if (item1 && (flags & SHCNF_TYPE) == SHCNF_PATHW)
+            wcsncpy_s(notice.path, static_cast<PCWSTR>(item1), _TRUNCATE);
+        notice.attributes = GetFileAttributesW(notice.path);
+        notice.moves = moveCalls;
+    }
+    ++shellNoticeCount;
+}
+static bool NoticeIs(size_t index, LONG event, const std::wstring& path) {
+    if (index >= shellNoticeCount || index >= _countof(shellNotices)) return false;
+    const auto& notice = shellNotices[index];
+    return notice.event == event && notice.flags == (SHCNF_PATHW | SHCNF_FLUSHNOWAIT)
+        && !notice.hasSecondItem && path == notice.path && notice.moves == moveCalls;
+}
 static void ReplaceFixture(PCWSTR path) {
     HANDLE h = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) throw std::bad_alloc();
@@ -59,7 +89,9 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
 #define MoveFileExW TestMove
 #define RemoveUnchangedFile TestRemoveUnchangedFile
 #define CheckPlainPath TestCheckPlainPath
+#define SHChangeNotify TestNotify
 #include "../src/SetupCore.cpp"
+#undef SHChangeNotify
 #undef CheckPlainPath
 #undef MoveFileExW
 #undef RemoveUnchangedFile
@@ -78,6 +110,51 @@ static bool DecodeArguments(const std::wstring& text, std::vector<std::wstring>&
     if (!args.value || count < 1) return false;
     values.assign(args.value + 1, args.value + count);
     return true;
+}
+static int DesktopNotificationTests(const std::wstring& root, setup::Payload payload) {
+    using namespace setup;
+    const auto base = Join(root, L"desktop-notifications");
+    const auto desktop = Join(base, L"redirected\\桌面 Desktop");
+    Paths paths{base, Join(base, L"startup.lnk"), Join(base, L"settings.lnk"), Join(desktop, LinkName), {}};
+    Options options; options.directory = base; options.startup = options.proxy = options.codexEnv = false;
+    options.desktop = true;
+    std::wstring target;
+    shellNoticeCount = 0;
+    REQUIRE(Preflight(paths, options, payload) && shellNoticeCount == 0);
+    REQUIRE(!Exists(paths.desktopLink));
+
+    // A failed final rename has no desktop change to publish.
+    moveCalls = 0; failMoveAt = 3;
+    const auto failed = Apply(paths, options, payload, target);
+    failMoveAt = 0;
+    REQUIRE(!failed && failed.commit == CommitState::RolledBack && shellNoticeCount == 0);
+    REQUIRE(!Exists(paths.desktopLink));
+
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(shellNoticeCount == 2 && NoticeIs(0, SHCNE_CREATE, paths.desktopLink) && NoticeIs(1, SHCNE_UPDATEDIR, desktop));
+    REQUIRE(shellNotices[0].attributes != INVALID_FILE_ATTRIBUTES);
+    REQUIRE(!(shellNotices[0].attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DIRECTORY)));
+    Link link;
+    REQUIRE(ReadLink(paths.desktopLink, link) && link.target == target && link.description == Marker);
+
+    shellNoticeCount = 0;
+    Loaded loaded;
+    REQUIRE(Load(paths, loaded) && Preflight(paths, options, payload) && shellNoticeCount == 0);
+    options.extra = L"--title=\"中文 空格\"";
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(shellNoticeCount == 2 && NoticeIs(0, SHCNE_UPDATEITEM, paths.desktopLink) && NoticeIs(1, SHCNE_UPDATEDIR, desktop));
+    std::wstring arguments;
+    REQUIRE(BuildArguments(options, arguments) && ReadLink(paths.desktopLink, link) && link.arguments == arguments);
+
+    shellNoticeCount = 0;
+    options.desktop = false;
+    REQUIRE(Apply(paths, options, payload, target));
+    REQUIRE(shellNoticeCount == 2 && NoticeIs(0, SHCNE_DELETE, paths.desktopLink) && NoticeIs(1, SHCNE_UPDATEDIR, desktop));
+    REQUIRE(shellNotices[0].attributes == INVALID_FILE_ATTRIBUTES && !Exists(paths.desktopLink));
+    shellNoticeCount = 0;
+    REQUIRE(Apply(paths, options, payload, target) && shellNoticeCount == 0);
+    puts("PASS desktop Shell notifications: final committed paths, create/update/delete, redirected Unicode folders, visible attributes and read-only/no-change silence");
+    return 0;
 }
 static int ShortcutMigrationTests(const std::wstring& root, setup::Payload payload) {
     using namespace setup;
@@ -101,7 +178,8 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
         Snapshot startup, desktop, settings, current;
         REQUIRE(ReadFileBytes(old.startupLink, startup) && ReadFileBytes(old.desktopLink, desktop)
             && ReadFileBytes(old.settingsLink, settings));
-        REQUIRE(Preflight(paths, options, payload));
+        shellNoticeCount = 0;
+        REQUIRE(Preflight(paths, options, payload) && shellNoticeCount == 0);
         REQUIRE(!Exists(paths.startupLink) && !Exists(paths.desktopLink) && Exists(old.startupLink) && Exists(old.desktopLink));
         if (scenario == 1) options.startup = options.desktop = false;
         if (scenario == 2) {
@@ -132,10 +210,12 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
             REQUIRE(Load(paths, loaded) && loaded.options.port == L"12346");
             options = loaded.options; options.codexEnv = false;
         }
+        shellNoticeCount = 0;
         const auto saved = Apply(paths, options, payload, target);
         failDeletePath = replaceOnDeleteFailure = changeShortcutPath = changeShortcutTrigger = nullptr; failMoveAt = 0;
         if (scenario >= 4 && scenario <= 7) {
             REQUIRE(!saved && saved.commit == (scenario == 7 ? CommitState::Incomplete : CommitState::RolledBack));
+            REQUIRE(shellNoticeCount == 1 && NoticeIs(0, SHCNE_UPDATEDIR, Parent(paths.desktopLink)));
             REQUIRE(ReadFileBytes(old.startupLink, current) && current.exists);
             REQUIRE((scenario == 6 || scenario == 7) ? current.data == std::vector<BYTE>({'f','o','r','e','i','g','n'}) : current.data == startup.data);
             REQUIRE(ReadFileBytes(old.desktopLink, current) && current.data == desktop.data);
@@ -143,6 +223,14 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
             REQUIRE(!Exists(paths.startupLink) && !Exists(paths.desktopLink));
         } else {
             REQUIRE(saved && Load(paths, loaded) && loaded.options.startup == options.startup && loaded.options.desktop == options.desktop);
+            if (scenario == 1) {
+                REQUIRE(shellNoticeCount == 2 && NoticeIs(0, SHCNE_DELETE, old.desktopLink));
+            } else if (scenario == 3 || scenario == 10) {
+                REQUIRE(shellNoticeCount == 2 && NoticeIs(0, SHCNE_CREATE, paths.desktopLink));
+            } else {
+                REQUIRE(shellNoticeCount == 3 && NoticeIs(0, SHCNE_CREATE, paths.desktopLink) && NoticeIs(1, SHCNE_DELETE, old.desktopLink));
+            }
+            REQUIRE(NoticeIs(shellNoticeCount - 1, SHCNE_UPDATEDIR, Parent(paths.desktopLink)));
             if (scenario == 3 || scenario == 10) {
                 REQUIRE(ReadFileBytes(old.startupLink, current) && current.data == startup.data);
                 REQUIRE(ReadFileBytes(old.desktopLink, current) && current.data == desktop.data);
@@ -319,6 +407,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
+    REQUIRE(DesktopNotificationTests(root, payload) == 0);
     REQUIRE(ShortcutRemovalTests(root, payload) == 0);
     REQUIRE(ShortcutMigrationTests(root, payload) == 0);
     {

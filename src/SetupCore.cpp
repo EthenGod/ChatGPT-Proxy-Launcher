@@ -452,6 +452,8 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     Result exceptionFailure{ERROR_GEN_FAILURE, l10n::Text("error.deployment.interrupted")};
     std::wstring restoredFallback = exceptionFailure.message + l10n::Text("error.rollback.complete");
     std::wstring incompleteFallback = exceptionFailure.message + l10n::Text("error.rollback.exception");
+    const auto desktopDirectory = touchDesktop ? Parent(paths.desktopLink) : std::wstring{};
+    const auto legacyDesktopDirectory = legacyDesktop.exists ? Parent(paths.legacyDesktopLink) : std::wstring{};
     result = EnsureDirectory(directory); if (!result) return result;
     result = EnsureDirectory(Parent(paths.settingsLink)); if (!result) return result;
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
@@ -459,6 +461,22 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
     bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false, discoveryChanged = false;
     bool legacyStartupRemoved = false, legacyDesktopRemoved = false;
+    auto notifyDesktopChanges = [&](bool committed) noexcept {
+        // Atomic .tmp -> .lnk replacement alone can leave Explorer's desktop view stale.
+        // Notify only after commit/rollback, with no allocations or wait for Explorer.
+        constexpr UINT flags = SHCNF_PATHW | SHCNF_FLUSHNOWAIT;
+        if (committed) {
+            if (desktopChanged) {
+                const LONG event = !options.desktop ? SHCNE_DELETE : oldDesktop.exists ? SHCNE_UPDATEITEM : SHCNE_CREATE;
+                SHChangeNotify(event, flags, paths.desktopLink.c_str(), nullptr);
+            }
+            if (legacyDesktopRemoved) SHChangeNotify(SHCNE_DELETE, flags, paths.legacyDesktopLink.c_str(), nullptr);
+        }
+        // A directory refresh also covers rollback, including a partial restore.
+        if (desktopChanged) SHChangeNotify(SHCNE_UPDATEDIR, flags, desktopDirectory.c_str(), nullptr);
+        if (legacyDesktopRemoved && (!desktopChanged || !Same(desktopDirectory, legacyDesktopDirectory)))
+            SHChangeNotify(SHCNE_UPDATEDIR, flags, legacyDesktopDirectory.c_str(), nullptr);
+    };
     auto rollback = [&](Result failure) noexcept {
         bool incomplete = false, detailsUnavailable = false;
         std::wstring restoreErrors;
@@ -479,6 +497,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         restore(startupChanged, paths.startupLink, oldStartup, options.startup);
         restore(settingsChanged, paths.settingsLink, oldSettings);
         restore(exeChanged, target, oldExe);
+        notifyDesktopChanges(false);
         failure.commit = incomplete ? CommitState::Incomplete : CommitState::RolledBack;
         try {
             if (detailsUnavailable) failure.message += l10n::Text("error.rollback.exception");
@@ -555,6 +574,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         exceptionFailure.code = ERROR_NOT_ENOUGH_MEMORY;
         return rollback(std::move(exceptionFailure));
     } catch (...) { return rollback(std::move(exceptionFailure)); }
+    notifyDesktopChanges(true);
     deployedTarget.swap(target); // Publishing a committed result must not allocate.
     Result success; success.commit = CommitState::Committed; return success;
 }
