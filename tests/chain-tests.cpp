@@ -21,6 +21,8 @@ static std::wstring protocolTempRoot;
 static bool measureDispatch = false;
 static size_t dispatchAllocations = 0, dispatchBytes = 0;
 static LARGE_INTEGER dispatchStarted{}, dispatchCreated{};
+static bool checkLaunchLifetime = false, launchScratchReleased = false, launchThreadClosed = false;
+static HANDLE launchedProcess = nullptr, launchedThread = nullptr;
 static DWORD WINAPI TestTempPath(DWORD capacity, LPWSTR buffer) {
     if (protocolTempRoot.empty()) return GetTempPathW(capacity, buffer);
     if (capacity <= protocolTempRoot.size()) return static_cast<DWORD>(protocolTempRoot.size() + 1);
@@ -34,7 +36,22 @@ static BOOL WINAPI TestCreateProcess(LPCWSTR app, LPWSTR command, LPSECURITY_ATT
         dispatchAllocations = memory_fault::calls; dispatchBytes = memory_fault::bytes;
         QueryPerformanceCounter(&dispatchCreated);
     }
-    return CreateProcessW(app, command, processSecurity, threadSecurity, inherit, flags, environment, directory, startup, process);
+    const BOOL created = CreateProcessW(app, command, processSecurity, threadSecurity, inherit, flags, environment, directory, startup, process);
+    if (created && checkLaunchLifetime) {
+        memory_fault::watchedAllocation = environment;
+        memory_fault::watchedReleased = false;
+        launchedProcess = process->hProcess; launchedThread = process->hThread;
+    }
+    return created;
+}
+static DWORD WINAPI TestWaitForProcess(HANDLE handle, DWORD timeout) {
+    if (checkLaunchLifetime && handle == launchedProcess) {
+        DWORD flags = 0;
+        launchThreadClosed = !GetHandleInformation(launchedThread, &flags) && GetLastError() == ERROR_INVALID_HANDLE;
+        launchScratchReleased = memory_fault::watchedReleased;
+        checkLaunchLifetime = false;
+    }
+    return WaitForSingleObject(handle, timeout);
 }
 static LPWCH WINAPI TestEnvironmentStrings() {
     return syntheticEnvironment ? const_cast<LPWCH>(syntheticEnvironment) : GetEnvironmentStringsW();
@@ -71,6 +88,7 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #define GetFileAttributesW TestFileAttributes
 #define GetTempPathW TestTempPath
 #define CreateProcessW TestCreateProcess
+#define WaitForSingleObject TestWaitForProcess
 #include "../src/CompanionRunner.cpp"
 #undef CreateJobObjectW
 #undef QueryInformationJobObject
@@ -79,6 +97,7 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #undef GetFileAttributesW
 #undef GetTempPathW
 #undef CreateProcessW
+#undef WaitForSingleObject
 using automation::Json;
 using automation::Handle;
 using automation::Invalid;
@@ -294,6 +313,19 @@ int wmain(int argc, wchar_t** argv) {
             REQUIRE(invocation.Finish(0, report) == 70);
         }
         puts("PASS chain allocation failures: 128 positions, exceptions reach caller, no leaked handles or dangling callbacks; result failure returns 70");
+        for (const bool signal : {false, true}) {
+            Case lifetime(base, signal ? L"lifetime-ready" : L"lifetime-task", self, signal ? L"ready" : L"task", signal);
+            lifetime.Register();
+            std::wstring environment = L"TEST_BUFFER=" + std::wstring(16000, L'x');
+            environment.append(2, L'\0'); syntheticEnvironment = environment.c_str();
+            checkLaunchLifetime = true; launchScratchReleased = launchThreadClosed = false;
+            const auto report = lifetime.Run(); syntheticEnvironment = nullptr;
+            REQUIRE(Last(report).At(L"status").String() == (signal ? L"ready" : L"completed"));
+            if (checkLaunchLifetime || !launchScratchReleased || !launchThreadClosed)
+                printf("Lifetime probe: pending=%d buffer=%d thread=%d\n", checkLaunchLifetime, launchScratchReleased, launchThreadClosed);
+            REQUIRE(!checkLaunchLifetime && launchScratchReleased && launchThreadClosed);
+        }
+        puts("PASS launch lifetime: environment buffer and initial thread handle released before readiness/task waits; child context remains valid");
         const chain::ReplyIdentity identity{L"run", L"attempt", L"token"};
         auto reply = automation::ParseJson("{\"schemaVersion\":1,\"runId\":\"run\",\"attemptId\":\"attempt\",\"token\":\"token\",\"status\":\"failed\",\"errorCode\":\"invalid-config\",\"retryable\":true}");
         REQUIRE(!chain::ParseReadyReply(automation::WriteJson(reply), identity).retryable);

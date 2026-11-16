@@ -162,38 +162,44 @@ AttemptResult Attempt(const Entry& e, const RunOptions& options, const Json& inf
     }
     Watch watch;
     if (e.signal) { watch.value = FindFirstChangeNotificationW(files.folder.c_str(), FALSE, FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE); if (watch.value == INVALID_HANDLE_VALUE) throw Invalid("reply-watch-unavailable"); }
-    std::wstring program = e.target, tail;
-    if (e.kind != companions::Kind::Exe) {
-        if (!e.host.empty()) program = e.host;
-        else {
-            auto found = hosts.find(e.kind);
-            if (found == hosts.end()) found = hosts.emplace(e.kind, companions::FindHost(e.kind)).first;
-            program = found->second;
+    Handle job, process, existing;
+    // Only process tracking survives creation. Release command/environment storage and the
+    // initial thread handle before a potentially long readiness wait.
+    {
+        std::wstring program = e.target, tail;
+        if (e.kind != companions::Kind::Exe) {
+            if (!e.host.empty()) program = e.host;
+            else {
+                auto found = hosts.find(e.kind);
+                if (found == hosts.end()) found = hosts.emplace(e.kind, companions::FindHost(e.kind)).first;
+                program = found->second;
+            }
+            if (program.empty()) return {L"failed", L"runtime-missing", false, true};
+            const wchar_t* prefix = e.kind == companions::Kind::PowerShell ? L"-NoLogo -NoProfile -File " : e.kind == companions::Kind::Wsh ? L"//Nologo " : e.kind == companions::Kind::Jar ? L"-jar " : L"";
+            tail = prefix + automation::Quote(e.target);
         }
-        if (program.empty()) return {L"failed", L"runtime-missing", false, true};
-        const wchar_t* prefix = e.kind == companions::Kind::PowerShell ? L"-NoLogo -NoProfile -File " : e.kind == companions::Kind::Wsh ? L"//Nologo " : e.kind == companions::Kind::Jar ? L"-jar " : L"";
-        tail = prefix + automation::Quote(e.target);
+        std::map<std::wstring, std::wstring> variables{{Guard, L"1"}, {L"CGL_CHAIN_PROTOCOL", std::to_wstring(rules::ChainProtocol)}, {L"CGL_CONTEXT_FILE", files.context},
+            {L"CGL_LAUNCHER_PATH", options.launcher}, {L"CGL_LAUNCHER_VERSION", automation::FromUtf8(APP_VERSION_TEXT)}, {L"CGL_RUN_ID", runId}, {L"CGL_ENTRY_ID", e.id}, {L"CGL_ATTEMPT", std::to_wstring(attempt)}};
+        if (e.kind == companions::Kind::Batch) { variables[L"CHATGPT_PROXY_LAUNCHER_BATCH_PATH"] = e.target; tail = L"/d /v:off /s /c \"\"%CHATGPT_PROXY_LAUNCHER_BATCH_PATH%\"\""; }
+        else for (const auto& arg : e.arguments) { if (!tail.empty()) tail += L' '; tail += automation::Quote(arg); }
+        std::wstring command = automation::Quote(program) + (tail.empty() ? L"" : L" " + tail);
+        if (command.size() + 1 > 32767) throw Invalid("command-too-long");
+        automation::CheckPlainPath(e.target); automation::CheckPlainPath(e.directory);
+        AttributeList attributes; STARTUPINFOEXW sx{}; sx.StartupInfo.cb = sizeof(STARTUPINFOW);
+        DWORD flags = CREATE_UNICODE_ENVIRONMENT;
+        if (e.safe) {
+            job.value = CreateJobObjectW(nullptr, nullptr); if (!job) throw Invalid("tracking-unavailable");
+            attributes.Job(job.value); sx.lpAttributeList = attributes.value; sx.StartupInfo.cb = sizeof(sx); flags |= EXTENDED_STARTUPINFO_PRESENT;
+        }
+        if (e.hidden) { flags |= CREATE_NO_WINDOW; sx.StartupInfo.dwFlags = STARTF_USESHOWWINDOW; sx.StartupInfo.wShowWindow = SW_HIDE; }
+        auto env = Environment(variables); PROCESS_INFORMATION pi{};
+        if (GetTickCount64() >= deadline) return {L"skipped-budget", L"budget-exhausted", false, true};
+        if (!CreateProcessW(program.c_str(), command.data(), nullptr, nullptr, FALSE, flags, env.data(), e.directory.c_str(), &sx.StartupInfo, &pi)) {
+            const DWORD error = GetLastError(); return {L"failed", L"create-process-" + std::to_wstring(error), Transient(error), true};
+        }
+        process.Reset(pi.hProcess);
+        Handle thread(pi.hThread);
     }
-    std::map<std::wstring, std::wstring> variables{{Guard, L"1"}, {L"CGL_CHAIN_PROTOCOL", std::to_wstring(rules::ChainProtocol)}, {L"CGL_CONTEXT_FILE", files.context},
-        {L"CGL_LAUNCHER_PATH", options.launcher}, {L"CGL_LAUNCHER_VERSION", automation::FromUtf8(APP_VERSION_TEXT)}, {L"CGL_RUN_ID", runId}, {L"CGL_ENTRY_ID", e.id}, {L"CGL_ATTEMPT", std::to_wstring(attempt)}};
-    if (e.kind == companions::Kind::Batch) { variables[L"CHATGPT_PROXY_LAUNCHER_BATCH_PATH"] = e.target; tail = L"/d /v:off /s /c \"\"%CHATGPT_PROXY_LAUNCHER_BATCH_PATH%\"\""; }
-    else for (const auto& arg : e.arguments) { if (!tail.empty()) tail += L' '; tail += automation::Quote(arg); }
-    std::wstring command = automation::Quote(program) + (tail.empty() ? L"" : L" " + tail);
-    if (command.size() + 1 > 32767) throw Invalid("command-too-long");
-    automation::CheckPlainPath(e.target); automation::CheckPlainPath(e.directory);
-    Handle job; AttributeList attributes; STARTUPINFOEXW sx{}; sx.StartupInfo.cb = sizeof(STARTUPINFOW);
-    DWORD flags = CREATE_UNICODE_ENVIRONMENT;
-    if (e.safe) {
-        job.value = CreateJobObjectW(nullptr, nullptr); if (!job) throw Invalid("tracking-unavailable");
-        attributes.Job(job.value); sx.lpAttributeList = attributes.value; sx.StartupInfo.cb = sizeof(sx); flags |= EXTENDED_STARTUPINFO_PRESENT;
-    }
-    if (e.hidden) { flags |= CREATE_NO_WINDOW; sx.StartupInfo.dwFlags = STARTF_USESHOWWINDOW; sx.StartupInfo.wShowWindow = SW_HIDE; }
-    auto env = Environment(variables); PROCESS_INFORMATION pi{};
-    if (GetTickCount64() >= deadline) return {L"skipped-budget", L"budget-exhausted", false, true};
-    if (!CreateProcessW(program.c_str(), command.data(), nullptr, nullptr, FALSE, flags, env.data(), e.directory.c_str(), &sx.StartupInfo, &pi)) {
-        const DWORD error = GetLastError(); return {L"failed", L"create-process-" + std::to_wstring(error), Transient(error), true};
-    }
-    Handle process(pi.hProcess), thread(pi.hThread), existing;
     bool acknowledged = false, failed = false, retryable = false;
     std::wstring code, success = L"ready"; ULONGLONG observedAt = 0;
     for (;;) {
