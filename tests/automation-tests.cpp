@@ -47,6 +47,26 @@ int wmain(int argc, wchar_t** argv) {
             AutomationCommand c; c.operation = operation; c.request = request;
             c.resultPath = Join(root, L"result-" + std::to_wstring(++resultNumber) + L".json"); return c;
         };
+        // The documented minimum onboarding must preserve defaults and avoid system actions.
+        const Paths onboarding{Join(root, L"onboarding"), Join(root, L"onboarding-startup.lnk"),
+            Join(root, L"onboarding\\settings.lnk"), Join(root, L"onboarding-desktop.lnk"), Join(root, L"onboarding.env")};
+        const auto minimal = ParseJson(ReadBytes(Join(ParentPath(argv[1]), L"docs\\examples\\deploy-minimal-v1.json")));
+        auto before = RunAutomation(Command(L"info", Json::Object()), onboarding, payload, Disable);
+        REQUIRE(before.At(L"exitCode").Integer(0, 255) == 0 && before.At(L"data").At(L"state").String() == L"not-deployed");
+        auto preview = RunAutomation(Command(L"plan", minimal), onboarding, payload, Disable);
+        REQUIRE(preview.At(L"exitCode").Integer(0, 255) == 0 && !preview.At(L"committed").Bool());
+        REQUIRE(GetFileAttributesW(onboarding.defaultDirectory.c_str()) == INVALID_FILE_ATTRIBUTES);
+        auto installed = RunAutomation(Command(L"deploy", minimal), onboarding, payload, Disable);
+        REQUIRE(installed.At(L"exitCode").Integer(0, 255) == 0 && installed.At(L"committed").Bool());
+        auto confirmed = RunAutomation(Command(L"info", Json::Object()), onboarding, payload, Disable);
+        REQUIRE(confirmed.At(L"data").At(L"state").String() == L"managed");
+        const auto& discovered = confirmed.At(L"data").At(L"discovery");
+        REQUIRE(discovered.At(L"setupApiVersions").array[0].Integer(1, MAXDWORD) == 1
+            && discovered.At(L"chainProtocolVersions").array[0].Integer(1, MAXDWORD) == 1);
+        REQUIRE(GetFileAttributesW(onboarding.startupLink.c_str()) == INVALID_FILE_ATTRIBUTES
+            && GetFileAttributesW(onboarding.desktopLink.c_str()) == INVALID_FILE_ATTRIBUTES
+            && GetFileAttributesW(onboarding.codexEnvFile.c_str()) == INVALID_FILE_ATTRIBUTES && startupCalls == 0);
+        puts("PASS documented onboarding: not-deployed, read-only plan, minimal deploy, managed discovery and no startup/env changes");
         auto request = ParseJson("{\"schemaVersion\":1,\"settings\":{\"extraArguments\":[\"\",\"中文 a\",\"quote\\\"end\",\"& % !\"]}}");
         auto plan = Command(L"plan", request); auto result = RunAutomation(plan, p, payload, Disable);
         REQUIRE(result.At(L"exitCode").Integer(0, 255) == 0);

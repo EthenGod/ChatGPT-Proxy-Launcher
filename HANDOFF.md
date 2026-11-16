@@ -14,6 +14,8 @@
 
 - v1.1.0 提供后台部署与链式启动。先读 `docs/developer-guide.md`，完整命令见 `docs/automation-usage.md`，接口见 `docs/automation-design.md` 和 `docs/companion-protocol-v1.md`。Schema、PowerShell 回执辅助函数和示例位于 `docs/schemas/`、`docs/examples/`。复审见 `docs/automation-maintenance.md`。本地打包与 GitHub 上传是两步。
 - PowerShell 后台入口先检查下载 EXE 至少为 1.1.0。不能先执行 `--headless` 探测，否则旧版仍会打开界面。旧启动器会把未知参数转发给 ChatGPT，也不能用新查询命令探测旧版。在线命令还依赖默认分支脚本与 Release 实际发布。
+- 扩展安装按查询、按需预检与部署、能力检查、注册、列表确认的顺序进行。`docs/examples/deploy-minimal-v1.json` 保留已有设置，首次部署不启用代理、自启或桌面入口，不写 `.env`。清单示例默认只尝试一次。
+- 配置器发现对象在结果的 `data` 中，仅 `managed` 包含 `data.discovery`。`--launcher-info` 直接输出发现对象，没有 `data` 层。上下文的 `launcher.deploymentState` 只取 managed/standalone/unknown，与六种发现状态不同。缺少链式环境变量不代表未部署，注册成功也不代表插件已运行。
 - 现有 ChatGPT 退出流程需要前台焦点。后台部署只报告重新打开应用的待办，不调用此流程。GUI 保留原有行为。两个入口共用部署核心和用户写锁；GUI 空闲时不占用写锁。
 - 就绪回执只证明本次初始化完成。有限重试必须同时检查扩展声明和上一轮完整进程族已退出，不能把进程创建成功、父进程退出或窗口消失当作这个条件。
 - Job 在创建进程时附加；属性列表指向的 Job 句柄存储须活到 `CreateProcessW` 返回。根进程退出事件可能早于 Job 计数归零，短任务也须在截止时间内等待计数更新。不能设置 `KILL_ON_JOB_CLOSE`。Job 不覆盖 WMI、服务或外部代理代建的进程；这类扩展不应声明安全重试。
@@ -66,6 +68,7 @@
 ## PowerShell 下载入口
 
 - README 的一行命令读取默认分支的 `setup.ps1`。脚本需先出现在远端该路径，命令才能使用。脚本保留 ASCII 编码，兼容 Windows PowerShell 直接读取。
+- 后台入口的 `companion-register/configure/remove/list` 分别转发原生注册、配置、移除和列表命令，不另写注册逻辑。参数组合、路径和输入大小在下载前检查；输入错误可能只有返回对象，没有结果文件。每次调用都下载并校验配置器，连续操作宜用可信本地副本，不在扩展运行热路径反复下载或部署。
 - 先取得最新正式版标签，再按该标签下载校验清单和配置器。不要分别下载两个 latest 附件，以免发布期间取到不同版本。
 - 进度显示只在脚本作用域内启用。阶段状态用 `Write-Progress` 的独立 ID，文件传输使用 `Invoke-WebRequest` 自带进度，不添加轮询或后台下载进程。PowerShell 7.2 及以上临时使用 Classic 样式，避免 Minimal 把中文宽度算小而换行残留。`PSStyle` 是共享对象，必须在 `finally` 中先清除进度再恢复原样式；不能只赋给局部变量后修改。下载测试调用 PowerShell 自带渲染器检查窄窗口行宽。
 - 手动查看进度条可运行 `tests/preview-download.ps1`。它复用正式进度样式，通过 127.0.0.1 限速传输 2 MiB 本地生成的数据，默认约 15 秒，支持 `-Seconds 2` 快速检查。样本保存在 `work/`；本地监听和工作线程会在结束或报错后关闭。不会运行配置器、打开网页或关闭当前窗口。

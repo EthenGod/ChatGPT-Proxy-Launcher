@@ -8,11 +8,11 @@
 - 构建：根目录运行 `cmd /c build.cmd`，需要 Visual Studio / Build Tools 的 C++ 桌面开发组件和 Windows SDK；产物在 `outputs/`。
 - `tools/msvc-env.cmd` 是共用工具链入口，优先复用 x64 开发者终端，否则用 Visual Studio Installer 的 `vswhere` 定位带 C++ 工具的安装。
 - `locales/zh-CN.json` 是用户文本基准，`languages.json` 登记语言。`tools/locales.ps1` 校验后生成内置文本和 `setup.ps1` 的下载文案；`src/Localization.*` 负责匹配和查找。翻译指南见 `docs/translating.md`，测试为 `tests/localization-tests.*`。不要翻译机器接口字段、代码、固定文件名和管理标记。
-- 用户文档的 `.en.md`、`.ja.md` 与中文同步，顶部提供语言链接。文档组及链接、命令示例的检查在 `tests/documentation-tests.ps1`；新增文档同步 `release.ps1` 源码清单。
+- 用户文档的 `.en.md`、`.ja.md` 与中文同步，顶部提供语言链接。`tests/documentation-tests.ps1` 检查用户文档同步，也检查开发者文档的本地链接、章节锚点及 PowerShell/JSON 示例语法；新增文档同步 `release.ps1` 源码清单。
 - `src/NativeMemory.h` 管理 Windows 返回的内存和 COM 引用；`tests/memory-tests.cpp` 用分配失败替身检查释放。线程和内存审查见 `docs/memory-thread-review.md`。
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；只启动隔离测试子进程，不启动 ChatGPT。
 - 静态分析：根目录运行 `cmd /c tests\analyze.cmd`。性能方案与复测方法见 `docs/performance-review.md`；`work\proxy-tests.exe --benchmark` 只解析合成配置，不读取本机代理。
-- `setup.ps1` 是 PowerShell 下载入口；`tests/download-tests.ps1` 替换网络和启动操作，验证下载与校验。
+- `setup.ps1` 是 PowerShell 下载入口，后台模式转发部署、查询和四项 `companion-*` 操作；`tests/download-tests.ps1` 和 `tests/headless-download-tests.ps1` 替换网络和启动操作，验证参数、下载与校验。
 - `tests/preview-download.ps1` 用本机限速数据预览真实下载进度条，不访问 GitHub 或启动配置器。
 - 发布文件：根目录运行 `cmd /c release.cmd`，重新构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。两个 EXE 的版本统一维护在 `src/AppVersion.h`，升级时同步 `src/Setup.manifest` 和 `src/Launcher.manifest`。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
 - 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。

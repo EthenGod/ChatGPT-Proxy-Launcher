@@ -8,11 +8,12 @@ $requestFile = Join-Path $testRoot 'request.json'
 $fixture = [Text.Encoding]::ASCII.GetBytes('mock setup')
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-','') } finally { $sha.Dispose() }
-$calls = @{launch=0; folder=$null; version='1.1.0'; arguments=$null}
+$calls = @{launch=0; requests=0; folder=$null; version='1.1.0'; arguments=$null; nativeExit=$null}
 function Write-Host { throw 'Headless wrote to the host' }
 function Write-Progress { throw 'Headless showed progress' }
 function Start-Sleep { throw 'Headless waited for completion text' }
 function Invoke-RestMethod($Uri, $TimeoutSec) {
+    $calls.requests++
     if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Headless progress enabled' }
     if ($scenario -eq 'offline') { throw 'offline' }
     return @{tag_name='v1.1.0'}
@@ -30,9 +31,11 @@ function Get-Item($LiteralPath) {
 function Start-Process($FilePath, $WorkingDirectory, $ArgumentList, $WindowStyle, [switch]$PassThru) {
     if ($FilePath -notlike '*.exe' -or $WindowStyle -ne 'Hidden' -or !$PassThru -or $ArgumentList[0] -ne '--headless') { throw 'Invalid native launch' }
     $calls.launch++; $calls.arguments = $ArgumentList
-    $exit = if ($scenario -eq 'warning') { 10 } else { 0 }
-    $native = [ordered]@{schemaVersion=1;operation='deploy';status=$(if ($exit) {'success-with-warnings'} else {'success'});
-        exitCode=$exit;code='deployed';committed=$true;stage='post-actions';nativeError=0;warnings=@();actionsRequired=@();data=@{}}
+    $exit = if ($null -ne $calls.nativeExit) { $calls.nativeExit } elseif ($scenario -eq 'warning') { 10 } else { 0 }
+    $operation = if ($ArgumentList[1] -ceq 'companion') { 'companion-' + $ArgumentList[2] } else { $ArgumentList[1] }
+    $committed = if ($exit -eq 41) { $null } elseif ($exit -gt 10) { $false } else { $operation -notin @('info','plan','companion-list') }
+    $native = [ordered]@{schemaVersion=1;operation=$operation;status=$(if ($exit -gt 10) {'error'} elseif ($exit) {'success-with-warnings'} else {'success'});
+        exitCode=$exit;code='fixture-result';committed=$committed;stage='post-actions';nativeError=0;warnings=@();actionsRequired=@();data=@{}}
     if ($scenario -eq 'mismatch') { $native.exitCode=50 }
     if ($scenario -ne 'crash') { [IO.File]::WriteAllText((Join-Path $WorkingDirectory 'native-result.json'), ($native | ConvertTo-Json -Depth 10)) }
     if ($scenario -eq 'keep') { [IO.File]::WriteAllText((Join-Path $WorkingDirectory 'unrelated.txt'), 'keep') }
@@ -65,6 +68,59 @@ try {
             } elseif ([IO.Directory]::Exists($calls.folder)) { throw 'Temporary files remain' }
         }
     }
+    # Each operation uses the native CLI spelling and preserves literal file paths.
+    $scenario = 'ok'; $calls.version = '1.1.0'
+    $manifestFile = Join-Path $testRoot ('manifest space & !% ' + [char]0x4e2d + '.json')
+    [IO.File]::WriteAllText($manifestFile, '{"schemaVersion":1}')
+    $operations = @(
+        @{Operation='info'}, @{Operation='plan'; Request=$requestFile},
+        @{Operation='companion-register'; Manifest=$manifestFile},
+        @{Operation='companion-register'; Manifest=$manifestFile; Replace=$true},
+        @{Operation='companion-configure'; Request=$requestFile},
+        @{Operation='companion-remove'; Id='org.example.addon'}, @{Operation='companion-list'},
+        @{Operation='INFO'}
+    )
+    foreach ($options in $operations) {
+        $output = Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.json')
+        $value = & $entry -Headless @options -Result $output
+        $operation = $options.Operation.ToLowerInvariant()
+        if ($value.exitCode -ne 0 -or $value.operation -cne $operation) { throw 'Operation was not forwarded' }
+        $expectedArguments = @('--headless')
+        if ($operation.StartsWith('companion-')) { $expectedArguments += @('companion', $operation.Substring(10)) }
+        else { $expectedArguments += $operation }
+        $expectedArguments += @('--result', ('"' + (Join-Path $calls.folder 'native-result.json') + '"'))
+        if ($options.Request) { $expectedArguments += @('--request', ('"' + $options.Request + '"')) }
+        if ($options.Manifest) { $expectedArguments += @('--manifest', ('"' + $options.Manifest + '"')) }
+        if ($options.Id) { $expectedArguments += @('--id', $options.Id) }
+        if ($options.Replace) { $expectedArguments += '--replace' }
+        if (($calls.arguments -join '|') -cne ($expectedArguments -join '|')) { throw 'Native argument boundary changed' }
+        if ([IO.Directory]::Exists($calls.folder) -or ![IO.File]::Exists($manifestFile)) { throw 'Extension input was removed or downloads remain' }
+    }
+    $invalidOptions = @(
+        @{Operation='companion-register'}, @{Operation='companion-register'; Manifest=$manifestFile; Request=$requestFile},
+        @{Operation='companion-configure'}, @{Operation='companion-configure'; Request=$requestFile; Replace=$true},
+        @{Operation='companion-list'; Manifest=$manifestFile}, @{Operation='companion-list'; Replace=$true},
+        @{Operation='companion-remove'}, @{Operation='companion-remove'; Id='org.example.addon'; Request=$requestFile},
+        @{Operation='companion-remove'; Id='org.example.addon" --replace'}, @{Operation='companion-remove'; Id='org..example'},
+        @{Operation='info'; Request=$requestFile}, @{Operation='deploy'; Request=$requestFile; Manifest=$manifestFile},
+        @{Operation='companion-register'; Manifest=(Join-Path $testRoot 'absent.json')}
+    )
+    foreach ($options in $invalidOptions) {
+        $beforeRequests = $calls.requests; $beforeLaunch = $calls.launch
+        $value = & $entry -Headless @options -Result (Join-Path $testRoot ([guid]::NewGuid().ToString('N') + '.json'))
+        if ($value.exitCode -ne 20 -or $calls.requests -ne $beforeRequests -or $calls.launch -ne $beforeLaunch) { throw 'Invalid operation downloaded or launched an EXE' }
+    }
+    $value = & $entry -Headless -Operation companion-register -Manifest $manifestFile -Result $manifestFile
+    if ($value.exitCode -ne 20 -or [IO.File]::ReadAllText($manifestFile) -ne '{"schemaVersion":1}') { throw 'Manifest path was overwritten' }
+    foreach ($nativeExit in @(10,20,21,30,31,40,41,50,70)) {
+        $calls.nativeExit = $nativeExit
+        $value = & $entry -Headless -Operation companion-register -Manifest $manifestFile -Result (Join-Path $testRoot ('native-' + $nativeExit + '.json'))
+        if ($value.exitCode -ne $nativeExit -or $value.code -cne 'fixture-result' -or ($nativeExit -eq 41 -and $null -ne $value.committed)) { throw 'Native registry result was reclassified' }
+    }
+    $calls.nativeExit = $null; $calls.version = '1.0.6'; $before = $calls.launch
+    $value = & $entry -Headless -Operation companion-list -Result (Join-Path $testRoot 'old-registry.json')
+    if ($value.exitCode -ne 71 -or $calls.launch -ne $before) { throw 'Registry operation launched an old EXE' }
+    $calls.version = '1.1.0'
     $before = $calls.launch
     $existing = Join-Path $testRoot 'ok.json'; $prior = [IO.File]::ReadAllText($existing)
     $value = & $entry -Headless -Request $requestFile -Result $existing
@@ -75,5 +131,5 @@ try {
         $value = & $entry -Headless -Request $requestFile -Result (Join-Path $testRoot $name)
         if ($value.exitCode -ne 20 -or $calls.launch -ne $before) { throw 'Reserved device path accepted' }
     }
-    Write-Output 'PASS headless download: one structured result, caller session retained, no UI/progress, pinned assets, checksum/version gates, cleanup, native errors and output protection.'
+    Write-Output 'PASS headless download: deploy/plan/info and all registry operations, argument validation/quoting, one result, no UI/progress, pinned assets, version gates, cleanup and output protection.'
 } finally { $env:TEMP = $savedTemp }

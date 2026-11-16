@@ -1,6 +1,6 @@
 # 后台部署与扩展启动设计
 
-状态：已实现，产品版本 v1.1.0，接口版本 1。更新日期：2026-11-15。实现前基线：`4f1d596`。
+状态：原生接口自 v1.1.0 提供，接口版本仍为 1。文档更新日期：2026-11-16。实现前基线：`4f1d596`。
 
 本地构建提供下述接口。在线 PowerShell 命令须等对应脚本和 EXE 发布后才能使用。操作示例见[自动化接入](automation-usage.md)。
 
@@ -63,6 +63,8 @@ ChatGPTLauncherSetup.exe --headless info --result <新文件绝对路径>
 
 使用 UTF-8 JSON，最多 64 KiB，最多嵌套 16 层。允许开头的 UTF-8 BOM；输出统一不带 BOM。示例见 [deploy-v1.json](examples/deploy-v1.json)，结构见 [Schema](schemas/deploy-v1.schema.json)。
 
+扩展首次接入优先使用 [deploy-minimal-v1.json](examples/deploy-minimal-v1.json)：保留已有启动设置，两项系统动作均为 `leave`。下面的完整示例会开启代理、自启、桌面图标并更新 `.env`，仅用于用户已选择这些设置的场景。
+
 ```json
 {
   "schemaVersion": 1,
@@ -124,7 +126,7 @@ ChatGPTLauncherSetup.exe --headless info --result <新文件绝对路径>
 | 退出码 | 含义 |
 | --- | --- |
 | `0` | 本次操作成功，无待办；查询成功不代表已部署 |
-| `10` | 部署成功，但有警告或需要用户后续操作 |
+| `10` | 操作完成，但有警告或需要用户后续操作 |
 | `20` | 请求、路径、清单或参数无效 |
 | `21` | 不支持接口版本或所需能力 |
 | `30` | 同名文件或注册所有权冲突，未覆盖 |
@@ -138,7 +140,7 @@ ChatGPTLauncherSetup.exe --headless info --result <新文件绝对路径>
 
 `status` 只取 `success`、`success-with-warnings`、`error`。`operation` 为 `deploy`、`plan`、`info`、`companion-register`、`companion-configure`、`companion-remove` 或 `companion-list`。业务原因用稳定的 `code` 判断，原始 Windows 错误放在 `nativeError`。调用方不能按中文错误消息匹配分支。
 
-`committed` 可为 `true`、`false` 或 `null`。全部文件提交成功为 true；只读操作、提交前失败、完整回滚为 false；部分回滚失败或无法取得结果为 null。它不代表应用重启或自带自启后续动作成功。
+`committed` 可为 `true`、`false` 或 `null`。文件成功提交为 true；只读操作、无变更的注册/移除、提交前失败、完整回滚为 false；部分回滚失败或无法取得结果为 null。不能把 `false` 单独当作失败。它不代表应用重启或自带自启后续动作成功。
 
 `warnings` 是 `{ "code":"...", "message":"..." }` 的数组。`actionsRequired` 使用固定动作名。`stage` 取 `parse`、`preflight`、`lock`、`commit`、`rollback`、`post-actions`、`result` 或 `transport`。`nativeError=0` 表示没有原始系统错误。
 
@@ -189,6 +191,20 @@ $result = & ([scriptblock]::Create((irm $url))) -Headless -Request 'C:\Deploy\re
 
 上面的远程命令需要对应代码已经发布。本地开发时先使用本地 EXE，不能据此调用旧脚本。
 
+当前脚本支持以下操作，均须同时传入 `-Headless -Result <新 JSON 路径>`。四个 `companion-*` 选项为本次脚本补充，调用已有的原生 v1 接口，EXE 最低版本不变。
+
+| `-Operation` | 必需输入 | 可选输入 |
+| --- | --- | --- |
+| `deploy` / `plan` | `-Request <绝对 JSON 路径>` | 无 |
+| `info` / `companion-list` | 无 | 无 |
+| `companion-register` | `-Manifest <绝对清单路径>` | `-Replace`，显式迁移已有注册路径 |
+| `companion-configure` | `-Request <绝对 JSON 路径>` | 无 |
+| `companion-remove` | `-Id <稳定 ID>` | 无 |
+
+不属于该操作的输入参数会被拒绝。脚本将 `companion-register` 等操作转为原生的 `companion register` 等子命令；结果的 `operation` 仍为带连字符的名称。请求和清单输入最多 64 KiB，不能与最终结果同路径。参数组合、路径和输入大小在下载前检查；JSON 内容和文件归属仍交给原生接口校验。
+
+下载入口每次调用下载并校验一次配置器，不维护常驻缓存。安装器需要连续调用或离线使用时，应自行管理可信的配置器副本，再调用原生入口；避免用下载脚本轮询状态。完整的发现、缺失部署和注册代码见[自动化用法](automation-usage.md)。
+
 - 后台模式不显示进度条、提示窗口、Star 文本或网页，不等待按键。
 - 不在调用者会话内执行 `exit`。返回一个结构化对象，不混入下载输出。外部任务需退出码时，由它自行执行 `exit $result.exitCode`。
 - 先取得固定发布标签，再下载同标签的 EXE 和校验清单。最低 EXE 版本为 **1.1.0**。
@@ -196,7 +212,7 @@ $result = & ([scriptblock]::Create((irm $url))) -Headless -Request 'C:\Deploy\re
 - 部署器通过 `-WindowStyle Hidden` 启动，脚本等待本次进程退出。隐藏窗口仅是辅助；真正无界面由 EXE 的命令入口保证。
 - 原生结果先写入本次专属临时目录；PowerShell 等待结束后读取，并附加可选的 `transport` 字段。对外结果仍使用同一结构。
 - 最终 `-Result` 路径在下载前保留，避免部署成功后才发现输出位置不能创建。它必须是新 `.json` 文件，且位于本工具配置根目录之外。仅在此时创建的文件上写结果。
-- 清理本次下载的 EXE、校验清单及原生结果文件。请求文件和最终结果文件属于调用者，不删除。
+- 清理本次下载的 EXE、校验清单及原生结果文件。请求、作者清单和最终结果属于调用者，不删除。
 - 部署成功但清理失败，返回 10 并保留 `committed=true`；部署本身失败则保留其失败码。部署器崩溃或结果损坏返回 72，`committed=null`。
 - 网络或校验失败也返回结构化错误，不显示窗口。调用者强制关闭脚本导致的中断不保证产生结果或完成清理。
 

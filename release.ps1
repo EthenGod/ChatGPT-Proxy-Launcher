@@ -50,7 +50,7 @@ $sourceNames = @(
     'docs/release-upload.en.md', 'docs/release-upload.ja.md',
     'docs/schemas/deploy-v1.schema.json', 'docs/schemas/companion-v1.schema.json',
     'docs/schemas/companion-config-v1.schema.json', 'docs/schemas/companion-policy-v1.schema.json', 'docs/schemas/companion-reply-v1.schema.json',
-    'docs/examples/deploy-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-context.ps1',
+    'docs/examples/deploy-v1.json', 'docs/examples/deploy-minimal-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-context.ps1',
     'docs/examples/companion-config-v1.json',
     'src/AppIcon.h', 'src/AppVersion.h', 'src/ChatGPTLauncherSetup.cpp', 'src/ChatGPTProxyLauncher.cpp',
     'src/AutomationJson.cpp', 'src/AutomationJson.h', 'src/AutomationIO.cpp', 'src/AutomationIO.h',

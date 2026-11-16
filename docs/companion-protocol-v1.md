@@ -1,10 +1,22 @@
 # 链式启动规范 v1
 
-状态：随 v1.1.0 提供，协议版本为 1。后台接口见[部署设计](automation-design.md)，操作示例见[自动化接入](automation-usage.md)。
+状态：随 v1.1.0 提供，协议版本为 1。文档修订日期：2026-11-16。本次补全接入约定，不改变 v1 字段或运行语义。后台接口见[部署设计](automation-design.md)，可复制命令见[自动化用法](automation-usage.md)。
 
 初次接入先看[开发者指南](developer-guide.md)。结构文件包括[作者清单](schemas/companion-v1.schema.json)、[配置请求](schemas/companion-config-v1.schema.json)、[回执](schemas/companion-reply-v1.schema.json)、[全链策略](schemas/companion-policy-v1.schema.json)。
 
 本规范用于本机、当前用户主动注册的程序和脚本。它定义启动、参数、就绪确认、有限重试及发现接口。它不负责下载扩展、自动更新扩展、权限提升或持续监控。
+
+## 0. 接入阶段与职责
+
+| 阶段 | 调用方负责 | 本项目负责 |
+| --- | --- | --- |
+| 安装前 | 取得用户选择，准备可信的配置器或下载脚本，查询状态 | 返回只读部署信息；不执行扩展 |
+| 按需部署 | 对未部署或明确获准修复的安装执行计划、部署，再查询能力 | 校验、文件提交与回滚；不启动 ChatGPT |
+| 注册 | 提交稳定目录中的作者清单，保留用户停用和覆盖项 | 校验清单及依赖，按 ID 保存注册 |
+| 启动 | 用户通过本启动器打开 ChatGPT；扩展初始化真实功能 | 按依赖派发、传递上下文、限时观察回执 |
+| 更新和卸载 | 扩展作者管理自己的程序与配置，按需迁移或移除自己的注册 | 保留用户覆盖项；不删除扩展文件，不终止现有实例 |
+
+安装动作不要放进每次运行的就绪流程。环境变量缺失不代表未安装；发现接口和缺失部署的处理见第 7 节。
 
 ## 1. 启动器保证什么
 
@@ -47,7 +59,7 @@ ChatGPT 进程创建成功也不代表其界面、登录或网络已经就绪。
   "id": "org.example.assistant-addon",
   "name": "示例扩展",
   "version": "1.2.0",
-  "requires": ["ready-file-v1", "tracked-retry-v1"],
+  "requires": ["ready-file-v1"],
   "entry": {
     "runtime": "exe",
     "path": "Addon.exe",
@@ -56,7 +68,7 @@ ChatGPT 进程创建成功也不代表其界面、登录或网络已经就绪。
   },
   "dependsOn": [],
   "readiness": {"mode": "signal", "timeoutMs": 15000},
-  "retry": {"maxAttempts": 2, "delayMs": 1000, "safe": true},
+  "retry": {"maxAttempts": 1, "delayMs": 1000, "safe": false},
   "config": {}
 }
 ```
@@ -93,7 +105,7 @@ ChatGPT 进程创建成功也不代表其界面、登录或网络已经就绪。
 
 `managedBy` 是格式归属标记，不是数字签名。缺失、值不同、ID 与文件名不同或记录无法安全解析时，不能替换或删除。记录顶层只允许示例中的五个字段；覆盖项只允许示例中的五个字段，禁止未知字段。配置命令的请求顶层只允许 `schemaVersion`、`id`、`overrides`。
 
-有效超时范围为 1000–30000 ms。最多尝试 1–3 次，默认 1 次；多次尝试必须同时满足 `retry.safe=true` 和 `tracked-retry-v1`。参数上限和路径检查仍作用于覆盖后的结果。
+有效超时范围为 1000–30000 ms。最多尝试 1–3 次，默认 1 次；多次尝试必须同时满足 `retry.safe=true` 和 `tracked-retry-v1`。只要声明 `safe:true` 就必须声明该能力，即使当前只尝试一次。参数上限和路径检查仍作用于覆盖后的结果。
 
 作者更新清单不覆盖用户记录。用户只需保持清单路径稳定。更换安装目录时，通过注册命令显式更新清单路径并保留覆盖项。
 
@@ -113,6 +125,8 @@ ChatGPTLauncherSetup.exe --headless companion list --result <新文件>
 - `configure`：请求格式为 `{ "schemaVersion":1, "id":"...", "overrides":{...} }`，整体替换用户覆盖项。空对象恢复清单默认值。不能修改未注册项。`enabled:false` 验证请求及注册归属后可直接停用，不依赖作者清单、入口或其他扩展的依赖图；重新启用须完整校验。
 - `remove`：只删除一个指定 ID 的、本工具管理的注册文件。不删除程序、清单或用户数据。没有该项也返回成功。
 - `list`：只读返回每个 ID 的启用状态、版本、有效性和注册来源。默认不回显参数及私有配置。停用项不读取作者清单，版本为空；此时 `valid:true` 只表示停用记录有效。
+
+配置器可以在尚未部署启动器时保存注册，注册成功本身不证明部署可用。接入程序应先完成第 7 节的发现与能力检查。注册无变更时允许 `committed:false` 且退出码为 0；通过 `list.data.entries` 核对自己的 `id`、`valid`、`enabled`。停用与移除只影响后续启动，不结束已运行的扩展。
 
 注册记录不是信任凭证。不会从下载目录自动发现并执行清单，不会按清单中的 URL 下载代码。作者更新已受信任目录内的入口，属于该扩展自身的更新责任。
 
@@ -301,9 +315,70 @@ ChatGPTProxyLauncher.exe --launcher-chain --result <新文件绝对路径> --fee
 
 ## 7. 对外发现与兼容
 
-发现信息使用后台设计中的 `discovery.json` 和 `--launcher-info`。区分 `not-deployed`、`managed`、`legacy`、`missing`、`invalid`、`unknown`。`info` 查询成功只是取得状态，不等于启动器已部署。
+### 先区分三个问题
+
+- 本次是否由协议启动：读取 `CGL_CHAIN_PROTOCOL` 和上下文。缺失时可独立运行，不据此自动安装。
+- 本用户是否已有可用部署：使用可信配置器的 `--headless info`。没有本地配置器时使用下载脚本的 `-Headless -Operation info`。
+- 本次启动器是否就是管理中的那一份：读取上下文 `launcher.deploymentState`。其取值为 `managed`、`standalone`、`unknown`，与下面六种发现状态不是同一组枚举。
+
+`discovery.json` 位于当前用户固定配置根目录，是快速发现线索。文件不存在不能证明未部署，旧式部署可能只有管理快捷方式。文件存在也不能证明有效，须核对管理记录、目标、实际数值版本和能力。管理标记和版本资源不替代文件来源校验。
+
+### 查询结果形状
+
+配置器的结果包是 `schemaVersion:1, operation:"info", ...`，发现对象位于 `data`。结构如下，只有 `managed` 状态包含经校验的 `discovery`：
+
+```json
+{
+  "schemaVersion": 1,
+  "state": "managed",
+  "launcherPath": "D:\\Apps\\Launcher\\ChatGPTProxyLauncher.exe",
+  "launcherVersion": "1.1.0",
+  "discovery": {
+    "schemaVersion": 1,
+    "managedBy": "ChatGPTProxyLauncher",
+    "launcherPath": "D:\\Apps\\Launcher\\ChatGPTProxyLauncher.exe",
+    "launcherVersion": "1.1.0",
+    "setupApiVersions": [1],
+    "chainProtocolVersions": [1],
+    "capabilities": ["headless-deploy-v1", "companion-registry-v1", "ready-file-v1", "tracked-retry-v1", "chain-run-result-v1"]
+  }
+}
+```
+
+`launcherPath` 和 `launcherVersion` 在无法确定时可能为空。调用方先判断状态，再访问可选发现字段。完整包装结构、退出码和输出约束见[后台接口](automation-design.md#3-统一结果)。
+
+| `data.state` | 处理规则 |
+| --- | --- |
+| `managed` | 检查发现格式、API 版本、链协议版本及所需能力；不代表 ChatGPT 已安装或运行 |
+| `not-deployed` | 未找到管理快捷方式；经用户授权后可预检、部署、重新查询 |
+| `legacy` | 有管理目标但缺少发现记录；作为兼容性检查或升级处理，不能当作全新安装 |
+| `missing` | 管理目标文件缺失；作为明确的修复操作处理 |
+| `invalid` | 记录损坏、版本不一致或归属不明；不自动覆盖 |
+| `unknown` | 读取或权限错误；先解决问题，再查询 |
+
+查询退出码为 0 只表示取得上述状态。`not-deployed` 仍可能遇到目标目录同名文件，部署保护不能被绕过。
+
+### 没有部署时的接入顺序
+
+1. 从可信来源取得兼容配置器。没有本地副本时可使用 `setup.ps1` 下载入口；不能把后台参数传给启动器 EXE。
+2. 用最小的 `base:preserve` 请求运行 `plan`，见 [deploy-minimal-v1.json](examples/deploy-minimal-v1.json)。它不主动更改代理、`.env` 或自带自启。
+3. 上层已取得用户授权后执行 `deploy`。根据提交状态和待办处理结果，不无条件重试。
+4. 重新 `info`，检查 `data.discovery.setupApiVersions` 包含 1、`chainProtocolVersions` 包含 1，能力满足注册和作者清单要求。
+5. 注册清单，再用 `companion list` 确认本项有效且启用。下次经启动器启动 ChatGPT 才触发扩展。
+
+最小请求首次部署不建桌面或登录自启快捷方式；这些选项由用户另外选择。原生接口不会自动升级共享启动器，也不会下载扩展。命令全流程见[自动化用法](automation-usage.md)。
+
+### 已知兼容启动器的只读查询
+
+`--launcher-info` 向重定向的标准输出写 UTF-8 JSON，不创建控制台、不开 ChatGPT。其输出是上面的发现对象本身，再附加 `currentLauncherVersion` 和 `currentCapabilities`；**没有配置器结果包，也没有 `data` 层**。前者描述管理部署，`current*` 描述当前运行的 EXE。
+
+只对已确认来源和兼容版本（至少 v1.1.0）的启动器调用。不得仅看文件名或通过执行新参数来探测旧版。用进程 API 关闭 Shell、重定向 stdout，先读取输出、再等待进程退出并检查退出码；无可写 stdout 时返回 70。这个命令不会取得或恢复管理快捷方式中的私人启动参数。
+
+### 能力与版本
 
 能力名按行为版本固定：`headless-deploy-v1`、`companion-registry-v1`、`ready-file-v1`、`tracked-retry-v1`、`chain-run-result-v1`。扩展先检查 `chainProtocolVersions` 和必需能力，再决定是否注册。只检查 EXE 文件名或版本大小不足以证明能力存在。
+
+`headless-deploy-v1` 和 `companion-registry-v1` 由配置器提供。其余三个由启动器提供。发现记录中的能力描述该部署对应的一组接口，不代表配置器被安装到部署目录；`--launcher-info` 的 `currentCapabilities` 只列当前启动器自己的能力。
 
 `schemaVersion` 和 `protocolVersion` 独立于产品版本。旧版拒绝公共对象中的未知字段；变更字段或既有语义时升级受影响的格式版本。新可选行为用新能力名协商，不因产品版本升高就假定支持。扩展私有设置放入 `config`。新启动器继续读取已承诺兼容的旧协议，不把未知大版本当作 v1 猜测执行。公共版本、能力和限制维护在 `AutomationContract.h`，变更时同步 Schema 与契约测试。
 

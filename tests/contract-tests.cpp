@@ -49,10 +49,15 @@ int wmain(int argc, wchar_t** argv) {
         const auto example = read(L"docs\\examples\\companion-v1.json");
         REQUIRE(Number(example, L"schemaVersion") == rules::ManifestSchema && chain::ValidId(example.At(L"id").String()));
         for (const auto& cap : example.At(L"requires").array) REQUIRE(rules::SupportsManifestCapability(cap.String()));
+        REQUIRE(Number(example.At(L"retry"), L"maxAttempts") == 1 && !example.At(L"retry").At(L"safe").Bool());
         const auto configure = read(L"docs\\examples\\companion-config-v1.json");
         REQUIRE(Number(configure, L"schemaVersion") == rules::SetupApi && configure.At(L"id").String() == example.At(L"id").String());
         chain::ValidateOverrides(configure.At(L"overrides"));
         REQUIRE(Number(read(L"docs\\examples\\deploy-v1.json"), L"schemaVersion") == rules::SetupApi);
+        const auto minimal = read(L"docs\\examples\\deploy-minimal-v1.json");
+        REQUIRE(Number(minimal, L"schemaVersion") == rules::SetupApi && minimal.At(L"base").String() == L"preserve");
+        REQUIRE(minimal.At(L"settings").object.empty() && minimal.At(L"actions").At(L"codexEnv").String() == L"leave"
+            && minimal.At(L"actions").At(L"officialStartup").String() == L"leave");
         const auto discovery = automation::MakeDiscoveryRecord(L"C:\\Example\\ChatGPTProxyLauncher.exe", L"1.0.0");
         REQUIRE(Number(discovery, L"schemaVersion") == rules::DiscoverySchema);
         REQUIRE(discovery.At(L"setupApiVersions").array[0].Integer(1, MAXDWORD) == rules::SetupApi);

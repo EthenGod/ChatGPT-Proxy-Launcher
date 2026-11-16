@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "base": "preserve",
+  "settings": {},
+  "actions": {
+    "codexEnv": "leave",
+    "officialStartup": "leave"
+  }
+}

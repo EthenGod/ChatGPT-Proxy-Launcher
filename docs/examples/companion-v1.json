@@ -3,7 +3,7 @@
   "id": "org.example.assistant-addon",
   "name": "示例扩展",
   "version": "1.2.0",
-  "requires": ["ready-file-v1", "tracked-retry-v1"],
+  "requires": ["ready-file-v1"],
   "entry": {
     "runtime": "exe",
     "path": "Addon.exe",
@@ -17,9 +17,9 @@
     "timeoutMs": 15000
   },
   "retry": {
-    "maxAttempts": 2,
+    "maxAttempts": 1,
     "delayMs": 1000,
-    "safe": true
+    "safe": false
   },
   "config": {}
 }

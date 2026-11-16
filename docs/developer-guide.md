@@ -1,72 +1,157 @@
 # 开发者接入指南
 
-适用于 v1.1.0 及后续兼容版本。接入分两类：外部工具调用配置器部署；插件由启动器启动。两者都不需要常驻服务或新增运行库。
+面向希望随 ChatGPT 启动的程序、脚本和插件作者。原生接口适用于 v1.1.0 及后续兼容版本，JSON 和链式协议仍为 v1。本文修订于 2026-11-16。
 
-## 选择入口
+接入分两部分：**安装时查询、按需部署和注册；运行时读取上下文、初始化并报告状态**。不要每次启动插件都下载配置器、部署或注册。
 
-| 要做什么 | 使用什么 |
-| --- | --- |
-| 在后台部署启动器 | 配置器 `--headless plan/deploy`；[请求示例](examples/deploy-v1.json) |
-| 下载配置器后在后台部署 | `setup.ps1 -Headless -Request <绝对路径> -Result <新文件>` |
-| 注册、配置、停用或移除插件 | 配置器 `--headless companion …`；[配置示例](examples/companion-config-v1.json) |
-| 查询已部署启动器 | 配置器 `--headless info`；已知兼容启动器可用 `--launcher-info` |
-| 取得一次启动的插件结果 | 启动器 `--launcher-chain --result <新文件> -- <ChatGPT 参数>` |
-| 启动未适配规范的普通程序 | 配置器高级页的“添加程序”，沿用 `StartupApps` |
+可复制的 PowerShell 全流程见[自动化用法](automation-usage.md)。完整字段见[后台接口](automation-design.md)和[链式启动规范](companion-protocol-v1.md)。
 
-可复制的完整命令在[自动化用法](automation-usage.md)。部署先运行 `plan`，检查结果后再执行 `deploy`。等待进程退出再读结果；每次使用新的 JSON 文件名。
+## 1. 先选接入方式
 
-退出码 `0` 表示请求完成，`10` 表示有待办或部分失败。还要检查 `committed`、`warnings`、`actionsRequired` 或各扩展状态。`info` 成功只表示取得状态，是否部署要看 `data.state`。后台部署不会关闭或启动 ChatGPT。
+| 扩展类型 | 选什么 | 扩展需要做什么 |
+| --- | --- | --- |
+| 普通程序，不准备改代码 | 配置器高级页“添加程序” | 沿用 `StartupApps`；不提供健康确认或自动重试 |
+| 持续运行的插件、桌面程序 | `signal` | 初始化成功后写一次回执，继续运行 |
+| 执行完即退出的脚本或任务 | `exit-code` | 等实际工作完成后返回退出码，不写回执 |
+| 已有实例的单实例程序 | `signal` + `already-running` | 先与旧实例确认健康，再回报其 PID 和创建时间 |
 
-## 接入一个插件
+本项目只部署启动器，不安装 ChatGPT 或脚本运行环境。部署、注册都不会启动 ChatGPT。扩展不能把“创建 ChatGPT 进程成功”当作“ChatGPT 已登录或网络可用”。
 
-1. 在程序旁放 `companion.json`。使用稳定 ID，升级时不改 ID，也尽量不改清单路径。
-2. 先用最小清单，不开启重试。下面适用于会持续运行的 EXE：
+## 2. 安装时先查询，不靠文件名猜
+
+使用可信的配置器调用 `--headless info --result <新 JSON 文件>`，或通过下载脚本调用 `-Headless -Operation info`。**本机没有配置器或启动器时，下载入口仍可查询和部署**。
+
+本地 EXE 要先核对来源及数值文件版本至少为 1.1.0，再调用后台命令。不要向旧 EXE 发送新参数试探支持情况。配置器不会随启动器长期留在部署目录中。
+
+查询成功后读取 `report.data.state`：
+
+| 状态 | 含义 | 接入程序怎么做 |
+| --- | --- | --- |
+| `managed` | 管理记录、目标文件与发现信息一致 | 检查下述协议版本和能力，符合后注册 |
+| `not-deployed` | 未发现管理快捷方式 | 用户同意后执行 `plan → deploy → info` |
+| `legacy` | 有部署，但缺少 v1 发现记录；可能是旧版 | 提示升级；获授权后保留原设置重新部署，再查询 |
+| `missing` | 管理记录中的启动器文件已丢失 | 提示修复；获授权后预检和重新部署，再查询 |
+| `invalid` | 记录损坏、版本不一致或归属不明 | 停止自动写入，提示检查具体安装 |
+| `unknown` | 权限或读取失败，无法确认 | 保留现状，解决读取问题后重新查询 |
+
+`not-deployed` 不保证目标目录完全没有文件；预检仍可能返回同名文件冲突。不要把所有非 `managed` 状态合并成“未安装”。
+
+对于 `managed`，检查 `report.data.discovery`：
+
+- `schemaVersion == 1`，`setupApiVersions` 包含 1，`chainProtocolVersions` 包含 1。
+- `capabilities` 包含 `companion-registry-v1`，以及作者清单 `requires` 中的每项能力。
+- 需要程序化取得一次启动结果时，另检查 `chain-run-result-v1`。
+
+能力不够时提示升级，不按产品版本大小猜测能力。字段位置和返回形状见[发现接口](companion-protocol-v1.md#7-对外发现与兼容)。
+
+## 3. 没有部署时，使用最小请求
+
+从 [deploy-minimal-v1.json](examples/deploy-minimal-v1.json) 开始：
 
 ```json
 {
   "schemaVersion": 1,
-  "id": "org.example.addon",
+  "base": "preserve",
+  "settings": {},
+  "actions": {"codexEnv": "leave", "officialStartup": "leave"}
+}
+```
+
+首次部署时会写入启动器、管理快捷方式和发现信息；默认不启用代理、不建桌面和登录自启快捷方式。已有配置时保留设置。注册目录与程序文件互相独立。
+
+1. 向用户说明要安装什么、部署到哪里。授权发生在你的安装流程中，后台接口不会再弹确认框。
+2. 用此请求运行 `plan`，检查最终目录和 `data.changes`。计划只检查，不保证稍后的磁盘和权限状态。
+3. 用户已经认可最终设置后，运行 `deploy`。
+4. 检查退出码、`committed`、`warnings` 和 `actionsRequired`。成功后重新 `info`，再次检查协议能力，然后注册。
+
+需要桌面入口或 Windows 登录自启时，在用户选择后显式设置 `settings.desktop` 或 `settings.startup`。代理和 `.env` 是额外功能，不是链式启动前提。[完整部署示例](examples/deploy-v1.json)会修改这些项目，不应直接当作默认安装请求。
+
+退出码 41、70、72 或 `committed:null` 时，先查询实际状态，不循环重试部署。未知归属的文件不能靠删除来绕过保护。具体恢复表见[结果处理](automation-usage.md#结果与恢复)。
+
+## 4. 给扩展添加清单
+
+将 `companion.json` 放在扩展的稳定安装目录，入口与清单一起升级。不要从会自动清理的临时下载目录注册。最小常驻 EXE 清单为：
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "org.example.assistant-addon",
   "name": "Example Addon",
   "version": "1.0.0",
   "requires": ["ready-file-v1"],
   "entry": {"runtime": "exe", "path": "Addon.exe", "arguments": []},
-  "readiness": {"mode": "signal"}
+  "readiness": {"mode": "signal", "timeoutMs": 15000}
 }
 ```
 
-3. 用 `companion register --manifest <清单绝对路径> --result <新文件>` 注册。它不会执行插件。实际启动发生在下一次由启动器创建 ChatGPT 进程后。
-4. 入口检查 `CGL_CHAIN_PROTOCOL=1`，从 `CGL_CONTEXT_FILE` 读取本次上下文。一次性保存需要的参数和配置，不能依赖临时文件长期存在。没有协议环境时，由插件决定独立运行或说明用法，不伪造就绪回执。
-5. 初始化真实功能。准备好后，将 `schemaVersion`、`runId`、`attemptId`、`token` 和 `status:"ready"` 写入 `reply.json.tmp`。关闭文件，再同目录改名到上下文给出的 `replyPath`。每次只写一份，不能覆盖。
-6. 保持关联进程继续运行。启动器还检查 1 秒存活。短任务改用 `exit-code`，结束时返回成功退出码，不写回执。`timeoutMs` 包含初始化和这 1 秒，通常保留默认 15 秒。
+ID 使用稳定的小写反向域名，不含版本号。入口是清单目录内的相对路径。支持的脚本类型、宿主和参数规则见[入口与参数](companion-protocol-v1.md#3-入口与参数)。
 
-PowerShell 可直接分发并点调用 [companion-context.ps1](examples/companion-context.ps1)，使用 `Read-CglContext`、`Send-CglReply`。其他语言只需文件、JSON 和环境变量接口，无需依赖本项目的 C++ 模块。字段见[上下文和回执规范](companion-protocol-v1.md)。
+初次接入只尝试一次。可复制的[完整清单](examples/companion-v1.json)也默认关闭重试。只有通过失败清理和单实例测试后，才考虑声明安全重试。
 
-`already-running` 只能在确认已有实例真的可用后发送，须附带该进程的 PID 和创建时间。不能只按进程名猜测。启动器创建 ChatGPT 进程不表示 ChatGPT 已登录或可以联网；插件自行等待所需连接。
+## 5. 注册并确认入口
 
-## 配置、失败与更新
+使用配置器的 `companion register`，或下载脚本的 `-Operation companion-register -Manifest <绝对路径>`。注册会校验并保存记录，**不会马上运行插件**。
 
-- 作者清单与用户覆盖项分开。`arguments`、`config` 和整个 `overrides` 都是整体替换；只传 `enabled:false` 也会清除旧覆盖项。需要保留时由调用者提交完整覆盖项。
-- 清单损坏、入口丢失时仍可停用。停用项不读取作者清单，列表版本为空；重新启用时重新校验。移除只删除指定 ID 的注册文件，保留程序与数据。注册目录超限时仍可停用或移除该项，并返回 `registry-read-incomplete` 警告。
-- 默认只尝试一次。开启重试需要 `safe:true`、`tracked-retry-v1`、可恢复错误，以及上一轮整个进程族已经退出。不能使用 Job 跟踪的服务、WMI 或外部宿主代启动方式，不应声明安全重试。超时不会强杀进程。
-- 扩展路径迁移时重新注册并加 `--replace`，保留用户覆盖项。新增参数优先放扩展自己的 `config`，不要随意扩充公共协议字段。
-- 产品版本、JSON 格式版本、链协议版本各自独立。旧版拒绝未知字段；破坏兼容的字段或语义必须升级相应格式。可选新行为用新能力名，旧消费者先检查能力再使用。产品版本升高不代表某能力必然存在。
-- `discovery.json` 是线索，`managedBy` 是归属标记，都不是签名。不要用新参数探测旧 EXE。本规范用于用户信任的本机扩展，不隔离同权限恶意程序。
+注册后用 `companion list` 核对自己的 ID，要求 `valid:true` 和 `enabled:true`。同 ID、同路径重复注册会保留用户覆盖项；可能没有新写入，此时 `committed:false` 不是失败。不要只看这个布尔值。
+
+用户下次通过本启动器或它创建的快捷方式打开 ChatGPT 时，扩展才会启动。从 ChatGPT 原始入口打开不会触发本链。直接运行不带参数的启动器，也不会自动加载管理快捷方式中保存的代理参数；正常使用应走已配置的快捷方式。
+
+不要同时把同一入口放进 `StartupApps`。需要迁移时让用户或安装器处理自己拥有的旧入口，再注册。
+
+## 6. 扩展运行时报告状态
+
+1. 检查 `CGL_CHAIN_PROTOCOL=1` 和 `CGL_CONTEXT_FILE`。变量缺失只说明本次不是协议启动，**不代表启动器未部署**。不要在这里反复安装或递归启动启动器。
+2. 读取 UTF-8 上下文，核对版本及本次身份，保存实际需要的参数和配置。文件只在本次尝试期间存在。
+3. 使用 `input.arguments` 和 `input.config` 初始化真正的功能。需要连接 ChatGPT 时自行等待连接，但不得超过上下文截止时间。
+4. `signal` 模式在初始化成功后写一次 `ready`。启动器继续观察关联进程 1 秒；这 1 秒计入默认 15 秒超时。
+5. 初始化失败时发送 `failed`，清理自身资源并退出。配置错误不能请求重试；不要在报告失败后留着一半运行的实例。
+6. `exit-code` 模式没有 `replyPath`，不调用回执函数，等待任务完成后按成功或失败退出。
+
+PowerShell 扩展可分发并点调用 [companion-context.ps1](examples/companion-context.ps1)：
+
+```powershell
+. (Join-Path $PSScriptRoot 'companion-context.ps1')
+$context = Read-CglContext
+# 使用 $context.input 完成实际初始化；下面这行只能放在初始化成功后。
+Send-CglReply -Context $context -Status ready
+# 接着进入扩展自己的正常主循环，不要立即退出。
+```
+
+已知配置错误可调用 `Send-CglReply -Context $context -Status failed -ErrorCode invalid-config`，随后退出。复用已有实例前先确认它实际可用，再使用 `-Status already-running -ExistingProcessId <PID>`。
+
+其他语言只需要环境变量、UTF-8 JSON 和文件操作：原样返回 `runId`、`attemptId`、`token`，先写 `reply.json.tmp` 并关闭，再同目录重命名到 `replyPath`，禁止覆盖已有回执。完整字段和限制见[上下文与回执](companion-protocol-v1.md#4-启动上下文与回执)。
+
+## 7. 配置、升级和卸载
+
+| 场景 | 操作与约束 |
+| --- | --- |
+| 更改参数或扩展配置 | `companion configure`；整个 `overrides` 替换，不是补丁合并 |
+| 临时停用 | `overrides.enabled=false`；清单损坏时仍可停用，但也会替换此前所有覆盖项 |
+| 恢复默认配置 | 提交 `overrides:{}`，会按清单重新启用并完整校验 |
+| 原目录升级扩展 | 保持 ID、清单路径稳定；用户覆盖项继续有效 |
+| 迁移目录 | 显式 `register --replace`；保留覆盖项，不删除旧程序 |
+| 卸载扩展 | `companion remove --id <ID>`；只移除自己的注册，再由扩展卸载器处理自己的文件 |
+
+不要在卸载一个扩展时删除共享启动器、其他注册项或用户配置。移除和停用不会停止已经运行的扩展。依赖其他扩展时先注册被依赖项；依赖不可用会影响后继，详见[调度与重试](companion-protocol-v1.md#5-顺序总预算与重试)。
+
+## 8. 接入完成前检查
+
+- 未部署、兼容部署、旧版、文件丢失、权限失败都进入正确分支；未经用户选择不改代理、自启或 `.env`。
+- 带空格和中文的路径、空参数、引号都能正确传递；使用参数数组，不经 Shell 拼接用户输入。
+- 首次注册、重复注册、停用、升级和移除均有效；错误码 10 的警告没有被丢弃。
+- 就绪、初始化失败、超时、已有实例都能得到准确结果。声明重试前验证整个上一轮进程族已退出。
+- 验收显式链式结果时，确认 `chatgpt.processCreated` 以及自己的条目状态。该测试会真的启动 ChatGPT，不是只读检查。
+- 不把令牌、上下文、代理或完整参数写进公开日志。启动器退出后没有持续健康检查。
 
 ## 修改本项目时看哪里
 
-| 需要修改 | 位置与边界 |
+| 内容 | 维护位置 |
 | --- | --- |
-| 协议版本、能力、限制 | `src/AutomationContract.h`；不和 `AppVersion.h` 混用 |
-| 部署发现、版本判断 | `src/DeploymentDiscovery.*`；两个 EXE 共用，只读元数据 |
-| 请求与部署 | `src/SetupCommandLine.cpp`；文件提交和回滚仍在 `SetupCore.cpp` |
-| 清单、参数覆盖、依赖 | `src/CompanionManifest.*`；注册文件操作在 `CompanionRegistry.cpp` |
-| 回执字段 | `src/CompanionProtocol.*`；完整校验后才交给运行逻辑 |
-| 进程、等待与重试 | `src/CompanionRunner.cpp`；保持限时等待，不加常驻轮询 |
-| 新脚本类型 | `src/StartupApps.*` 和清单运行方式映射；明确宿主，不猜文件内容 |
-| 界面、提示和下载文本 | `locales/*.json` 和 `src/Localization.*`；中文为基准，见[翻译指南](translating.md) |
+| 公共版本、能力、限制 | `src/AutomationContract.h`；与产品版本分开 |
+| 发现状态 | `src/DeploymentDiscovery.*`；两个 EXE 共用 |
+| 后台请求和文件提交 | `SetupCommandLine.cpp`、`SetupCore.cpp` |
+| 下载转发和清理 | `setup.ps1`；测试 `tests/headless-download-tests.ps1` |
+| 清单、覆盖项、依赖和注册 | `CompanionManifest.*`、`CompanionRegistry.cpp` |
+| 回执校验和限时调度 | `CompanionProtocol.*`、`CompanionRunner.cpp` |
 
-改接口时同步[Schema](schemas/)、[示例](examples/)和规范。结构校验不能替代文件归属、真实路径、进程身份、字节大小和依赖检查。`tests/contract-tests.cpp` 检查公共常量与 Schema、示例是否一致，不是完整 Schema 验证器。
-
-在项目根目录运行 `cmd /c tests\test-build.cmd` 和 `cmd /c tests\analyze.cmd`。涉及等待路径时再运行 `work\chain-tests.exe "%CD%\work" --benchmark`（cmd）。测试只使用隔离目录和测试进程。新增文件同步构建、测试、分析及 `release.ps1` 的源码清单。
-
-完整字段分别见[后台部署接口](automation-design.md)、[链式启动规范](companion-protocol-v1.md)。本轮发现的问题和验证范围见[复审记录](automation-maintenance.md)。
+接口变更同步[Schema](schemas/)、[示例](examples/)和文档。新增公共字段不能直接塞进 v1；扩展私有设置优先放 `config`。修改本项目后运行 `cmd /c tests\test-build.cmd`，原生代码改动再运行 `cmd /c tests\analyze.cmd`。新增文件同步 `release.ps1`。校验与已知边界见[维护记录](automation-maintenance.md)。
