@@ -17,10 +17,22 @@
 - `frontend/src-tauri/` 包含窗口、原生命令、Rust 数据类型和 C ABI 包装。只有主窗口可以调用明确授权的三项命令。
 - `src/SetupBridge.*` 将现有加载结果转换为有界 UTF-8 JSON。C++ 分配结果，Rust 作用域对象调用 C++ 释放。异常不跨越 ABI。只读失败始终报告尚未提交。
 - 现有部署核心与启动器不迁移。后台命令在 WebView2 检查和 Tauri 初始化之前分流。原始 UTF-16 参数不重新编码或拼接。
-- 新 EXE 静态链接 C++ 核心和 Visual C++ 运行库。Tauri 生成图标和版本资源；额外资源只放同次构建的启动器，避免重复 manifest 或版本资源。
+- 新 EXE 静态链接 C++ 核心、原生兼容界面和 Visual C++ 运行库。Tauri 生成图标和版本资源；额外资源放同次构建的启动器和界面能力信息，避免重复 manifest 或版本资源。
 - `test-harness` 仅用于独立测试产物。它要求显式测试目录，隔离全部快捷方式、部署文件、`.env` 和 WebView 数据。测试观测文件只存在于该构建。普通产物不读取测试环境变量。
 
 ## 构建与检查
+
+### 原生兼容模式
+
+- 同一个 EXE 支持 `--compatibility`。必须单独使用，不能混入后台参数。入口在 WebView2 检查和 Tauri 初始化前分流。
+- 旧界面增加兼容模式标题与版本标识，三语使用相同布局测量。保存、回滚、代理、附加程序、主题和语言偏好继续复用原实现。
+- PowerShell 在校验 EXE 后只读加载资源 102。没有该资源的旧配置器直接打开，不安装 WebView2，也不传入新参数。
+- 新配置器按微软文档读取用户和机器的运行库版本。缺少运行库时显示安装（推荐）、兼容界面和取消。直接双击 EXE 则自动回退兼容界面。
+- 选择安装后才下载微软 Evergreen Bootstrapper。执行前校验 Authenticode 状态和微软发布者，执行 `/silent /install`，结束后重新检查运行库。下载、签名、安装或检测失败时停止，不误报新界面可用。
+- 取消不打开配置器或项目网页，清理本次下载后返回 PowerShell。后台命令不检查运行库，也不询问安装。
+- 风险是下载安装依赖网络与本机策略。保留不联网的兼容入口。原生模式不创建 WebView 子进程，沿用原生界面的内存和线程生命周期。
+
+### 开发命令
 
 需要 Node.js 24.10 以上、Rust 1.99 以上的 MSVC 工具链、Clippy、rustfmt、Visual Studio C++ 工具和 Windows SDK。前端依赖使用锁文件。缓存和产物放在 `work/`，不改系统 PATH。
 
@@ -71,6 +83,16 @@ cmd /c tests\test-bridge.cmd
 
 工作集相加可能重复计算共享页。私有内存更适合评估新增占用。三次 Tauri 窗口的私有内存约 174–179 MiB，没有连续增长迹象；这不是长时间压力测试。后台多数单次样本约 39–116 ms，首次查询出现约 704 ms 的样本；原生对照约 19–91 ms。测试时同时进行了构建，后续需在空闲机器上重复采样。
 
-待验：截图工具的应用授权超时，尚未完成视觉复核。完整布局、三语切换、缩放和键盘验收属于第 2 阶段。真实保存、实际自启、联网、退出 ChatGPT、缺失 WebView2 的原生提示和独立机器运行仍未验收。当前测试未覆盖用户已有部署。
+兼容模式补充验收：
+
+- 原有 C++ 全套回归、C ABI 测试、静态分析通过。三语兼容标识通过 100%–200% 缩放、深浅色和高对比度布局检查；已查看隔离测试生成的界面截图。
+- Windows PowerShell 5.1 和 PowerShell 7 均通过检测与选择测试。覆盖旧 EXE、新能力资源、用户/机器运行库、取消、安装成功、网络失败、无效签名、错误发布者、安装失败和安装后仍缺失。完整取消流程会清理下载并返回调用者，不启动安装器、配置器或浏览器。
+- 实际隔离 EXE 验证显式入口、带引号的入口、缺失运行库回退。三次均只有一个进程，不创建 WebView 数据目录，正常关闭后退出。缺失环境通过测试进程的运行库目录覆盖模拟，没有卸载本机 WebView2。
+- 后台 8 组结果仍与原生入口逐字一致。混用兼容参数与后台参数返回原错误，不打开界面。新 React 窗口另做三次开关回归，嵌入资源与只读命令正常，关闭后无所属进程残留。
+- 兼容窗口本次短时观察约 19 MiB 工作集、2.6 MiB 私有内存。窗口句柄出现约 35–43 ms。每次只观察 2 秒，且同时进行构建；这不是冷启动、完整绘制或 60 秒性能验收。上表保留的是第 1 阶段基线。
+
+待验：新 React 界面尚未完成视觉复核。完整布局、三语切换、缩放和键盘验收属于第 2 阶段。真实安装 WebView2、实际自启、联网、退出 ChatGPT 和独立机器运行仍需实机验收。当前测试不覆盖用户已有部署。
 
 参考：[Tauri Windows 资源](https://docs.rs/tauri-build/latest/tauri_build/struct.WindowsAttributes.html)、[Tauri 权限](https://v2.tauri.app/security/capabilities/)。
+
+运行库检测与安装参考：[微软分发说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)、[微软 Bootstrapper 示例](https://github.com/MicrosoftEdge/WebView2Samples/blob/main/SampleApps/WV2DeploymentWiXBurnBundleSample/Bundle.wxs)。

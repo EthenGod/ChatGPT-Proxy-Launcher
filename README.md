@@ -26,6 +26,8 @@
 
 如果出现报错而没有打开配置器，可以改用方式二。
 
+带新界面的测试版需要 WebView2。下载入口发现缺少它时，会询问 **安装 WebView2（推荐）**、**使用兼容界面** 或 **取消**。兼容界面保留原来的配置功能，无需安装运行库。直接双击测试版时，缺少 WebView2 会自动打开兼容界面；也可运行 `ChatGPTLauncherSetup.exe --compatibility` 主动使用它。旧版原生配置器不受影响。此功能尚未发布到在线下载。
+
 ### 方式二：手动下载并打开
 
 [![打开 ChatGPT 轻量启动器的最新版下载页](https://img.shields.io/badge/GitHub-%E6%89%93%E5%BC%80%E6%9C%80%E6%96%B0%E7%89%88%E4%B8%8B%E8%BD%BD%E9%A1%B5-2563EB?style=for-the-badge&logo=github)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)

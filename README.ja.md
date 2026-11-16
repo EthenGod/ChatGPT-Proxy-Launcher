@@ -28,6 +28,8 @@ Windows x64 向けの非公式 ChatGPT ランチャーです。ChatGPT 用のプ
 
 エラーが出て設定ツールが開かない場合は、方法 2 を使ってください。
 
+新しい UI のテスト版には WebView2 が必要です。未インストールの場合、ダウンロード用スクリプトで **WebView2 をインストール（推奨）**、**互換モードを使用**、**キャンセル** を選べます。互換モードは従来の設定機能を備え、ランタイムのインストールは不要です。テスト版をダブルクリックした場合は、WebView2 がなければ互換モードで開きます。`ChatGPTLauncherSetup.exe --compatibility` でも指定できます。旧来のネイティブ版には影響しません。この機能はオンライン配布版にはまだ含まれていません。
+
 ### 方法 2：手動でダウンロードして開く
 
 [![GitHub | 最新版のダウンロードページ](https://img.shields.io/badge/GitHub-%E6%9C%80%E6%96%B0%E7%89%88%E3%82%92%E9%96%8B%E3%81%8F-2563EB?style=for-the-badge&logo=github)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)

@@ -31,7 +31,8 @@ unsafe extern "C" {
         paths: *const u8,
         paths_length: usize,
     ) -> i32;
-    fn setup_bridge_show_bootstrap_error(webview_missing: u32);
+    fn setup_bridge_show_bootstrap_error(compatibility_failed: u32);
+    fn setup_bridge_compatibility(paths: *const u8, length: usize) -> i32;
 }
 fn bytes(value: Option<&[u8]>) -> (*const u8, usize) {
     value.map_or((ptr::null(), 0), |v| (v.as_ptr(), v.len()))
@@ -39,12 +40,16 @@ fn bytes(value: Option<&[u8]>) -> (*const u8, usize) {
 pub fn initialize() {
     unsafe { setup_bridge_initialize() }
 }
-pub fn bootstrap_error(missing: bool) {
-    unsafe { setup_bridge_show_bootstrap_error(u32::from(missing)) }
+pub fn bootstrap_error(compatibility_failed: bool) {
+    unsafe { setup_bridge_show_bootstrap_error(u32::from(compatibility_failed)) }
 }
 pub fn headless(tail: &[u16], paths: Option<&[u8]>) -> i32 {
     let (paths, length) = bytes(paths);
     unsafe { setup_bridge_headless(tail.as_ptr(), tail.len(), paths, length) }
+}
+pub fn compatibility(paths: Option<&[u8]>) -> i32 {
+    let (paths, length) = bytes(paths);
+    unsafe { setup_bridge_compatibility(paths, length) }
 }
 pub fn read_state(paths: Option<&[u8]>) -> Result<Snapshot, BridgeError> {
     let mut buffer = Buffer::default();

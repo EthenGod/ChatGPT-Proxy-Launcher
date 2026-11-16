@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupBridge.h"
 #include "SetupCommandLine.h"
+#include "SetupNative.h"
 #include "SetupResources.h"
 #include "Localization.h"
 #include "AppVersion.h"
@@ -129,7 +130,20 @@ extern "C" int32_t setup_bridge_headless(const uint16_t* tail, size_t tailLength
     } catch (...) { return 50; }
 }
 
-extern "C" void setup_bridge_show_bootstrap_error(uint32_t webviewMissing) noexcept {
-    MessageBoxW(nullptr, l10n::Text(webviewMissing ? "setup.error.webviewmissing" : "setup.error.webviewstart"),
+extern "C" int32_t setup_bridge_compatibility(const uint8_t* pathBytes, size_t size) noexcept {
+    try {
+        setup::Paths paths;
+        if (pathBytes || size) {
+            const auto status = ResolvePaths(pathBytes, size, paths);
+            if (!status) return static_cast<int32_t>(status.code);
+        }
+        return setup::RunNativeSetup(GetModuleHandleW(nullptr), SW_SHOWNORMAL, true,
+            pathBytes ? &paths : nullptr);
+    } catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
+    catch (...) { return ERROR_INVALID_DATA; }
+}
+
+extern "C" void setup_bridge_show_bootstrap_error(uint32_t compatibilityFailed) noexcept {
+    MessageBoxW(nullptr, l10n::Text(compatibilityFailed ? "setup.error.compatibility" : "setup.error.webviewstart"),
         l10n::Text("setup.error.open"), MB_OK | MB_ICONERROR);
 }

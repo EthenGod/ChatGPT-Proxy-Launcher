@@ -31,3 +31,13 @@ pub fn current_command_tail() -> Vec<u16> {
         command_tail(std::slice::from_raw_parts(raw, len)).to_vec()
     }
 }
+
+pub fn is_compatibility(tail: &[u16]) -> bool {
+    let end = tail
+        .iter()
+        .rposition(|&ch| ch != 32 && ch != 9)
+        .map_or(0, |i| i + 1);
+    ["--compatibility", "\"--compatibility\""]
+        .iter()
+        .any(|value| tail[..end].iter().copied().eq(value.encode_utf16()))
+}

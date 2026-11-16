@@ -45,3 +45,22 @@ fn native_snapshot_requires_every_field_and_preserves_options() {
         .remove("codexEnv");
     assert!(serde_json::from_value::<model::Snapshot>(invalid).is_err());
 }
+
+#[test]
+fn compatibility_accepts_only_a_single_explicit_switch() {
+    for (tail, expected) in [
+        ("--compatibility", true),
+        ("\"--compatibility\" \t", true),
+        ("", false),
+        ("--compatibility --headless info", false),
+        ("--headless info --compatibility", false),
+        ("--compatibility 中文", false),
+        ("--compatibility \"\"", false),
+        ("--compatibilityx", false),
+    ] {
+        assert_eq!(
+            bootstrap::is_compatibility(&tail.encode_utf16().collect::<Vec<_>>()),
+            expected
+        );
+    }
+}

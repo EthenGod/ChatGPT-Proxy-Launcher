@@ -441,6 +441,7 @@ static int LanguageTests(App& app, PCWSTR folder) {
         REQUIRE(storedLanguage == l10n::At(i).tag && !l10n::FollowsSystem() && LanguageMenuSelected(i + 1));
         REQUIRE(app.dirty && app.editRevision == revision && app.Text(Preview) == arguments && app.Text(Directory) == directory);
         REQUIRE(app.Text(Startup) == l10n::Text("setup.option.startup") && app.Text(LanguageButton) == l10n::Current().name);
+        REQUIRE(app.Text(SetupVersion) == l10n::Format("setup.compatibility.version", {{"version", L"" APP_VERSION_TEXT}}));
         wchar_t tipText[4096]{}; TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = app.body;
         tip.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); tip.lpszText = tipText;
         SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(tipText), reinterpret_cast<LPARAM>(&tip));
@@ -611,6 +612,10 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(PartialSurfaceMatches(app, app.window) && PartialSurfaceMatches(app, app.body));
     REQUIRE(app.preferredDark && (app.contrast || app.dark));
     REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_VERSION_TEXT);
+    REQUIRE(setup::IsCompatibilityCommand(L"--compatibility"));
+    REQUIRE(setup::IsCompatibilityCommand(L"\"--compatibility\" \t"));
+    for (const auto invalid : {L"", L"--compatibility --headless info", L"--headless info --compatibility",
+        L"--compatibility 中文", L"--compatibility \"\"", L"--compatibilityx"}) REQUIRE(!setup::IsCompatibilityCommand(invalid));
     const auto initialArguments = app.Text(Preview);
     const bool initialDirty = app.dirty;
     app.Theme(1);
@@ -1151,10 +1156,20 @@ static int RunTests(PCWSTR folder) {
     printf("PASS owner-draw synchronous dispatch, preserved style through Tab/default-button changes, Enter/Space, balanced footer at 100/150 percent and short windows\n");
     {
         App localized; localized.instance = app.instance; localized.paths = app.paths;
+        localized.compatibility = true;
         REQUIRE(CreateWindowExW(WS_EX_CONTROLPARENT, L"SetupTestWindow", L"Isolated language test", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             -20000, -20000, 720, 812, nullptr, nullptr, localized.instance, &localized));
         ShowWindow(localized.window, SW_SHOWNOACTIVATE);
         REQUIRE(LanguageTests(localized, folder) == 0);
+        localized.isolatedPreview = true; localized.Refresh(false);
+        const auto beforeTheme = themeWrites;
+        const auto beforeLanguage = languageMenuCalls;
+        localized.Command(ThemeToggle, BN_CLICKED); localized.Command(LanguageButton, BN_CLICKED);
+        localized.Command(ApplyButton, BN_CLICKED); localized.Command(AddProgram, BN_CLICKED);
+        localized.Command(OpenCompanions, BN_CLICKED); localized.DetectPort();
+        REQUIRE(themeWrites == beforeTheme && languageMenuCalls == beforeLanguage && !localized.busy && !localized.detectingPort);
+        REQUIRE(!IsWindowEnabled(localized.Get(ApplyButton)) && !IsWindowEnabled(localized.Get(Port)));
+        puts("PASS compatibility labels/layout in three languages and isolated preview blocks writes/system actions");
     }
     return 0;
 }

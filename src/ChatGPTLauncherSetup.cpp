@@ -2,6 +2,7 @@
 #include "SetupCore.h"
 #include "Localization.h"
 #include "SetupCommandLine.h"
+#include "SetupNative.h"
 #include "StartupApps.h"
 #include "SetupResources.h"
 #include "StartupIntegration.h"
@@ -140,6 +141,7 @@ struct App {
     HWND languagePopup = nullptr;
     UINT dpi = 96;
     bool advanced = false, loading = true, dirty = false, busy = false, fatal = false;
+    bool compatibility = false, isolatedPreview = false;
     bool savedThisSession = false, startupReminderShown = false;
     bool dark = false, contrast = false, draggingScroll = false;
     bool preferredDark = true;
@@ -320,7 +322,7 @@ void App::CreateControls() {
     const DWORD label = SS_LEFT | SS_NOPREFIX;
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
     add(Title, L"STATIC", l10n::Text("common.launcher"), label, 2);
-    add(SetupVersion, L"STATIC", l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}).c_str(), label, 3);
+    add(SetupVersion, L"STATIC", l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_VERSION_TEXT}}).c_str(), label, 3);
     add(LanguageButton, L"BUTTON", l10n::Current().name, WS_TABSTOP | BS_OWNERDRAW);
     add(ThemeToggle, L"BUTTON", l10n::Text("setup.theme.light"), WS_TABSTOP | BS_OWNERDRAW);
     add(State, L"STATIC", l10n::Text("setup.state.initial"), label, 3);
@@ -625,9 +627,9 @@ void App::TranslateControls() {
     for (const auto& label : labels) Set(label.id, l10n::Text(label.key));
     Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
     Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced"));
-    Set(SetupVersion, l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}));
+    Set(SetupVersion, l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_VERSION_TEXT}}));
     Set(LanguageButton, l10n::Current().name);
-    SetWindowTextW(window, l10n::Text("setup.window")); SetWindowTextW(body, l10n::Text("setup.body"));
+    SetWindowTextW(window, l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window")); SetWindowTextW(body, l10n::Text("setup.body"));
     SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.port")));
     SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.bypass")));
     // A single read on explicit switching refreshes localized deployment warnings, never the form.
@@ -813,9 +815,14 @@ void App::Refresh(bool edited) {
     }
     Set(ApplyButton, busy ? l10n::Text("setup.status.saving") : savedThisSession && !dirty ? l10n::Text("setup.action.saved") : savedTarget.empty() ? l10n::Text("setup.action.deploy") : l10n::Text("setup.action.save"));
     Set(CloseButton, savedThisSession && !dirty ? l10n::Text("common.done") : l10n::Text("common.close"));
+    if (isolatedPreview) {
+        for (int id : {Startup, Silent, Desktop, Proxy, CodexEnv, Protocol, ProtocolHttps,
+            ProtocolSocks, Host, Port, Directory, Browse, Reset, Bypass, Extra, AddProgram,
+            OpenCompanions, ApplyButton, ThemeToggle, LanguageButton}) EnableWindow(Get(id), FALSE);
+    }
 }
 void App::DetectPort() {
-    if (closing || loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
+    if (isolatedPreview || closing || loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
     const auto options = Options();
     detectingPort = true; detectionRevision = editRevision;
     EnableWindow(Get(LanguageButton), FALSE);
@@ -900,6 +907,7 @@ void App::UpdateState(const setup::Loaded& loaded) {
 }
 void App::Command(int id, int notification) {
     if (loading || busy) return;
+    if (isolatedPreview && id != Advanced && id != CloseButton && !IsHelp(id)) return;
     if (id == LanguageButton && notification == BN_CLICKED) { LanguageMenu(); return; }
     if (IsHelp(id) && notification == BN_CLICKED) {
         MessageBoxW(window, HelpText(id), id == CodexEnvHelp ? l10n::Text("setup.dialog.codex") : l10n::Text("setup.dialog.proxy"), MB_OK | MB_ICONINFORMATION); return;
@@ -1546,28 +1554,33 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 } // namespace
 
-int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int show) {
-    l10n::Initialize();
-    // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
-    if (arguments && *arguments) return setup::RunSetupCommandLine(instance, arguments);
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\Community.ChatGPTLauncherSetup.v1");
+int setup::RunNativeSetup(HINSTANCE instance, int show, bool compatibility, const Paths* isolatedPaths) noexcept try {
+    const auto mutexName = isolatedPaths ? L"Local\\ChatGPTSetupPreview." + std::to_wstring(GetCurrentProcessId())
+        : std::wstring(L"Local\\Community.ChatGPTLauncherSetup.v1");
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
     if (!mutex) return static_cast<int>(GetLastError());
+    struct MutexGuard { HANDLE value; ~MutexGuard() { CloseHandle(value); } } mutexGuard{mutex};
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND existing = FindWindowW(L"ChatGPTLauncherSetup", nullptr);
         if (existing) { ShowWindow(existing, SW_RESTORE); SetForegroundWindow(existing); }
-        CloseHandle(mutex); return 0;
+        return 0;
     }
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(com)) { CloseHandle(mutex); return static_cast<int>(com); }
+    if (FAILED(com)) return static_cast<int>(com);
+    struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
     int exitCode = 0;
     Gdiplus::GdiplusStartupInput graphicsInput;
     ULONG_PTR graphicsToken = 0;
     if (Gdiplus::GdiplusStartup(&graphicsToken, &graphicsInput, nullptr) != Gdiplus::Ok) {
-        CoUninitialize(); CloseHandle(mutex); return ERROR_NOT_ENOUGH_MEMORY;
+        return ERROR_NOT_ENOUGH_MEMORY;
     }
+    struct Graphics { ULONG_PTR token; ~Graphics() { BufferedPaintUnInit(); Gdiplus::GdiplusShutdown(token); } } graphics{graphicsToken};
     BufferedPaintInit();
     {
         App app; app.instance = instance;
+        app.compatibility = compatibility;
+        app.isolatedPreview = isolatedPaths != nullptr;
+        if (isolatedPaths) app.paths = *isolatedPaths;
         HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_LAUNCHER), RT_RCDATA);
         HGLOBAL loaded = resource ? LoadResource(instance, resource) : nullptr;
         app.payload = { loaded ? static_cast<const BYTE*>(LockResource(loaded)) : nullptr,
@@ -1588,7 +1601,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
             RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
             const int width = MulDiv(700, static_cast<int>(dpi), 96);
             const int height = std::min(MulDiv(812, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
-            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", l10n::Text("setup.window"),
+            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left + (work.right - work.left - width) / 2,
                 work.top + (work.bottom - work.top - height) / 2, width, height, nullptr, nullptr, instance, &app);
             if (!window) exitCode = static_cast<int>(GetLastError());
@@ -1617,6 +1630,16 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
             }
         }
     }
-    BufferedPaintUnInit(); Gdiplus::GdiplusShutdown(graphicsToken);
-    CoUninitialize(); CloseHandle(mutex); return exitCode;
+    return exitCode;
+} catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
+catch (...) { return ERROR_INVALID_DATA; }
+
+#ifndef SETUP_UI_EMBEDDED
+int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int show) {
+    l10n::Initialize();
+    const bool compatibility = arguments && setup::IsCompatibilityCommand(arguments);
+    // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
+    if (arguments && *arguments && !compatibility) return setup::RunSetupCommandLine(instance, arguments);
+    return setup::RunNativeSetup(instance, show, compatibility);
 }
+#endif

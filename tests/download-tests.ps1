@@ -14,7 +14,7 @@ $progressNodeType = if ($hasProgressView) {
 $testFolder = Join-Path $root ('work\download-tests-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testFolder -Force
 $calls = @{launches = 0; browserOpens = 0; waitMs = 0; messages = [Collections.Generic.List[string]]::new(); progressActive = $false; stages = [Collections.Generic.List[string]]::new()}
-$fixture = [Text.Encoding]::ASCII.GetBytes('test setup payload')
+$fixture = [IO.File]::ReadAllBytes((Join-Path $root 'outputs\ChatGPTLauncherSetup.exe'))
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }

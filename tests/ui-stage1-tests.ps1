@@ -56,6 +56,8 @@ foreach ($exe in @($production, $desktop)) {
     # Tauri's resource compiler flattens XML whitespace and adds outer spaces.
     $manifest = [xml][Text.Encoding]::UTF8.GetString([SetupPeResource]::Read($exe, 1, 24)).TrimStart([char]0xFEFF).Trim()
     Require ($manifest.OuterXml -ceq $expectedManifest.OuterXml) 'Desktop manifest differs from the native manifest'
+    $capability = [Text.Encoding]::UTF8.GetString([SetupPeResource]::Read($exe, 102, 10)) | ConvertFrom-Json
+    Require ($capability.schemaVersion -eq 1 -and $capability.requiresWebView2 -eq $true -and $capability.compatibilityArgument -ceq '--compatibility') 'Missing dual-UI capability resource'
 }
 Write-Host 'PASS single EXE resources: exact same-build launcher payload and original Windows manifest'
 function Quote-Argument([string]$Value) {
@@ -129,6 +131,11 @@ foreach ($exe in @($native, $desktop)) {
 }
 $run = Run-Cli $production $cliRoot '--invalid'
 Require ($run.exitCode -eq 20) 'Normal EXE failed the no-WebView headless check'
+foreach ($tail in @('--compatibility --headless info', '--headless info --compatibility', '--compatibility ""', '--compatibilityx')) {
+    $run = Run-Cli $desktop $cliRoot $tail
+    Require ($run.exitCode -eq 20) 'Combined or invalid compatibility argument must not open a GUI'
+}
+Require (![IO.File]::Exists((Join-Path $cliRoot 'compatibility-entered.json'))) 'CLI entered compatibility GUI'
 Write-Host "PASS desktop CLI: $caseIndex exact native/Tauri result comparisons, original arguments, create-new results, no GUI bootstrap"
 
 function Get-ProcessTree([int]$RootId) {
@@ -142,7 +149,37 @@ function Get-ProcessTree([int]$RootId) {
     return @($rows | Where-Object { $ids.Contains([int]$_.ProcessId) })
 }
 $gui = @()
+$compatibility = @()
 if (!$SkipGui) {
+    foreach ($case in @(@('--compatibility', $false), @('"--compatibility" ', $true), @('', $true))) {
+        $root = Join-Path $testRoot ('compatibility-' + $compatibility.Count)
+        $null = [IO.Directory]::CreateDirectory($root)
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $process = Start-Isolated $desktop $root $case[0] $case[1]
+        try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+                $process.Refresh()
+                Require (!$process.HasExited) 'Compatibility window exited before showing'
+                Require ([DateTime]::UtcNow -lt $deadline) 'Compatibility window did not become ready'
+                if (!$process.MainWindowHandle) { Start-Sleep -Milliseconds 100 }
+            } while (!$process.MainWindowHandle)
+            $readyMs = $timer.Elapsed.TotalMilliseconds
+            Start-Sleep -Seconds 2
+            Require ([IO.File]::Exists((Join-Path $root 'compatibility-entered.json'))) 'Native compatibility entry was not used'
+            Require (![IO.File]::Exists((Join-Path $root 'gui-entered.json'))) 'Compatibility constructed Tauri state'
+            Require (![IO.Directory]::Exists((Join-Path $root 'webview'))) 'Compatibility created WebView data'
+            $tree = @(Get-ProcessTree $process.Id)
+            Require ($tree.Count -eq 1) 'Compatibility created a child process'
+            $process.Refresh()
+            $compatibility += [pscustomobject]@{argument=$case[0]; withoutWebView=$case[1]; readyMs=[Math]::Round($readyMs,2); processes=$tree.Count;
+                privateMiB=[Math]::Round($process.PrivateMemorySize64 / 1MB,2); workingSetMiB=[Math]::Round($process.WorkingSet64 / 1MB,2)}
+            Require ($process.CloseMainWindow()) 'Could not close compatibility window normally'
+            Require ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'Compatibility did not exit cleanly'
+            Require (![IO.Directory]::Exists((Join-Path $root 'state'))) 'Compatibility preview wrote deployment data'
+        } finally { $process.Dispose() }
+    }
+    Write-Host 'PASS compatibility: explicit/quoted switch and missing-runtime fallback, single process, no WebView, three normal closes'
     for ($cycle = 1; $cycle -le 3; $cycle++) {
         $root = Join-Path $testRoot "window-$cycle"
         $null = [IO.Directory]::CreateDirectory($root)
@@ -188,6 +225,7 @@ $report = [ordered]@{
     sizes=[ordered]@{nativeBytes=(Get-Item (Join-Path $ProjectRoot 'outputs\ChatGPTLauncherSetup.exe')).Length; tauriBytes=(Get-Item $production).Length; launcherBytes=(Get-Item (Join-Path $ProjectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length}
     cli=$timings
     gui=$gui
+    compatibility=$compatibility
 }
 [IO.File]::WriteAllText((Join-Path $testRoot 'summary.json'), ($report | ConvertTo-Json -Depth 10))
 Write-Host "Local measurements: $testRoot\summary.json"

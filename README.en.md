@@ -28,6 +28,8 @@ Both methods open the same setup tool. **Choose one; method 1 is recommended.**
 
 If an error appears and the setup tool does not open, use method 2.
 
+Test builds with the new UI require WebView2. If it is missing, the download script offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Compatibility mode keeps the original configuration features and needs no runtime installation. Double-clicking the test build opens compatibility mode automatically when WebView2 is missing; use `ChatGPTLauncherSetup.exe --compatibility` to select it explicitly. Older native builds are unaffected. This feature is not yet available in the online release.
+
 ### Method 2: Download and open manually
 
 [![GitHub | Open latest downloads](https://img.shields.io/badge/GitHub-Open_latest_downloads-2563EB?style=for-the-badge&logo=github)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)

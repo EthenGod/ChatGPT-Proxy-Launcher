@@ -41,7 +41,7 @@ fn main() {
         );
     }
 
-    // Compile the existing core separately; no native GUI or launcher entry point.
+    // Link the core and compatibility UI, excluding the standalone WinMain.
     let sources = [
         "Localization",
         "SetupCore",
@@ -55,6 +55,9 @@ fn main() {
         "CompanionRegistry",
         "StartupIntegration",
         "SetupBridge",
+        "ChatGPTLauncherSetup",
+        "ProxyDetection",
+        "CodexClose",
     ];
     let mut native = cc::Build::new();
     native
@@ -67,14 +70,30 @@ fn main() {
         .flag("/WX")
         .define("UNICODE", None)
         .define("_UNICODE", None)
+        .define("SETUP_UI_EMBEDDED", None)
         .opt_level(1);
     for name in sources {
         native.file(root.join(format!("src/{name}.cpp")));
     }
     native.compile("setup_native");
     for library in [
-        "kernel32", "user32", "shell32", "ole32", "uuid", "shlwapi", "advapi32", "xmllite",
+        "kernel32",
+        "user32",
+        "shell32",
+        "ole32",
+        "uuid",
+        "shlwapi",
+        "advapi32",
+        "xmllite",
         "version",
+        "gdi32",
+        "gdiplus",
+        "comctl32",
+        "uxtheme",
+        "dwmapi",
+        "iphlpapi",
+        "ws2_32",
+        "runtimeobject",
     ] {
         println!("cargo:rustc-link-lib={library}");
     }
@@ -93,14 +112,18 @@ fn main() {
         "Build the native launcher first with build.cmd"
     );
     println!("cargo:rerun-if-changed={}", launcher.display());
-    // Tauri owns VERSIONINFO and the icon. Add only the payload, avoiding duplicate resources.
+    // Resource 102 identifies dual-UI builds without running an old EXE.
     let windows = tauri_build::WindowsAttributes::new()
         .static_vc_runtime(true)
         .window_icon_path(root.join("assets/ChatGPT.ico"))
         .app_manifest(fs::read_to_string(root.join("src/Setup.manifest")).unwrap())
         .append_rc_content(format!(
-            "101 RCDATA \"{}\"",
-            launcher.display().to_string().replace('\\', "\\\\")
+            "101 RCDATA \"{}\"\n102 RCDATA \"{}\"",
+            launcher.display().to_string().replace('\\', "\\\\"),
+            root.join("src/SetupUiCapabilities.json")
+                .display()
+                .to_string()
+                .replace('\\', "\\\\")
         ));
     tauri_build::try_build(
         tauri_build::Attributes::new()

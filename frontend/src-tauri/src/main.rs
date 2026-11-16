@@ -70,18 +70,20 @@ fn main() {
     #[cfg(feature = "test-harness")]
     let paths = Some(harness::paths());
     let tail = bootstrap::current_command_tail();
+    if bootstrap::is_compatibility(&tail) {
+        run_compatibility(paths.as_deref());
+    }
     // Same binary and CLI contract. Do this before constructing ANY Tauri state,
     // checking WebView2, creating a window, or acquiring a GUI instance lock.
     if !tail.is_empty() {
         std::process::exit(bridge::headless(&tail, paths.as_deref()));
     }
 
+    if tauri::webview_version().is_err() {
+        run_compatibility(paths.as_deref());
+    }
     #[cfg(feature = "test-harness")]
     harness::mark("gui-entered");
-    if tauri::webview_version().is_err() {
-        bridge::bootstrap_error(true);
-        std::process::exit(1);
-    }
     let context = tauri::generate_context!();
     let result = tauri::Builder::default()
         .manage(NativeState {
@@ -124,4 +126,14 @@ fn main() {
         bridge::bootstrap_error(false);
         std::process::exit(1);
     }
+}
+
+fn run_compatibility(paths: Option<&[u8]>) -> ! {
+    #[cfg(feature = "test-harness")]
+    harness::mark("compatibility-entered");
+    let code = bridge::compatibility(paths);
+    if code != 0 {
+        bridge::bootstrap_error(true);
+    }
+    std::process::exit(code);
 }
