@@ -4,7 +4,7 @@ import { Radio } from '@base-ui/react/radio'
 import { RadioGroup } from '@base-ui/react/radio-group'
 import { AlertCircle, ArrowUpRight, CheckCircle2, ChevronDown, CircleHelp, File, FlaskConical,
   FolderOpen, Globe2, LoaderCircle, Moon, Plus, Search, Sun } from 'lucide-react'
-import { Button, ChoiceMenu, Modal, TextField, Toggle } from '../../components/controls'
+import { Button, ChoiceMenu, Modal, SwitchControl, TextField, Toggle } from '../../components/controls'
 import { resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { defaultDirectory, samplePrograms } from '../../platform/mock'
@@ -160,11 +160,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     try { await service.openLocation(location); if (alive.current) setNotice('ui.location.preview') }
     catch { if (alive.current) setNotice('setup.error.openfolder') }
   }
-  const helpButton = (key: MessageKey, label: string) => <Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={14} /></Button>
+  const helpButton = (key: MessageKey, label: string) => <Button className="icon-button help-button" aria-label={label} title={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button>
   const fieldError = (key: keyof SetupOptions) => validation?.errors[key] ? t(validation.errors[key]) : undefined
-  const status = busy ? t(adding ? 'ui.adding' : 'setup.status.saving') : detecting ? t('ui.detect.running') : result ? t(result.message)
+  const status = busy || loading || loadError ? '' : result ? t(result.commit === 'saved' && !result.tasks.length ? 'setup.action.saved' : result.message)
     : notice ? t(notice) : !validation?.valid && options ? t('ui.save.invalid')
-      : options?.proxy && options.codexEnv ? t('setup.status.quitwarning') : t(dirty ? 'setup.status.unsaved' : 'setup.status.savefirst')
+      : options?.proxy && options.codexEnv ? t('setup.status.quitwarning') : dirty ? t('setup.status.unsaved') : ''
   const saved = result?.commit === 'saved' && !dirty
   const failed = !!result && result.commit !== 'saved'
   const deployment = snapshot?.deployed ? snapshot.deployedVersion ? t('setup.state.version', { version: snapshot.deployedVersion }) : t('setup.state.unknownversion')
@@ -180,10 +180,10 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     <div className="prototype-bar"><Button className="prototype-label" onClick={() => openDialog('preview')} disabled={busy}><FlaskConical size={13} />{t('ui.prototype.title')}</Button><fieldset disabled={busy}>{scenarioControls}</fieldset></div>
     <main className="settings-content" aria-busy={loading}>
       <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
-        <span className="small secondary">{t('setup.version', { version: snapshot?.setupVersion ?? '1.1.3' })}</span></div>
+        <span className="version-badge" aria-label={t('setup.version', { version: snapshot?.setupVersion ?? '1.1.3' })} title={t('setup.version', { version: snapshot?.setupVersion ?? '1.1.3' })}>v{snapshot?.setupVersion ?? '1.1.3'}</span></div>
         <div className="appearance-controls"><ChoiceMenu label={t('ui.language')} value={language} onChange={setLanguage} disabled={busy}
-          items={[{ value: 'auto', label: t('setup.language.system') }, { value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }, { value: 'ja-JP', label: '日本語' }]} icon={<Globe2 size={15} />} />
-          <Button className="icon-button theme-button" onClick={() => setDark(!dark)} disabled={busy} aria-label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')} title={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}>{dark ? <Sun size={17} /> : <Moon size={17} />}</Button>
+          items={[{ value: 'auto', label: t('setup.language.system') }, { value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }, { value: 'ja-JP', label: '日本語' }]} icon={<Globe2 size={16} />} variant="icon" />
+          <Button className="icon-button" onClick={() => setDark(!dark)} disabled={busy} aria-label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')} title={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}>{dark ? <Sun size={16} /> : <Moon size={16} />}</Button>
         </div>
       </header>
       {loading ? <div className="load-state" role="status"><LoaderCircle className="spinner" size={20} />{t('setup.preview.loading')}</div>
@@ -191,40 +191,42 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           <section className="settings-section" aria-labelledby="startup-title"><h2 id="startup-title">{t('setup.section.startup')}</h2><div className="settings-card">
-            <Toggle label={t('setup.option.startup')} checked={options.startup} disabled={locked} onChange={value => update('startup', value)} help={helpButton('setup.hint.startup', t('ui.help.startup'))} />
-            <Toggle label={t('setup.option.desktop')} checked={options.desktop} disabled={locked} onChange={value => update('desktop', value)} />
-            <Toggle label={t('setup.option.silent')} checked={options.silent} disabled onChange={() => {}} />
+            <Toggle label={t('ui.startup')} checked={options.startup} disabled={locked} onChange={value => update('startup', value)} help={helpButton('setup.hint.startup', t('ui.help.startup'))} />
+            <Toggle label={t('ui.desktop')} checked={options.desktop} disabled={locked} onChange={value => update('desktop', value)} />
+            <Toggle label={t('ui.silent')} badge={t('ui.unavailable')} checked={options.silent} disabled onChange={() => {}} />
           </div></section>
-          <section className="settings-section" aria-labelledby="proxy-title"><div className="section-heading"><h2 id="proxy-title">{t('setup.section.proxy')}</h2>{helpButton('ui.help.proxy', t('setup.dialog.proxy'))}</div>
-            <div className="settings-card"><Toggle label={t('setup.option.proxy')} checked={options.proxy} disabled={locked} onChange={value => update('proxy', value)} />
-              {options.proxy && <div className="proxy-details">
+          <section className="settings-section" aria-labelledby="proxy-title"><Collapsible.Root open={options.proxy}>
+            <div className="section-heading"><h2 id="proxy-title"><label htmlFor="proxy-enabled">{t('ui.proxy')}</label></h2>{helpButton('ui.help.proxy', t('setup.dialog.proxy'))}
+              <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls="proxy-details" checked={options.proxy} disabled={locked} onChange={value => update('proxy', value)} /></div>
+            <Collapsible.Panel id="proxy-details" className="disclosure-panel">
+              <div className="settings-card proxy-card">
                 <div className="connection-fields"><div className="field protocol-field"><span id="protocol-label">{t('setup.label.protocol')}</span>
                   <RadioGroup aria-labelledby="protocol-label" className="segmented" value={options.protocol} disabled={locked} onValueChange={value => update('protocol', String(value))}>
                     {['http', 'https', 'socks5'].map(protocol => <Radio.Root key={protocol} value={protocol} className="segment">{protocol.toUpperCase()}</Radio.Root>)}
                   </RadioGroup></div>
                   <TextField id="proxy-host" label={t('setup.label.host')} value={options.host} onChange={event => update('host', event.target.value)} disabled={locked} error={fieldError('host')} autoComplete="off" spellCheck={false} />
                   <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} inputMode="numeric" maxLength={5} autoComplete="off"
-                    suffix={<Button className="input-action" aria-label={t('ui.detect')} title={t('ui.detect')} disabled={locked || detecting} onClick={() => void detect()}>{detecting ? <LoaderCircle className="spinner" size={15} /> : <Search size={15} />}</Button>} />
+                    suffix={<Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} title={t('ui.detect')} disabled={locked || detecting} onClick={() => void detect()}>{detecting ? <LoaderCircle className="spinner" size={16} /> : <Search size={16} />}</Button>} />
                 </div>
                 <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('ui.help.codex', t('setup.help.codex'))} />
-              </div>}
-            </div></section>
-          <section className="settings-section" aria-labelledby="preview-title"><h2 id="preview-title">{t('setup.section.preview')}</h2>
-            <pre className={`argument-preview ${!validation?.valid ? 'invalid-preview' : ''}`} aria-label={t('setup.section.preview')}>{validation?.valid ? validation.arguments || t('ui.arguments.empty') : t('setup.preview.invalid')}</pre>
+              </div>
+            </Collapsible.Panel></Collapsible.Root></section>
+          <section className="settings-section" aria-labelledby="preview-title"><h2 id="preview-title">{t('ui.arguments')}</h2>
+            <pre className={`argument-preview ${!validation?.valid ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{validation?.valid ? validation.arguments || t('ui.arguments.empty') : t('setup.preview.invalid')}</pre>
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
-            <Collapsible.Trigger className="advanced-trigger" disabled={busy}><ChevronDown size={16} />{t('setup.section.advanced')}</Collapsible.Trigger>
-            <Collapsible.Panel className="advanced-panel">
+            <Collapsible.Trigger className="advanced-trigger" disabled={busy}>{t('setup.section.advanced')}<ChevronDown size={16} /></Collapsible.Trigger>
+            <Collapsible.Panel className="disclosure-panel advanced-panel">
               <div className="settings-card advanced-card">
-                <TextField label={t('setup.label.directory')} value={options.directory} onChange={event => update('directory', event.target.value)} disabled={locked} error={fieldError('directory')} spellCheck={false} />
-                <div className="field-actions"><Button className="control-button" disabled={locked} onClick={() => { setSelection(options.directory); openDialog('directory') }}><FolderOpen size={15} />{t('setup.action.browse')}</Button>
-                  <Button className="text-button" disabled={locked || options.directory === defaultDirectory} onClick={() => update('directory', defaultDirectory)}>{t('setup.action.reset')}</Button>{helpButton('setup.hint.directory', t('ui.help.directory'))}</div>
-                <TextField label={t('setup.label.bypass')} value={options.bypass} onChange={event => update('bypass', event.target.value)} disabled={locked} error={fieldError('bypass')} placeholder="localhost;*.example.com" spellCheck={false} />
-                <TextField label={t('setup.label.extra')} value={options.extra} onChange={event => update('extra', event.target.value)} disabled={locked} error={fieldError('extra')} spellCheck={false} />
-                <div className="programs-heading"><h2>{t('setup.label.companions')}</h2>{helpButton('ui.help.programs', t('ui.help.programs.title'))}</div>
+                <TextField label={t('setup.label.directory')} value={options.directory} onChange={event => update('directory', event.target.value)} disabled={locked} error={fieldError('directory')} spellCheck={false}
+                  labelActions={<>{helpButton('setup.hint.directory', t('ui.help.directory'))}<Button className="text-button field-reset" disabled={locked || options.directory === defaultDirectory} onClick={() => update('directory', defaultDirectory)}>{t('setup.action.reset')}</Button></>}
+                  suffix={<Button className="input-action" aria-label={t('setup.action.browse')} title={t('setup.action.browse')} disabled={locked} onClick={() => { setSelection(options.directory); openDialog('directory') }}><FolderOpen size={16} /></Button>} />
+                <TextField label={t('ui.bypass')} value={options.bypass} onChange={event => update('bypass', event.target.value)} disabled={locked} error={fieldError('bypass')} placeholder="localhost;*.example.com" spellCheck={false} />
+                <TextField label={t('ui.extra')} value={options.extra} onChange={event => update('extra', event.target.value)} disabled={locked} error={fieldError('extra')} spellCheck={false} />
+                <div className="programs-group"><div className="programs-heading"><h2>{t('ui.programs')}</h2>{helpButton('ui.help.programs', t('ui.help.programs.title'))}</div>
                 {programs.length > 0 && <ul className="program-list">{programs.map(program => <li key={program.path} title={`${program.path}\n${program.arguments}`}><File size={16} /><span>{program.name}</span><CheckCircle2 size={14} /></li>)}</ul>}
-                <div className="field-actions"><Button className="control-button" disabled={locked} onClick={() => { setSelection(samplePrograms[0]!.path); openDialog('program') }}><Plus size={15} />{t('setup.action.add')}</Button>
-                  <Button className="text-button" disabled={locked} onClick={() => void openLocation('startup')}>{t('setup.action.openstartup')}<ArrowUpRight size={14} /></Button></div>
+                <div className="field-actions"><Button className="control-button" disabled={locked} onClick={() => { setSelection(samplePrograms[0]!.path); openDialog('program') }}><Plus size={16} />{t('setup.action.add')}</Button>
+                  <Button className="icon-button" disabled={locked} aria-label={t('setup.action.openstartup')} title={t('setup.action.openstartup')} onClick={() => void openLocation('startup')}><FolderOpen size={16} /></Button></div></div>
               </div>
             </Collapsible.Panel>
           </Collapsible.Root>
@@ -232,23 +234,23 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     </main>
     <footer className="settings-footer">
       <div className={`footer-status ${failed ? 'error-text' : saved ? 'success-text' : ''}`} role={failed ? 'alert' : 'status'}>
-        {busy ? <LoaderCircle size={15} className="spinner" /> : failed ? <AlertCircle size={15} /> : saved ? <CheckCircle2 size={15} /> : null}
-        <span>{loading ? t('setup.preview.loading') : loadError ? t('ui.load.failed') : status}</span>
+        {failed ? <AlertCircle size={16} /> : saved ? <CheckCircle2 size={16} /> : null}
+        <span>{status}</span>
         {result && (failed || result.tasks.length > 0) && <Button className="text-button" onClick={() => openDialog('result')}>{t('ui.details')}</Button>}
       </div>
-      <div className="footer-actions"><Button ref={doneButton} className="button secondary-button" disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
-        <Button ref={saveButton} className="button primary-button" disabled={locked || !validation?.valid || loadError || saved} onClick={() => void save()}>{busy && !adding && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding ? 'setup.status.saving' : saved ? 'setup.action.saved' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button></div>
+      <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
+        {!saved && <Button ref={saveButton} className="button primary-button" disabled={locked || !validation?.valid || loadError} onClick={() => void save()}>{busy && !adding && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
     </footer>
     <Modal open={dialogOpen} title={dialogTitle} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!inFlight.current) setDialogOpen(false) }}
       description={discard ? t('setup.dialog.discard') : dialog === 'help' ? t(help) : dialog === 'preview' ? t('ui.prototype.description')
-        : dialog === 'directory' || dialog === 'program' ? t('ui.picker.preview') : result ? t(result.message) : undefined}
+        : dialog === 'directory' || dialog === 'program' ? t('ui.picker.preview') : result && !saved ? t(result.message) : undefined}
       actions={discard ? <><Button ref={cancelButton} className="button secondary-button" onClick={() => setDialogOpen(false)}>{t('ui.keepediting')}</Button><Button className="button danger-button" onClick={() => void close()}>{t('ui.discard')}</Button></>
         : dialog === 'directory' || dialog === 'program' ? <><Button className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('download.cancel')}</Button>
-          <Button className="button primary-button" disabled={busy || !selection} onClick={() => { if (dialog === 'program') void addProgram(); else { update('directory', selection); setDialogOpen(false) } }}>{t('ui.select')}</Button></>
+          <Button className="button primary-button" disabled={busy || !selection} onClick={() => { if (dialog === 'program') void addProgram(); else { update('directory', selection); setDialogOpen(false) } }}>{adding && <LoaderCircle size={16} className="spinner" />}{t(adding ? 'ui.adding' : 'ui.select')}</Button></>
           : <Button className="button primary-button" onClick={() => setDialogOpen(false)}>{t('ui.understood')}</Button>}>
       {(dialog === 'directory' || dialog === 'program') && <RadioGroup className="picker-list" value={selection} onValueChange={value => setSelection(String(value))} disabled={busy} aria-label={dialogTitle}>
         {(dialog === 'program' ? samplePrograms.map(program => ({ path: program.path, name: program.name })) : [defaultDirectory, 'D:\\Tools\\ChatGPT Launcher', 'C:\\Apps\\工作工具\\ChatGPT Launcher'].map(path => ({ path, name: path })))
-          .map(item => <Radio.Root className="picker-item" key={item.path} value={item.path}><Radio.Indicator><CheckCircle2 size={16} /></Radio.Indicator><span>{item.name}</span></Radio.Root>)}
+          .map(item => <Radio.Root className="picker-item" key={item.path} value={item.path}><Radio.Indicator keepMounted className="picker-indicator"><CheckCircle2 size={16} /></Radio.Indicator><span>{item.name}</span></Radio.Root>)}
       </RadioGroup>}
       {dialog === 'result' && result && <>
         {result.detail && <p className="error-detail">{result.detail}</p>}

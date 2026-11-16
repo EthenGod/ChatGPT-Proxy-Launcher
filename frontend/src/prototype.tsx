@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SetupPage } from './features/setup/SetupPage'
+import { ChoiceMenu } from './components/controls'
 import { MockSetupService, scenarios, scenarioLabels, type Scenario } from './platform/mock'
 import { prototypeWindow } from './platform/prototype-window'
 import { translator } from './i18n'
@@ -14,9 +15,8 @@ function Prototype() {
   const [language, setLanguage] = useState('zh-CN')
   const t = translator(language)
   return <SetupPage key={scenario} service={service} host={prototypeWindow} onLanguageChange={setLanguage} scenarioControls={
-    <label className="scenario-control"><span>{t('ui.scenarios')}</span><select aria-label={t('ui.scenarios')} value={scenario} onChange={event => setScenario(event.target.value as Scenario)}>
-      {scenarios.map(value => <option key={value} value={value}>{t(scenarioLabels[value])}</option>)}
-    </select></label>
+    <ChoiceMenu label={t('ui.scenarios')} value={scenario} onChange={value => setScenario(value as Scenario)} variant="quiet"
+      items={scenarios.map(value => ({ value, label: t(scenarioLabels[value]) }))} />
   } />
 }
 const root = document.getElementById('root')
