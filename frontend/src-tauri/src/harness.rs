@@ -1,4 +1,4 @@
-// Compiled only into work/ui-stage1-test, never the normal configuration EXE.
+// Compiled only into isolated test executables, never the normal configuration EXE.
 use std::path::PathBuf;
 
 pub fn root() -> PathBuf {
@@ -50,4 +50,22 @@ pub fn record_read(state: &crate::model::Snapshot) {
         serde_json::to_vec(&report).unwrap(),
     )
     .expect("test read observation");
+}
+
+#[cfg(feature = "ui-prototype")]
+pub fn record_close(approved: bool) {
+    use std::sync::Mutex;
+    static COUNTS: Mutex<(usize, usize)> = Mutex::new((0, 0));
+    let mut counts = COUNTS.lock().expect("test close counts");
+    if approved {
+        counts.1 += 1;
+    } else {
+        counts.0 += 1;
+    }
+    let report = serde_json::json!({"requested": counts.0, "approved": counts.1});
+    std::fs::write(
+        root().join("close-events.json"),
+        serde_json::to_vec(&report).unwrap(),
+    )
+    .expect("test close observation");
 }

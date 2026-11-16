@@ -14,11 +14,15 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+#[cfg(feature = "ui-prototype")]
+use tauri::Emitter;
 use tauri::Manager;
 
 struct NativeState {
     busy: Arc<AtomicBool>,
     paths: Option<Vec<u8>>,
+    #[cfg(feature = "ui-prototype")]
+    allow_close: AtomicBool,
 }
 struct BusyGuard(Arc<AtomicBool>);
 impl Drop for BusyGuard {
@@ -59,7 +63,15 @@ fn show_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn close_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
+async fn close_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    // Closing a WebView from its synchronous IPC callback can block teardown.
+    #[cfg(feature = "ui-prototype")]
+    harness::record_close(true);
+    #[cfg(feature = "ui-prototype")]
+    window
+        .state::<NativeState>()
+        .allow_close
+        .store(true, Ordering::Release);
     window.close().map_err(|e| e.to_string())
 }
 
@@ -89,17 +101,26 @@ fn main() {
         .manage(NativeState {
             busy: Arc::new(AtomicBool::new(false)),
             paths,
+            #[cfg(feature = "ui-prototype")]
+            allow_close: AtomicBool::new(false),
         })
         .setup(|app| {
+            let config = &app.config().app.windows[0];
+            #[cfg(feature = "ui-prototype")]
+            let config = &{
+                let mut config = config.clone();
+                config.url = tauri::WebviewUrl::App("prototype.html".into());
+                config.height = 760.0;
+                config
+            };
             let result =
-                tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])
-                    .and_then(|builder| {
-                        // Config dataDirectory is relative to AppData. The builder
-                        // is required for an absolute, fully isolated test profile.
-                        #[cfg(feature = "test-harness")]
-                        let builder = builder.data_directory(harness::root().join("webview"));
-                        builder.build()
-                    });
+                tauri::WebviewWindowBuilder::from_config(app, config).and_then(|builder| {
+                    // Config dataDirectory is relative to AppData. The builder
+                    // is required for an absolute, fully isolated test profile.
+                    #[cfg(feature = "test-harness")]
+                    let builder = builder.data_directory(harness::root().join("webview"));
+                    builder.build()
+                });
             if result.is_err() {
                 bridge::bootstrap_error(false);
                 // A failed first window may never run queued exit events.
@@ -118,6 +139,21 @@ fn main() {
                 // Even read-only native work must finish before the process exits.
                 if window.state::<NativeState>().busy.load(Ordering::Acquire) {
                     api.prevent_close();
+                }
+                #[cfg(feature = "ui-prototype")]
+                if !window
+                    .state::<NativeState>()
+                    .allow_close
+                    .load(Ordering::Acquire)
+                {
+                    api.prevent_close();
+                    #[cfg(feature = "test-harness")]
+                    harness::record_close(false);
+                    // Leave the native close callback before evaluating WebView code.
+                    let request_window = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = request_window.emit("setup-close-requested", ());
+                    });
                 }
             }
         })

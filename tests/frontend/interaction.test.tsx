@@ -1,0 +1,152 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import '@testing-library/jest-dom/vitest'
+import { SetupPage } from '../../frontend/src/features/setup/SetupPage'
+import { MockSetupService } from '../../frontend/src/platform/mock'
+import type { WindowHost } from '../../frontend/src/features/setup/contract'
+
+beforeEach(() => {
+  Object.defineProperty(navigator, 'language', { configurable: true, value: 'zh-CN' })
+  window.matchMedia = vi.fn().mockImplementation(query => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+  vi.stubGlobal('ResizeObserver', class { observe() {}; unobserve() {}; disconnect() {} })
+})
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+function mount(service = new MockSetupService('normal', 0)) {
+  let requestClose = () => {}
+  const host: WindowHost = { connect: vi.fn(async callback => { requestClose = callback; return () => {} }), ready: vi.fn(async () => {}), close: vi.fn(async () => {}) }
+  render(<SetupPage service={service} host={host} />)
+  return { service, host, requestClose: () => act(() => requestClose()), user: userEvent.setup() }
+}
+async function loaded() { await screen.findByRole('textbox', { name: '端口' }) }
+
+describe('settings prototype behavior', () => {
+  it('retains values and disabled silent mode across language and theme changes', async () => {
+    const { user } = mount(new MockSetupService('silent', 0)); await loaded()
+    expect(screen.getByRole('switch', { name: /启动时不显示/ })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('switch', { name: /启动时不显示/ })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '12345' } })
+    await user.click(screen.getByRole('button', { name: '切换为浅色' }))
+    expect(document.documentElement).toHaveClass('light')
+    await user.click(screen.getByRole('button', { name: '语言' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
+    expect(screen.getByRole('textbox', { name: 'Port' })).toHaveValue('12345')
+    expect(screen.getByRole('region', { name: 'Launch options preview' })).toHaveTextContent('--no-startup-window')
+  })
+  it('keeps newer manual input when an older port detection resolves', async () => {
+    const { service, user } = mount(); await loaded()
+    let resolve!: (port: string) => void
+    vi.spyOn(service, 'detectPort').mockImplementation(() => new Promise(done => { resolve = done }))
+    await user.click(screen.getByRole('button', { name: '检测端口' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
+    await act(async () => resolve('7897'))
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('24680')
+    expect(screen.queryByText(/已填入检测/)).not.toBeInTheDocument()
+  })
+  it('confirms dirty close and returns focus on Escape', async () => {
+    const { user, host } = mount(); await loaded()
+    await user.click(screen.getByRole('switch', { name: '创建桌面快捷方式' }))
+    const close = screen.getByRole('button', { name: '关闭' })
+    await user.click(close)
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '继续编辑' })).toHaveFocus())
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(close).toHaveFocus())
+    expect(host.close).not.toHaveBeenCalled()
+    await user.click(close)
+    await user.click(await screen.findByRole('button', { name: '放弃并关闭' }))
+    expect(host.close).toHaveBeenCalledOnce()
+  })
+  it('marks a new detected port as unsaved after a successful save', async () => {
+    const { user } = mount(); await loaded()
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    await screen.findByRole('button', { name: '已保存' })
+    await user.click(screen.getByRole('button', { name: '检测端口' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('7897'))
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('放弃并关闭')
+  })
+  it('dismisses an open help dialog on native close and restores its trigger', async () => {
+    const { user, host, requestClose } = mount(); await loaded()
+    const help = screen.getByRole('button', { name: '代理设置说明' })
+    await user.click(help)
+    await screen.findByRole('dialog')
+    requestClose()
+    await waitFor(() => expect(help).toHaveFocus())
+    expect(host.close).not.toHaveBeenCalled()
+  })
+  it('blocks repeated saving and native close while a save is pending', async () => {
+    const { service, user, host, requestClose } = mount(); await loaded()
+    let resolve!: (value: Awaited<ReturnType<typeof service.save>>) => void
+    const save = vi.spyOn(service, 'save').mockImplementation(() => new Promise(done => { resolve = done }))
+    const button = screen.getByRole('button', { name: '保存更改' })
+    await user.dblClick(button)
+    requestClose()
+    expect(save).toHaveBeenCalledOnce(); expect(host.close).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: '端口' })).toBeDisabled()
+    await act(async () => resolve({ commit: 'saved', message: 'setup.status.saved', tasks: [] }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '完成' })).toHaveFocus())
+    expect(screen.getByRole('button', { name: '已保存' })).toBeDisabled()
+    requestClose(); await waitFor(() => expect(host.close).toHaveBeenCalledOnce())
+  })
+  it('returns focus to help after saving and accepts Enter on dialog actions', async () => {
+    const { user } = mount(); await loaded()
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    await screen.findByRole('button', { name: '已保存' })
+    const help = screen.getByRole('button', { name: '代理设置说明' })
+    await user.click(help)
+    const dialog = await screen.findByRole('dialog', { name: '设置说明' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '知道了' })).toHaveFocus())
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(help).toHaveFocus())
+    expect(screen.getByRole('button', { name: '已保存' })).toBeDisabled()
+  })
+  it.each(['save-error', 'rollback', 'incomplete'] as const)('keeps inputs and distinguishes %s', async scenario => {
+    const { user } = mount(new MockSetupService(scenario, 0)); await loaded()
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '12345' } })
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    const expected = scenario === 'save-error' ? /尚未写入/ : scenario === 'rollback' ? /已恢复原配置/ : /回滚未完成/
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('12345')
+    if (scenario === 'incomplete') expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
+  })
+  it('does not report an unavailable save response as not written', async () => {
+    const { user, service } = mount(); await loaded()
+    vi.spyOn(service, 'save').mockRejectedValue(new Error('disconnected'))
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('保存结果无法确认')
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
+  })
+  it('keeps committed settings when follow-up tasks are still needed', async () => {
+    const { user, host } = mount(new MockSetupService('warnings', 0)); await loaded()
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('已保存')
+    await user.click(within(dialog).getByRole('button', { name: '知道了' }))
+    await user.click(screen.getByRole('button', { name: '完成' }))
+    expect(host.close).toHaveBeenCalledOnce()
+    expect(screen.queryByText('放弃并关闭')).not.toBeInTheDocument()
+  })
+  it('adds the original shortcut with arguments immediately without dirtying settings', async () => {
+    const { user, service, host } = mount(); await loaded()
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    await user.click(await screen.findByRole('button', { name: '添加程序…' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '选择' }))
+    await waitFor(() => expect(service.programs).toHaveLength(1))
+    expect(service.programs[0]).toEqual({ name: 'Notes.lnk', path: 'C:\\Apps\\Notes\\Notes.lnk', arguments: '--profile "Work notes"' })
+    expect(service.calls.save).toBe(0)
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    expect(host.close).toHaveBeenCalledOnce()
+  })
+  it('shows inline errors and blocks invalid submission', async () => {
+    const { service } = mount(); await loaded()
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '99999' } })
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('端口范围为 1–65535')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
+    expect(service.calls.save).toBe(0)
+  })
+})

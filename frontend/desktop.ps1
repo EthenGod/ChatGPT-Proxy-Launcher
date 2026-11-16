@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 param(
-    [ValidateSet('build', 'dev', 'check', 'test', 'harness')][string]$Command = 'build',
+    [ValidateSet('build', 'dev', 'check', 'test', 'harness', 'prototype')][string]$Command = 'build',
     [string]$RustBin = $env:CHATGPT_RUST_BIN
 )
 $ErrorActionPreference = 'Stop'
@@ -44,9 +44,10 @@ try {
         } else {
             $arguments = @('exec', '--', 'tauri', 'build', '--no-bundle', '--config', $configFile)
             if ($Command -eq 'harness') { $arguments += @('--features', 'test-harness') }
+            if ($Command -eq 'prototype') { $arguments += @('--features', 'ui-prototype') }
             $arguments += @('--', '--locked')
             & npm.cmd @arguments; Check-Exit 'Tauri build'
-            $directory = Join-Path $projectRoot $(if ($Command -eq 'harness') { 'work\ui-stage1-test' } else { 'work\ui-stage1' })
+            $directory = Join-Path $projectRoot $(if ($Command -eq 'prototype') { 'work\ui-prototype' } elseif ($Command -eq 'harness') { 'work\ui-stage1-test' } else { 'work\ui-stage1' })
             [IO.Directory]::CreateDirectory($directory) | Out-Null
             Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release\ChatGPTLauncherSetup.exe') -Destination $directory
             $metadata = @{

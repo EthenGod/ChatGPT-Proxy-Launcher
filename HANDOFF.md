@@ -2,13 +2,17 @@
 
 ## 配置器 UI 重构
 
-- `refactor/ui` 分阶段迁移到 React、TypeScript 和 Tauri 2。第 1 阶段已完成只读骨架和兼容验收，当前暂停，等待用户确认第 2 阶段。详细边界和验证见 `docs/ui-refactor.md`。默认 `build.cmd` 和 `release.cmd` 仍使用旧 GUI。
+- `refactor/ui` 分阶段迁移到 React、TypeScript 和 Tauri 2。第 1 阶段及原生兼容补充已完成；第 2 阶段已实现完整交互原型，当前暂停等待视觉确认。未经确认不接入第 3 阶段真实功能。详细边界和验证见 `docs/ui-refactor.md`。默认 `build.cmd` 和 `release.cmd` 仍使用旧 GUI。
 - `frontend/desktop.ps1` 是新入口。可用 `-RustBin` 指定已有 Rust MSVC 工具链。缓存、补充工具和测试产物放在 `work/`，不改系统默认工具链。需要 Cargo、Clippy 和 rustfmt；只有 Cargo 的精简工具链不足以运行完整检查。
 - C++ 结果由 C++ 释放。Rust 的作用域对象负责调用释放函数。原始后台命令以 UTF-16 直接交给原解析器，必须在 WebView 检查和窗口初始化之前分流。普通 EXE 不接受测试路径环境变量；`test-harness` 产物必须单独保存在 `work/ui-stage1-test/`。
 - Tauri 生成窗口图标和版本资源，追加编号 101 的启动器载荷和 102 的界面能力信息，不整体链接旧 `SetupResources.rc`。资源编译器会改变 manifest 的空白，验收时按 XML 内容核对；启动器载荷必须逐字节匹配该次构建。
 - 原生 GUI 通过 `RunNativeSetup` 静态链接进同一个 Tauri EXE。`--compatibility` 只接受单独使用，在 Tauri 初始化前分流；缺少 WebView2 时直接运行 EXE 也回退到兼容界面。旧原生构建保留独立入口。隔离测试入口锁住编辑、偏好写入、检测和系统操作，不能把测试包当正常配置器使用。
 - PowerShell 读取资源 102 判断是否需要 WebView2，不能按版本猜测或执行新参数探测旧 EXE。缺失时询问安装、兼容界面或取消。只有明确选择安装才下载微软安装器；校验有效微软签名，并保持文件只读锁直到启动。安装结束需重新检测运行库。后台调用跳过全部 UI 检测和安装流程。测试替换注册表读取、下载、安装和启动操作，不安装真实运行库。
-- 兼容补充已通过 C++ 回归、三语布局、Windows PowerShell 5.1/7 流程测试和隔离桌面分流验证。缺失运行库用进程环境模拟，尚未实际安装 WebView2。完成后按用户要求暂停，不自动进入第 2 阶段。
+- 兼容补充已通过 C++ 回归、三语布局、Windows PowerShell 5.1/7 流程测试和隔离桌面分流验证。缺失运行库用进程环境模拟，尚未实际安装 WebView2。
+- 第 2 阶段用 `frontend/desktop.ps1 -Command prototype` 构建，用 `frontend/preview.ps1` 打开隔离桌面预览。原型 feature 强制包含 `test-harness`；普通 Tauri 入口仍是只读页。模拟设置仅在内存中，顶部切换状态会重置演示输入，目录与程序选择也是样例。正式参数校验、保存和选择器仍须复用 C++ 原实现。
+- 原型关闭事件通过 Tauri 转交 React；JS 监听完成后才显示窗口。保存进行时不关闭，未保存时确认。关闭确认与其他弹窗必须恢复原焦点；模态窗打开期间再次点标题栏关闭，只收起当前弹窗。端口检测用输入修订号丢弃旧结果，保存后再次检测也必须清除已保存状态。
+- Tauri 的关闭命令使用 `async fn`，原生关闭回调只排队通知页面，避开 WebView2 同步回调。验收要同时确认窗口消失和整个所属进程树退出。标题栏测试发送 `WM_SYSCOMMAND/SC_CLOSE`，核对窗口所属进程及关闭请求、确认次数；不能只根据 `CloseMainWindow()` 返回 true 判断消息已送达。仅用调试接口观察 DOM 焦点不能证明原生键盘焦点正确。弹窗内容与开关状态分开保存，避免退出动画期间跳成另一条提示。
+- 前端测试放在根目录 `tests/frontend/`，Vite 和 TypeScript 须显式从 `frontend/node_modules` 解析 React 和 Testing Library，避免重复 React 或测试目录找不到依赖。Rust 内嵌资源测试同时检查两个 HTML 入口。桌面生命周期检查在 `tests/ui-prototype-tests.ps1`；调试端口只对该脚本的显式调试会话开放。
 - Windows 的 `canonicalize()` 会生成带 `\\?\` 前缀的路径，不能直接传给 MSVC 源文件参数或现有原生路径协议。C++ 源码路径从 Cargo 工程位置取得，不先做这种转换。隔离 WebView 数据目录通过窗口 builder 指定；不要靠运行时修改 Context 配置替换已经准备好的窗口参数。
 - 每次桌面构建使用新的前端资源目录，并通过临时 Tauri 配置指定该目录。`frontendDist` 必须使用相对 `src-tauri` 的路径，盘符开头的绝对路径会被解析为 URL，导致未内嵌页面。每次构建检查首页资源。这样不会内嵌旧 JS/CSS，也不需要批量清理。旧构建和测试数据保留在 `work/`。EXE 的载荷哈希写入旁边的本机构建记录，不进入源码包。
 - 实际 WebView2 窗口测试需要正常桌面会话。受限沙箱可能导致窗口初始化失败，不能据此认定普通用户环境不可用。初始化失败时显示原生提示后直接退出；尚未创建窗口时，排队的退出事件可能无法执行。
