@@ -457,7 +457,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     result = EnsureDirectory(directory); if (!result) return result;
     result = EnsureDirectory(Parent(paths.settingsLink)); if (!result) return result;
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
-    if (options.desktop) { result = EnsureDirectory(Parent(paths.desktopLink)); if (!result) return result; }
+    if (options.desktop) { result = EnsureDirectory(desktopDirectory); if (!result) return result; }
     if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
     bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false, discoveryChanged = false;
     bool legacyStartupRemoved = false, legacyDesktopRemoved = false;
@@ -467,7 +467,8 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         constexpr UINT flags = SHCNF_PATHW | SHCNF_FLUSHNOWAIT;
         if (committed) {
             if (desktopChanged) {
-                const LONG event = !options.desktop ? SHCNE_DELETE : oldDesktop.exists ? SHCNE_UPDATEITEM : SHCNE_CREATE;
+                LONG event = SHCNE_DELETE;
+                if (options.desktop) event = oldDesktop.exists ? SHCNE_UPDATEITEM : SHCNE_CREATE;
                 SHChangeNotify(event, flags, paths.desktopLink.c_str(), nullptr);
             }
             if (legacyDesktopRemoved) SHChangeNotify(SHCNE_DELETE, flags, paths.legacyDesktopLink.c_str(), nullptr);

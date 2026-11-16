@@ -2,5 +2,5 @@
 #pragma once
 
 // Shared by both resources. Keep Setup.manifest and Launcher.manifest in sync.
-#define APP_VERSION_NUMBER 1,1,2,0
-#define APP_VERSION_TEXT "1.1.2"
+#define APP_VERSION_NUMBER 1,1,3,0
+#define APP_VERSION_TEXT "1.1.3"

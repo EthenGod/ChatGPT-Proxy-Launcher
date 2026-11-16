@@ -588,20 +588,29 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         REQUIRE(ReadFileBytes(paths.settingsLink, file) && file.data == settings.data);
         REQUIRE(!Exists(Join(changed.directory, LauncherName)));
         REQUIRE(WriteAtomic(paths.codexEnvFile, envBefore.data));
-        // With persistent allocation failure, still remove a newly written EXE and return an honest state.
-        moveCalls = 0; exhaustMemoryAfterMove = 2;
-        Result exhausted; bool escaped = false;
-        {
-            memory_fault::Scope fault;
-            try { exhausted = Apply(paths, changed, payload, target); }
-            catch (...) { escaped = true; }
+        // Persistent OOM must still remove the new EXE and notify any changed desktop directory.
+        for (const unsigned step : {2u, 4u}) {
+            moveCalls = 0; exhaustMemoryAfterMove = step; shellNoticeCount = 0;
+            Result exhausted; bool escaped = false;
+            {
+                memory_fault::Scope fault;
+                try { exhausted = Apply(paths, changed, payload, target); }
+                catch (...) { escaped = true; }
+            }
+            exhaustMemoryAfterMove = 0;
+            REQUIRE(!escaped && !exhausted && exhausted.code == ERROR_NOT_ENOUGH_MEMORY);
+            REQUIRE(exhausted.commit == CommitState::Incomplete && !exhausted.message.empty() && target.empty());
+            REQUIRE(!Exists(Join(changed.directory, LauncherName)));
+            if (step == 4) REQUIRE(shellNoticeCount == 1 && NoticeIs(0, SHCNE_UPDATEDIR, Parent(paths.desktopLink)));
+            else {
+                REQUIRE(shellNoticeCount == 0);
+                REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
+                REQUIRE(ReadFileBytes(paths.desktopLink, file) && file.data == desktop.data);
+            }
+            REQUIRE(WriteAtomic(paths.settingsLink, settings.data));
+            REQUIRE(WriteAtomic(paths.startupLink, startup.data));
+            REQUIRE(WriteAtomic(paths.desktopLink, desktop.data));
         }
-        exhaustMemoryAfterMove = 0;
-        REQUIRE(!escaped && !exhausted && exhausted.code == ERROR_NOT_ENOUGH_MEMORY);
-        REQUIRE(exhausted.commit == CommitState::Incomplete && !exhausted.message.empty() && target.empty());
-        REQUIRE(!Exists(Join(changed.directory, LauncherName)));
-        REQUIRE(ReadFileBytes(paths.startupLink, file) && file.data == startup.data);
-        REQUIRE(WriteAtomic(paths.settingsLink, settings.data));
         puts("PASS deployment exceptions: all commit boundaries, independent rollback and persistent allocation failure");
         // A read lock permits preflight but blocks atomic replacement: all link changes roll back.
         changed.directory = options.directory;
