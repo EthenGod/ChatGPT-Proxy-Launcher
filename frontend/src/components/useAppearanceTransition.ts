@@ -11,6 +11,7 @@ function separateLanguageLayers() {
   const previous = elements.map(element => ({ element, text: element.textContent, values: properties.map(property => [property, element.style.getPropertyValue(property), element.style.getPropertyPriority(property)] as const), transition: [element.style.getPropertyValue('transition'), element.style.getPropertyPriority('transition')] as const, paint: getComputedStyle(element) }))
   const decorations = document.createElement('style')
   document.head.append(decorations)
+  const surfaces: HTMLElement[] = []
   const gutters = [...document.querySelectorAll<HTMLElement>('.scroll-content')].map(element => ({
     element, value: element.style.getPropertyValue('margin-inline-end'), priority: element.style.getPropertyPriority('margin-inline-end'),
   }))
@@ -39,12 +40,18 @@ function separateLanguageLayers() {
     rule.style.backgroundColor = background
     rule.style.borderRadius = radius
     rule.style.boxShadow = [...borders, ...(shadow === 'none' ? [] : [shadow])].join(', ') || 'none'
-    element.style.setProperty('background-color', 'transparent', 'important')
-    element.style.setProperty('border-color', 'transparent', 'important')
-    element.style.setProperty('box-shadow', 'none', 'important')
+    surfaces.push(element)
   })
   return {
     settle() {
+      // Keep the live page painted until the old snapshot has been captured.
+      // This callback runs with rendering suspended, so only the new snapshots
+      // lose their paint; the animated geometry layers replace it without a gap.
+      surfaces.forEach(element => {
+        element.style.setProperty('background-color', 'transparent', 'important')
+        element.style.setProperty('border-color', 'transparent', 'important')
+        element.style.setProperty('box-shadow', 'none', 'important')
+      })
       previous.forEach(({ element, text: before }) => {
         if (element.matches(text) && element.textContent === before) element.style.setProperty('view-transition-class', 'language-static')
       })

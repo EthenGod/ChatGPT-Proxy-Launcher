@@ -75,8 +75,12 @@ describe('appearance changes', () => {
     const update = vi.fn(() => { card.firstElementChild!.textContent = 'After' })
     act(() => result.current('language', update))
     if (outcome !== 'throw') {
-      expect(card.style.backgroundColor).toBe('transparent')
+      // Preparing snapshot names must never expose an unpainted live frame.
+      expect(card.style.backgroundColor).toBe('rgb(20, 20, 20)')
+      expect(card.style.borderColor).toBe('rgb(60, 60, 60)')
       act(() => commits[0]!())
+      expect(card.style.backgroundColor).toBe('transparent')
+      expect(card.style.borderColor).toBe('transparent')
       if (outcome === 'unmount') unmount()
       else await act(async () => finishes[0]!())
     }
