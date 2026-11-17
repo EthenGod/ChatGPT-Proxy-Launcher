@@ -48,9 +48,40 @@ describe('settings prototype behavior', () => {
     expect(host.setTheme).toHaveBeenLastCalledWith(false)
     await user.click(screen.getByRole('button', { name: '语言' }))
     await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
-    expect(screen.getByRole('textbox', { name: 'Port' })).toHaveValue('12345')
+    expect(await screen.findByRole('textbox', { name: 'Port' })).toHaveValue('12345')
     expect(screen.getByRole('region', { name: 'Launch arguments' })).toHaveTextContent('--no-startup-window')
     expect(host.setTheme).toHaveBeenCalledTimes(2)
+  })
+  it('keeps option text passive while switches retain their names and keyboard behavior', async () => {
+    const { user, service } = mount(); await loaded()
+    for (const name of ['登录时启动', '桌面快捷方式', '应用于 Codex']) {
+      const toggle = screen.getByRole('switch', { name })
+      const checked = toggle.getAttribute('aria-checked')
+      await user.click(screen.getByText(name, { selector: '.setting-label > span' }))
+      expect(toggle).toHaveAttribute('aria-checked', checked)
+      await user.click(toggle)
+      expect(toggle).toHaveAttribute('aria-checked', checked === 'true' ? 'false' : 'true')
+      await user.keyboard(' ')
+      expect(toggle).toHaveAttribute('aria-checked', checked)
+    }
+    await user.click(screen.getByRole('heading', { name: '代理' }))
+    expect(screen.getByRole('switch', { name: '使用指定代理' })).toHaveAttribute('aria-checked', 'true')
+    expect(service.calls.detect).toBe(0)
+  })
+  it('starts the language snapshot after the menu has closed', async () => {
+    const popupAtSnapshot: boolean[] = []
+    Object.defineProperty(document, 'startViewTransition', { configurable: true, value: (commit: () => void) => {
+      popupAtSnapshot.push(!!document.querySelector('.menu-popup'))
+      const ready = Promise.resolve().then(commit)
+      return { ready, finished: ready, skipTransition() {} }
+    } })
+    try {
+      const { user } = mount(); await loaded()
+      await user.click(screen.getByRole('button', { name: '语言' }))
+      await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
+      await screen.findByRole('textbox', { name: 'Port' })
+      expect(popupAtSnapshot).toEqual([false])
+    } finally { Reflect.deleteProperty(document, 'startViewTransition') }
   })
   it('preserves hidden fields and detects once when the proxy is reopened from the keyboard', async () => {
     const { user, service } = mount(); await loaded()

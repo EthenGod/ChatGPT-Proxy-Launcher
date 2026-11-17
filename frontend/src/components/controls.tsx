@@ -1,4 +1,4 @@
-import { Children, useId, useRef, type ComponentProps, type ReactElement, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
+import { Children, useEffect, useId, useRef, type ComponentProps, type ReactElement, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
 import { Button as BaseButton } from '@base-ui/react/button'
 import { Switch } from '@base-ui/react/switch'
 import { Dialog } from '@base-ui/react/dialog'
@@ -21,11 +21,11 @@ export function Hint({ label, children }: { label: string; children: ReactElemen
   </Tooltip.Root>
 }
 
-export function SwitchControl({ id, label, describedBy, controls, checked, disabled, onChange }: {
-  id?: string; label?: string; describedBy?: string; controls?: string;
+export function SwitchControl({ id, label, labelledBy, describedBy, controls, checked, disabled, onChange }: {
+  id?: string; label?: string; labelledBy?: string; describedBy?: string; controls?: string;
   checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void
 }) {
-  return <Switch.Root id={id} aria-label={label} aria-describedby={describedBy} aria-controls={controls}
+  return <Switch.Root id={id} aria-label={label} aria-labelledby={labelledBy} aria-describedby={describedBy} aria-controls={controls}
     checked={checked} disabled={disabled} onCheckedChange={onChange} className="switch">
     <Switch.Thumb className="switch-thumb" />
   </Switch.Root>
@@ -35,8 +35,8 @@ export function Toggle({ label, checked, disabled, onChange, help, badge }: {
 }) {
   const id = useId()
   return <div className="setting-row">
-    <div className="setting-label"><label htmlFor={id}>{label}</label>{help}{badge && <span id={`${id}-badge`} className="setting-badge"><span data-motion-text>{badge}</span></span>}</div>
-    <SwitchControl id={id} describedBy={badge ? `${id}-badge` : undefined} checked={checked} disabled={disabled} onChange={onChange} />
+    <div className="setting-label"><span id={`${id}-label`} data-motion-text>{label}</span>{help}{badge && <span id={`${id}-badge`} className="setting-badge"><span data-motion-text>{badge}</span></span>}</div>
+    <SwitchControl id={id} labelledBy={`${id}-label`} describedBy={badge ? `${id}-badge` : undefined} checked={checked} disabled={disabled} onChange={onChange} />
   </div>
 }
 export function TextField({ label, error, errorDescriptionId, suffix, labelActions, className = '', ...props }: InputHTMLAttributes<HTMLInputElement> & {
@@ -50,17 +50,32 @@ export function TextField({ label, error, errorDescriptionId, suffix, labelActio
     {error && !errorDescriptionId && <span id={`${id}-error`} className="field-error">{error}</span>}
   </div>
 }
-export function ChoiceMenu({ label, value, items, onChange, disabled, icon, variant = 'default' }: {
+export function ChoiceMenu({ label, value, items, onChange, disabled, icon, variant = 'default', changeAfterClose = false }: {
   label: string; value: string; items: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void; disabled?: boolean; icon?: ReactNode; variant?: 'default' | 'icon' | 'quiet'
+  onChange: (value: string) => void; disabled?: boolean; icon?: ReactNode; variant?: 'default' | 'icon' | 'quiet'; changeAfterClose?: boolean
 }) {
-  return <Menu.Root>
+  const pendingChange = useRef<string | null>(null)
+  const changeFrame = useRef<number | null>(null)
+  useEffect(() => () => { if (changeFrame.current !== null) cancelAnimationFrame(changeFrame.current) }, [])
+  return <Menu.Root onOpenChangeComplete={open => {
+    // The completion callback precedes React's portal removal. Capture on the
+    // next frame, after closing and focus restoration have both committed.
+    if (!open && pendingChange.current !== null) {
+      const next = pendingChange.current
+      pendingChange.current = null
+      if (changeFrame.current !== null) cancelAnimationFrame(changeFrame.current)
+      changeFrame.current = requestAnimationFrame(() => { changeFrame.current = null; onChange(next) })
+    }
+  }}>
     <Hint label={label}><Menu.Trigger className={`menu-trigger ${variant === 'icon' ? 'icon-button' : 'control-button'} ${variant === 'quiet' ? 'quiet-button' : ''}`} disabled={disabled} aria-label={label}>
       {icon}{variant !== 'icon' && <><span data-motion-text>{items.find(item => item.value === value)?.label}</span><ChevronDown size={14} /></>}
     </Menu.Trigger></Hint>
     <Menu.Portal><Menu.Positioner sideOffset={6} align="end" className="menu-positioner">
       <Menu.Popup className="menu-popup">
-        <ScrollBox className="menu-scroll" tabIndex={-1} label={label}><Menu.RadioGroup value={value} onValueChange={onChange}>
+        <ScrollBox className="menu-scroll" tabIndex={-1} label={label}><Menu.RadioGroup value={value} onValueChange={next => {
+          if (changeAfterClose) pendingChange.current = next
+          else onChange(next)
+        }}>
           {items.map(item => <Menu.RadioItem className="menu-item" key={item.value} value={item.value} closeOnClick>
             <span>{item.label}</span><Menu.RadioItemIndicator><Check size={16} /></Menu.RadioItemIndicator>
           </Menu.RadioItem>)}

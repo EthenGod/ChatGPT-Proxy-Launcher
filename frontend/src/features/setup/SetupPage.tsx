@@ -299,7 +299,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     <ScrollBox className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main aria-busy={loading} />}>
       <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
         <span className="version-badge" aria-label={t('setup.version', { version: snapshot?.setupVersion ?? '1.1.3' })}>v{snapshot?.setupVersion ?? '1.1.3'}</span></div>
-        <div className="appearance-controls"><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} disabled={busy || loading || detecting}
+        <div className="appearance-controls"><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={busy || loading || detecting}
           items={[{ value: 'auto', label: t('setup.language.system') }, { value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }, { value: 'ja-JP', label: '日本語' }]} icon={<Globe2 size={16} />} variant="icon" />
           <Hint label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}><Button className="icon-button" onClick={() => {
             const next = !requestedDark.current; requestedDark.current = next
@@ -318,7 +318,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
             <Toggle label={t('ui.silent')} badge={t('ui.unavailable')} checked={options.silent} disabled onChange={() => {}} />
           </div></section>
           <section className="settings-section" aria-labelledby="proxy-title"><Collapsible.Root open={options.proxy}>
-            <div className="section-heading"><h2 id="proxy-title"><label htmlFor="proxy-enabled">{t('ui.proxy')}</label></h2>{helpButton('ui.help.proxy', t('setup.dialog.proxy'))}
+            <div className="section-heading"><h2 id="proxy-title">{t('ui.proxy')}</h2>{helpButton('ui.help.proxy', t('setup.dialog.proxy'))}
               <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls={options.proxy ? 'proxy-details' : undefined} checked={options.proxy} disabled={locked} onChange={changeProxy} /></div>
             <Collapsible.Panel id="proxy-details" className="disclosure-panel">
               <div className="settings-card proxy-card">
