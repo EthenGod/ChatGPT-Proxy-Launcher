@@ -80,7 +80,8 @@ button svg { flex-shrink: 0; }
 .section-heading h2, .programs-heading h2 { margin: 0; }
 .section-heading > .switch { margin-left: auto; }
 .settings-card { border: 1px solid var(--gray-6); border-radius: var(--radius-surface); background: var(--gray-2); }
-.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; min-height: 48px; }
+.settings-card:has(> .setting-row) { padding-block: 4px; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 16px; min-height: 40px; }
 .setting-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; line-height: 20px; }
 .setting-row:has(.switch[data-disabled]) .setting-label > [data-motion-text] { color: var(--gray-11); }
 .setting-badge { margin-left: 4px; padding: 1px 6px; font-size: 12px; line-height: 18px; border-radius: var(--radius-small); background: var(--gray-3); color: var(--gray-11); }
@@ -89,7 +90,7 @@ button svg { flex-shrink: 0; }
 .switch[data-disabled] { opacity: .45; cursor: default; }
 .switch-thumb { width: 16px; height: 16px; background: white; border-radius: 8px; box-shadow: 0 1px 2px #0003; transition: transform var(--motion-fast) var(--motion-space); }
 .switch[data-checked] .switch-thumb { transform: translateX(14px); }
-.connection-fields { display: grid; grid-template-columns: 1.5fr 1.25fr .8fr; gap: 12px; padding: 12px 16px 8px; }
+.connection-fields { display: grid; grid-template-columns: 1.5fr 1.25fr .8fr; gap: 12px; padding: 8px 16px 6px; }
 .field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .field-heading { display: flex; align-items: center; gap: 4px; min-height: 18px; }
 .field-heading label, .field > span:first-child { font-size: 12px; line-height: 18px; color: var(--gray-11); }
@@ -123,7 +124,7 @@ button svg { flex-shrink: 0; }
 .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; margin-bottom: 8px; }
 .preview-heading h2 { margin: 0; }
 .preview-heading .text-button { min-height: 20px; padding-block: 0; }
-.advanced-section { margin-top: 12px; }
+.advanced-section { margin-top: 8px; }
 .advanced-trigger { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; background: none; border: 0; border-radius: var(--radius-control); font-size: 14px; font-weight: 600; color: var(--gray-11); cursor: pointer; transition: color var(--motion-fast) ease-out; }
 .advanced-trigger:hover { color: var(--gray-12); }
 .advanced-trigger svg { transition: transform var(--motion-fast) ease-out; }
@@ -133,9 +134,9 @@ button svg { flex-shrink: 0; }
 .disclosure-panel[data-ending-style] { transition-duration: var(--motion-exit); transition-timing-function: ease-in; }
 .advanced-card { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .field-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.programs-group { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
+.programs-group { display: flex; flex-direction: column; gap: 8px; }
 .program-list { padding: 0; margin: 0; list-style: none; }
-.program-list li { padding: 8px 0; display: flex; align-items: center; gap: 8px; }
+.program-list li { padding: 6px 0; display: flex; align-items: center; gap: 8px; }
 .program-list li span { flex: 1; overflow-wrap: anywhere; }
 .program-list li > svg:last-child { color: var(--green-11); }
 .settings-footer { position: relative; padding: 16px 24px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; background: var(--gray-2); border-top: 1px solid var(--gray-6); }
@@ -231,11 +232,18 @@ button svg { flex-shrink: 0; }
 ::view-transition-old(*) { animation-name: appearance-out; }
 ::view-transition-new(*) { animation-name: appearance-in; }
 /* Geometry moves once, at full opacity. Only the extracted text layers crossfade. */
+:root[data-appearance-transition=language] .scroll-content,
+:root[data-appearance-transition=language] .disclosure-panel,
+:root[data-appearance-transition=language] [style*="view-transition-name"] { transition: none !important; }
+:root[data-appearance-transition=language] .disclosure-panel { height: auto; }
+:root[data-appearance-transition=language]::view-transition-group(*) { animation-duration: var(--motion-enter); animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
 :root[data-appearance-transition=language]::view-transition-old(*) { animation: none; opacity: 0; }
 :root[data-appearance-transition=language]::view-transition-new(*) { animation: none; opacity: 1; mix-blend-mode: normal; height: 100%; }
-:root[data-appearance-transition=language]::view-transition-old(.language-text) { opacity: 1; animation: appearance-out var(--motion-exit) ease-in both; }
-:root[data-appearance-transition=language]::view-transition-new(.language-text) { animation: appearance-in var(--motion-exit) ease-out both; }
-:root[data-appearance-transition=language]::view-transition-old(.language-text), :root[data-appearance-transition=language]::view-transition-new(.language-text) { height: 100%; object-fit: none; object-position: left center; mix-blend-mode: plus-lighter; }
+:root[data-appearance-transition=language]::view-transition-old(.language-text) { opacity: 1; animation: appearance-out 90ms ease-in both; }
+:root[data-appearance-transition=language]::view-transition-new(.language-text) { animation: appearance-in 160ms ease-out 90ms both; }
+:root[data-appearance-transition=language]::view-transition-old(.language-text), :root[data-appearance-transition=language]::view-transition-new(.language-text) { width: auto; height: auto; max-width: none; object-fit: none; object-position: left top; mix-blend-mode: normal; }
+:root[data-appearance-transition=language]::view-transition-new(.language-static) { width: auto; height: auto; object-fit: none; object-position: left top; }
+:root[data-appearance-transition=language]::view-transition-new(.language-input) { object-fit: none; object-position: left center; }
 @keyframes appearance-out { to { opacity: 0; } }
 @keyframes appearance-in { from { opacity: 0; } }
 @media (max-width: 540px) {

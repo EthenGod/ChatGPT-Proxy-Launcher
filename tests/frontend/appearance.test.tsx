@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, render, renderHook } from '@testing-library/react'
 import { useAppearanceTransition } from '../../frontend/src/components/useAppearanceTransition'
 
 beforeEach(() => { window.matchMedia = vi.fn().mockReturnValue({ matches: false }) })
@@ -8,15 +8,17 @@ afterEach(() => { cleanup(); Reflect.deleteProperty(document, 'startViewTransiti
 
 function transitions() {
   const commits: Array<() => void> = []
+  const finishes: Array<() => void> = []
   const skip = vi.fn()
   const start = vi.fn((commit: () => void) => {
     commits.push(commit)
     let finish!: () => void
     const finished = new Promise<void>(resolve => { finish = resolve })
+    finishes.push(finish)
     return { ready: Promise.resolve(), finished, skipTransition: () => { skip(); finish() } }
   })
   Object.defineProperty(document, 'startViewTransition', { configurable: true, value: start })
-  return { commits, skip, start }
+  return { commits, finishes, skip, start }
 }
 
 describe('appearance changes', () => {
@@ -25,6 +27,7 @@ describe('appearance changes', () => {
     const { result } = renderHook(useAppearanceTransition)
     const theme = vi.fn(), english = vi.fn(), japanese = vi.fn()
     act(() => { result.current('theme', theme); result.current('language', english); result.current('language', japanese) })
+    expect(document.documentElement.dataset.appearanceTransition).toBe('theme')
     act(() => commits.forEach(commit => commit()))
     expect(theme).toHaveBeenCalledOnce()
     expect(japanese).toHaveBeenCalledOnce()
@@ -53,6 +56,28 @@ describe('appearance changes', () => {
     act(() => commits.forEach(commit => commit()))
     expect(update).not.toHaveBeenCalled()
     expect(skip).toHaveBeenCalledOnce()
+    expect(document.documentElement.dataset.appearanceTransition).toBeUndefined()
+  })
+  it.each(['finish', 'unmount', 'throw'])('restores surface styling and temporary rules after %s', async outcome => {
+    const { container } = render(<div className="settings-card" style={{ opacity: 1, backgroundColor: 'rgb(20, 20, 20)', border: '1px solid rgb(60, 60, 60)', borderRadius: 12 }}>
+      <span data-motion-text>Before</span>
+    </div>)
+    const card = container.firstElementChild as HTMLElement
+    const original = card.style.cssText, sheets = document.styleSheets.length
+    const { commits, finishes, start } = transitions()
+    if (outcome === 'throw') start.mockImplementationOnce(() => { throw new Error('snapshot unavailable') })
+    const { result, unmount } = renderHook(useAppearanceTransition)
+    const update = vi.fn(() => { card.firstElementChild!.textContent = 'After' })
+    act(() => result.current('language', update))
+    if (outcome !== 'throw') {
+      expect(card.style.backgroundColor).toBe('transparent')
+      act(() => commits[0]!())
+      if (outcome === 'unmount') unmount()
+      else await act(async () => finishes[0]!())
+    }
+    expect(update).toHaveBeenCalledOnce()
+    expect(card.style.cssText).toBe(original)
+    expect(document.styleSheets).toHaveLength(sheets)
     expect(document.documentElement.dataset.appearanceTransition).toBeUndefined()
   })
 })
