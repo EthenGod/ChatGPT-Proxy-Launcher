@@ -47,7 +47,7 @@ export class MockSetupService implements SetupService {
     const t = translator(resolveLanguage(document.documentElement.lang || 'auto'))
     const found = ['127.0.0.1', 'localhost'].includes(host) && protocol !== 'https'
     return { port: found ? '7897' : null, source: found ? t('ui.detect.fixture') : '',
-      message: found ? '' : t(protocol === 'https' ? 'proxy.httpsmanual' : 'proxy.localonly') }
+      message: found ? t('proxy.detected', { source: t('ui.detect.fixture') }) : t(protocol === 'https' ? 'proxy.httpsmanual' : 'proxy.localonly') }
   }
   async save(options: SetupOptions): Promise<SaveResult> {
     this.calls.save++

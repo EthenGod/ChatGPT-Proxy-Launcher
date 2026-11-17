@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 
 // Text gets its own snapshot, leaving the surrounding surface opaque while it moves.
 function separateLanguageLayers() {
-  const text = '[data-motion-text], h1, h2, label, .dialog-title, .dialog-description, .dialog-body > p, .followup p, .field-error, .deployment-status > span:last-child, .footer-status > span, .menu-item > span, .argument-preview, .notice-title, .notice-description, .error-heading code, .error-guide p, .error-guide summary'
+  const text = '[data-motion-text], h1, h2, label, .dialog-title, .dialog-description, .dialog-body > p, .followup p, .field-error, .deployment-status > span:last-child, .footer-status > span, .menu-item > span, .argument-preview, .notice-title, .notice-description, .notice-detail > p, .error-heading code, .error-guide p, .error-guide summary'
   const boxes = '.settings-header, .settings-card, .setting-row, .argument-scroll, .advanced-section, .programs-group, .settings-footer, .prototype-bar, .button, .control-button, .icon-button, .text-button, .input-action, .input-wrap input, .segmented, .segment, .switch, .version-badge, .setting-badge, .dialog, .menu-popup, .notice-toast, .error-guide'
   const elements = [...document.querySelectorAll<HTMLElement>(`${boxes}, ${text}`)]
   const previous = elements.map(element => [element, element.style.getPropertyValue('view-transition-name'), element.style.getPropertyValue('view-transition-class')] as const)

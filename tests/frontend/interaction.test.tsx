@@ -7,6 +7,7 @@ import { SetupPage } from '../../frontend/src/features/setup/SetupPage'
 import { MockSetupService } from '../../frontend/src/platform/mock'
 import type { WindowHost } from '../../frontend/src/features/setup/contract'
 import { translator } from '../../frontend/src/i18n'
+import { NoticeToasts, createNoticeManager } from '../../frontend/src/components/NoticeToasts'
 
 beforeEach(() => {
   Object.defineProperty(navigator, 'language', { configurable: true, value: 'zh-CN' })
@@ -79,6 +80,41 @@ describe('settings prototype behavior', () => {
     await act(async () => resolve({port: '7897', source: 'Demo', message: ''}))
     expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('24680')
     expect(screen.queryByText(/已填入检测/)).not.toBeInTheDocument()
+  })
+  it('dismisses a notice separately and opens full detection details with the keyboard', async () => {
+    const { user } = mount(); await loaded()
+    await user.click(screen.getByRole('button', { name: '检测端口' }))
+    await user.hover(await screen.findByRole('button', { name: /查看详情: 已填入端口/ }))
+    await user.click(await screen.findByRole('button', { name: '关闭提示' }))
+    expect(screen.queryByRole('dialog', { name: '临时提示' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '检测端口' }))
+    const open = await screen.findByRole('button', { name: /查看详情: 已填入端口/ })
+    act(() => open.focus())
+    await user.keyboard('{Enter}')
+    const dialog = await screen.findByRole('dialog', { name: '临时提示' })
+    expect(dialog).toHaveTextContent('已填入端口 7897')
+    expect(dialog).toHaveTextContent('演示数据')
+    expect(dialog).toHaveTextContent('检测不代表联网已成功')
+    expect(screen.queryByRole('button', { name: '关闭提示' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.getByRole('button', { name: '关闭' })).toHaveFocus())
+  })
+  it('opens structured error details from the whole notice without losing the persistent error', async () => {
+    const { service, user } = mount(); await loaded()
+    vi.spyOn(service, 'detectPort').mockRejectedValue({ nativeError: 5, message: 'Read access denied' })
+    await user.click(screen.getByRole('button', { name: '检测端口' }))
+    await user.click(await screen.findByRole('button', { name: /查看详情: 检测失败/ }))
+    const dialog = await screen.findByRole('dialog', { name: '临时提示' })
+    const t = translator('zh-CN')
+    expect(dialog.querySelector('code')).toHaveTextContent('5')
+    expect(dialog).toHaveTextContent(t('ui.error.access.meaning'))
+    expect(dialog).toHaveTextContent(t('ui.error.access.explanation'))
+    expect(dialog).toHaveTextContent(t('ui.error.access.action'))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.getByRole('button', { name: '关闭' })).toHaveFocus())
+    expect(screen.getByRole('status')).toHaveTextContent('检测失败，请手动填写端口')
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    expect(await screen.findByRole('dialog', { name: t('ui.error.title') })).toHaveTextContent('5')
   })
   it('confirms dirty close and returns focus on Escape', async () => {
     const { user, host } = mount(); await loaded()
@@ -200,6 +236,33 @@ describe('settings prototype behavior', () => {
   })
 })
 
+describe('notice reading time', () => {
+  it('pauses for hover and gives the full duration after each leave and replacement', async () => {
+    vi.useFakeTimers()
+    try {
+      const manager = createNoticeManager(), onClose = vi.fn()
+      render(<NoticeToasts manager={manager} t={translator('zh-CN')} onOpen={vi.fn()} />)
+      act(() => manager.add({ id: 'activity', onClose, data: { message: 'ui.detect.port', values: { port: '7897' } } }))
+      await act(async () => vi.advanceTimersByTimeAsync(2500))
+      const viewport = screen.getByRole('region', { name: '临时提示' })
+      fireEvent.mouseEnter(viewport)
+      await act(async () => vi.advanceTimersByTimeAsync(10000))
+      expect(onClose).not.toHaveBeenCalled()
+      fireEvent.mouseLeave(viewport)
+      await act(async () => vi.advanceTimersByTimeAsync(2500))
+      expect(onClose).not.toHaveBeenCalled()
+      fireEvent.mouseEnter(viewport)
+      act(() => manager.add({ id: 'activity', onClose, timeout: 5000, data: { message: 'ui.detect.failed' } }))
+      await act(async () => vi.advanceTimersByTimeAsync(10000))
+      expect(onClose).not.toHaveBeenCalled()
+      fireEvent.mouseLeave(viewport)
+      await act(async () => vi.advanceTimersByTimeAsync(4500))
+      expect(onClose).not.toHaveBeenCalled()
+      await act(async () => vi.advanceTimersByTimeAsync(501))
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally { cleanup(); vi.useRealTimers() }
+  })
+})
 
 describe('native settings behavior', () => {
   it('waits for current native validation and ignores an obsolete validation response', async () => {

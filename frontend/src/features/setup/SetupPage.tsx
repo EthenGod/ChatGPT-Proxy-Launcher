@@ -16,7 +16,7 @@ import { nativeIssue, type ErrorInfo } from './errors'
 import { portErrorKey, previewOptions, sameOptions } from './preview'
 import type { ProgramEntry, SaveResult, SetupService, WindowHost, Validation } from './contract'
 
-type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | null
+type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | 'notice' | null
 export function SetupPage({ service, host, scenarioControls, onLanguageChange }: {
   service: SetupService; host: WindowHost; scenarioControls?: React.ReactNode; onLanguageChange?: (language: string) => void
 }) {
@@ -30,6 +30,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const [loadError, setLoadError] = useState(false)
   const [error, setError] = useState<ErrorInfo | null>(null)
   const [noticeManager] = useState(createNoticeManager)
+  const [selectedNotice, setSelectedNotice] = useState<NoticeData | null>(null)
   const [preferenceWarnings, setPreferenceWarnings] = useState<MessageKey[]>([])
   const [selecting, setSelecting] = useState(false)
   const [nativeValidation, setNativeValidation] = useState<{ options: SetupOptions; value: Validation } | null>(null)
@@ -67,9 +68,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     : previewOptions(options) : null
   const locked = busy || loading || result?.commit === 'rollback-incomplete'
 
-  function notify(message: MessageKey, values: Record<string, string> = {}, detail: NoticeData['detail'] = '', type = 'info', problem?: ErrorInfo) {
+  function notify(message: MessageKey, values: Record<string, string> = {}, detail: NoticeData['detail'] = '', type = 'info', problem?: ErrorInfo, fullDetail?: NoticeData['fullDetail']) {
     noticeManager.add({ id: 'activity', type, timeout: problem ? 5000 : 3500,
-      data: { message, values, detail, error: problem } })
+      data: { message, values, detail, error: problem, fullDetail } })
   }
   function reportFailure(message: MessageKey, cause: unknown) {
     const problem = nativeIssue(cause)
@@ -186,7 +187,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       const entry = await service.selectProgram()
       if (alive.current && entry) {
         setPrograms(current => current.some(p => p.name === entry.name) ? current : [...current, entry])
-        notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success'); setError(null); setNotice(null)
+        notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success', undefined, entry.path); setError(null); setNotice(null)
       }
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
     finally {
@@ -216,7 +217,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       setError(null)
       notify(detection.port ? 'ui.detect.port' : 'ui.detect.empty', { port: detection.port ?? '' },
         detection.port && detection.source ? { message: 'ui.detect.source', values: { source: detection.source } } : detection.message,
-        detection.port ? 'success' : 'info')
+        detection.port ? 'success' : 'info', undefined, detection.message)
     } catch (cause) { if (alive.current && revision === detectRevision.current) reportFailure('ui.detect.failed', cause) }
     finally { if (alive.current && revision === detectRevision.current) setDetecting(false) }
   }
@@ -261,7 +262,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       await service.addProgram(entry)
       if (!alive.current) return
       setPrograms(current => current.some(p => p.path === entry.path) ? current : [...current, { ...entry }])
-      notify('setup.status.added', {}, '', 'success'); setDialogOpen(false)
+      notify('setup.status.added', {}, '', 'success', undefined, entry.path); setDialogOpen(false)
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setAdding(false) } }
   }
@@ -286,7 +287,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     : t(snapshot?.hasSettings ? 'setup.state.missing' : 'setup.state.absent')
   const discard = dialog === 'discard'
   const dialogTitle = t(discard ? 'setup.dialog.close' : dialog === 'help' ? 'ui.help.title' : dialog === 'directory' ? 'setup.dialog.directory'
-    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title' : saved ? 'ui.save.followup' : 'setup.error.saving')
+    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title'
+      : dialog === 'notice' ? 'ui.notice.label' : saved ? 'ui.save.followup' : 'setup.error.saving')
+  const noticeDetail = selectedNotice?.fullDetail || selectedNotice?.detail
 
   if (closed) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1>{t('ui.closed')}</h1><p>{t('ui.prototype.description')}</p>
     <Button className="button primary-button" onClick={() => { setClosed(false); void load() }}>{t('ui.reopen')}</Button></div>
@@ -362,11 +365,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       </div></ScrollBox>
       <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
         {!saved && <Button ref={saveButton} className="button primary-button" disabled={locked || !validation?.valid || loadError} onClick={() => void save()}>{busy && !adding && !selecting && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding && !selecting ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
-      <NoticeToasts manager={noticeManager} t={t} onError={problem => { setError(problem); openDialog('error'); focusReturn.current = doneButton.current }} />
+      <NoticeToasts manager={noticeManager} t={t} onOpen={item => { setSelectedNotice(item); openDialog('notice'); focusReturn.current = doneButton.current }} />
     </footer>
     <Modal open={dialogOpen} title={dialogTitle} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!inFlight.current) setDialogOpen(false) }}
       description={discard ? t('setup.dialog.discard') : dialog === 'help' ? t(help) : dialog === 'preview' ? t('ui.prototype.description')
-        : dialog === 'directory' || dialog === 'program' ? t('ui.picker.preview') : result && !saved ? t(result.message) : undefined}
+        : dialog === 'directory' || dialog === 'program' ? t('ui.picker.preview') : dialog === 'result' && result && !saved ? t(result.message) : undefined}
       actions={discard ? <><Button ref={cancelButton} className="button secondary-button" onClick={() => setDialogOpen(false)}>{t('ui.keepediting')}</Button><Button className="button danger-button" onClick={() => void close()}>{t('ui.discard')}</Button></>
         : dialog === 'directory' || dialog === 'program' ? <><Button className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('download.cancel')}</Button>
           <Button className="button primary-button" disabled={busy || !selection} onClick={() => { if (dialog === 'program') void addProgram(); else { update('directory', selection); setDialogOpen(false) } }}>{adding && <LoaderCircle size={16} className="spinner" />}{t(adding ? 'ui.adding' : 'ui.select')}</Button></>
@@ -383,6 +386,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
         {result.tasks.map(task => <div className="followup" key={task}><p>{t(task === 'startup' ? 'ui.task.startup' : 'ui.task.restart')}</p>{task === 'startup' && <Button className="control-button" onClick={() => void openLocation('windows')}>{t('ui.openstartup')}<ArrowUpRight size={14} /></Button>}</div>)}
       </>}
       {dialog === 'error' && error && <ErrorDetails error={error} t={t} />}
+      {dialog === 'notice' && selectedNotice && <div className="notice-detail">
+        <p className="notice-summary">{t(selectedNotice.message, selectedNotice.values)}</p>
+        {noticeDetail && <p>{typeof noticeDetail === 'string' ? noticeDetail : t(noticeDetail.message, noticeDetail.values)}</p>}
+        {selectedNotice.error && <ErrorDetails error={selectedNotice.error} t={t} />}
+      </div>}
     </Modal>
   </div>
 }
