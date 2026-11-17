@@ -2,8 +2,12 @@
 
 ## 配置器 UI 重构
 
-- `refactor/ui` 分阶段迁移到 React、TypeScript 和 Tauri 2。第 1、2、3 阶段及原生兼容补充已完成。当前暂停等待用户验收，未经确认不推进第 4 阶段。真实功能已接入并完成隔离检查；真实自启、联网和退出 ChatGPT 仍待验。详细边界和验证见 `docs/ui-refactor.md`。默认 `build.cmd` 和 `release.cmd` 仍使用旧 GUI。
+- `refactor/ui` 的第 4 阶段实现已完成。默认 `build.cmd` 和 `release.cmd` 已切换 Tauri，旧 GUI 的独立构建入口保留。本轮只交付本地测试包，完成检查后暂停；不自动提交、合并或发布。真实安装、自启、联网和退出 ChatGPT 仍待验。详细边界和验证见 `docs/ui-refactor.md`。
 - `frontend/desktop.ps1` 是新入口。可用 `-RustBin` 指定已有 Rust MSVC 工具链。缓存、补充工具和测试产物放在 `work/`，不改系统默认工具链。需要 Cargo、Clippy 和 rustfmt；只有 Cargo 的精简工具链不足以运行完整检查。
+- `build.cmd` 调用桌面构建，桌面构建只调用 `tools/build-native.cmd`，不能互相递归。正式产物放 `outputs/`；旧 GUI 放 `work/ui-native/`。`-ReuseNativeBuild` 只供同一轮检查复用已成功的原生编译。单独重建启动器后，旧配置器载荷不再保证与它配对；交付检查须拒绝这种混用。
+- 正式资源只含实际设置入口，`CHATGPT_UI_PROTOTYPE=1` 只由原型构建设置。Rust 资源测试、交付脚本分别检查内嵌页面、测试标记、EXE 哈希和运行库导入。发布窗口只允许内嵌页面导航；开发地址仅在调试构建开放。
+- `release.cmd -TestPackage` 完成静态分析、完整回归和源码核验后，只创建新的 `work/release-stage-*`，不写旧 Release。打包期间不能修改源码；脚本会核对构建前后的清单哈希。`tests/delivery-tests.ps1` 复核两个 EXE、明确源码清单和校验文件。
+- 单文件检查拒绝额外的 VC++ 和 `WebView2Loader.dll` 依赖，但允许 Windows 10 以上自带的 UCRT/API-set。不要把 `api-ms-win-crt-*` 当作需要随包附带的 DLL。边界见[微软 UCRT 部署说明](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment)。
 - C++ 结果由 C++ 释放。Rust 的作用域对象负责调用释放函数。原始后台命令以 UTF-16 直接交给原解析器，必须在 WebView 检查和窗口初始化之前分流。普通 EXE 不接受测试路径环境变量；`test-harness` 产物必须单独保存在 `work/ui-stage1-test/`。
 - Tauri 生成窗口图标和版本资源，追加编号 101 的启动器载荷和 102 的界面能力信息，不整体链接旧 `SetupResources.rc`。资源编译器会改变 manifest 的空白，验收时按 XML 内容核对；启动器载荷必须逐字节匹配该次构建。
 - 原生 GUI 通过 `RunNativeSetup` 静态链接进同一个 Tauri EXE。`--compatibility` 只接受单独使用，在 Tauri 初始化前分流；缺少 WebView2 时直接运行 EXE 也回退到兼容界面。旧原生构建保留独立入口。兼容模式的隔离测试入口锁住编辑、偏好写入、检测和系统操作，不能把测试包当正常配置器使用。
@@ -31,12 +35,13 @@
 - 常规焦点使用 Radix 中性色。输入框用贴合原边框的细线，按钮仅在键盘操作时显示外侧焦点线。不能为弱化蓝色外圈而删除键盘焦点；高对比度模式继续使用系统高亮色。
 - 原型关闭事件通过 Tauri 转交 React；JS 监听完成后才显示窗口。保存进行时不关闭，未保存时确认。关闭确认与其他弹窗必须恢复原焦点；模态窗打开期间再次点标题栏关闭，只收起当前弹窗。端口检测用输入修订号丢弃旧结果，保存后再次检测也必须清除已保存状态。
 - Tauri 的关闭命令使用 `async fn`，原生关闭回调只排队通知页面，避开 WebView2 同步回调。验收要同时确认窗口消失和整个所属进程树退出。标题栏测试发送 `WM_SYSCOMMAND/SC_CLOSE`，核对窗口所属进程及关闭请求、确认次数；不能只根据 `CloseMainWindow()` 返回 true 判断消息已送达。仅用调试接口观察 DOM 焦点不能证明原生键盘焦点正确。弹窗内容与开关状态分开保存，避免退出动画期间跳成另一条提示。
-- 前端测试放在根目录 `tests/frontend/`，Vite 和 TypeScript 须显式从 `frontend/node_modules` 解析 React 和 Testing Library，避免重复 React 或测试目录找不到依赖。Rust 内嵌资源测试同时检查两个 HTML 入口。桌面生命周期检查在 `tests/ui-prototype-tests.ps1`；调试端口只对该脚本的显式调试会话开放。
+- 前端测试放在根目录 `tests/frontend/`，Vite 和 TypeScript 须显式从 `frontend/node_modules` 解析 React 和 Testing Library，避免重复 React 或测试目录找不到依赖。Rust 资源测试检查正式入口和引用资源，并要求模拟页面只出现在原型构建。桌面生命周期检查在 `tests/ui-prototype-tests.ps1`；调试端口只对该脚本的显式调试会话开放。
 - 统计桌面进程树时须核对父子进程的创建时间。Windows 会复用 PID，单看 `ParentProcessId` 可能把早已运行的其他浏览器算进新预览，造成内存和退出检查失真。生命周期脚本包含此场景的合成回归。
+- PowerShell 判断窗口就绪时，须把句柄与 `[IntPtr]::Zero` 显式比较。零句柄直接转布尔值会被误判。GUI 验收须正常显示测试窗口；隐藏启动选项会覆盖原生窗口的首次显示请求。
 - Windows 的 `canonicalize()` 会生成带 `\\?\` 前缀的路径，不能直接传给 MSVC 源文件参数或现有原生路径协议。C++ 源码路径从 Cargo 工程位置取得，不先做这种转换。隔离 WebView 数据目录通过窗口 builder 指定；不要靠运行时修改 Context 配置替换已经准备好的窗口参数。
-- 每次桌面构建使用新的前端资源目录，并通过临时 Tauri 配置指定该目录。`frontendDist` 必须使用相对 `src-tauri` 的路径，盘符开头的绝对路径会被解析为 URL，导致未内嵌页面。每次构建检查首页资源。这样不会内嵌旧 JS/CSS，也不需要批量清理。旧构建和测试数据保留在 `work/`。EXE 的载荷哈希写入旁边的本机构建记录，不进入源码包。
+- 每次桌面构建使用新的前端资源目录，并通过临时 Tauri 配置指定该目录。`frontendDist` 必须使用相对 `src-tauri` 的路径，盘符开头的绝对路径会被解析为 URL，导致未内嵌页面。每次构建检查首页资源，不复用旧 JS/CSS，也不批量清理。正式 EXE 的载荷哈希写入 `work/ui-build.json`，测试包记录仍在各产物目录旁；都不进入源码包。
 - 实际 WebView2 窗口测试需要正常桌面会话。受限沙箱可能导致窗口初始化失败，不能据此认定普通用户环境不可用。初始化失败时显示原生提示后直接退出；尚未创建窗口时，排队的退出事件可能无法执行。
-- 从 PowerShell 7 启动 Windows PowerShell 5.1 测试时，继承的 `PSModulePath` 可能使 `Get-FileHash` 自动加载失败。必要时仅为测试子进程指定 Windows PowerShell 系统模块目录；不修改用户或系统环境变量。
+- 从 PowerShell 7 启动 Windows PowerShell 5.1 时，继承的 `PSModulePath` 可能使 `Get-FileHash` 自动加载失败。CMD 构建、测试和发布入口用 `setlocal` 为子进程指定 Windows PowerShell 系统模块目录；不修改用户或系统环境变量。
 
 ## 多语言
 

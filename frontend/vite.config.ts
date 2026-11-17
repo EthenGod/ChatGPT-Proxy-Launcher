@@ -12,7 +12,8 @@ export default defineConfig({
       .map(name => [name, fileURLToPath(new URL(`./node_modules/${name}`, import.meta.url))])),
   },
   build: { target: 'es2022', outDir: process.env.CHATGPT_UI_DIST ?? 'dist', emptyOutDir: false,
-    rollupOptions: { input: { main: 'index.html', prototype: 'prototype.html' } } },
+    rollupOptions: { input: process.env.CHATGPT_UI_PROTOTYPE === '1'
+      ? { main: 'index.html', prototype: 'prototype.html' } : { main: 'index.html' } } },
   server: { fs: { allow: ['..'] } },
   test: { include: ['../tests/frontend/**/*.test.{ts,tsx}'] },
 })

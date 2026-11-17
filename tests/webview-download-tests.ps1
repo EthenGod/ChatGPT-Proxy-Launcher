@@ -38,8 +38,9 @@ public static class SetupUiFixture {
     }
 }
 '@
-$native = Join-Path $ProjectRoot 'outputs\ChatGPTLauncherSetup.exe'
+$native = Join-Path $ProjectRoot 'work\ui-native\ChatGPTLauncherSetup.exe'
 Require (!(Test-SetupModernUi $native)) 'Legacy native build must not require WebView2'
+Require (Test-SetupModernUi (Join-Path $ProjectRoot 'outputs\ChatGPTLauncherSetup.exe')) 'Default build must advertise the new UI and compatibility mode'
 $dual = Join-Path $testRoot 'dual.exe'
 [IO.File]::Copy($native, $dual)
 [SetupUiFixture]::Set($dual, [IO.File]::ReadAllBytes((Join-Path $ProjectRoot 'src\SetupUiCapabilities.json')))

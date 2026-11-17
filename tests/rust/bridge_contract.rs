@@ -66,6 +66,35 @@ fn compatibility_accepts_only_a_single_explicit_switch() {
 }
 
 #[test]
+fn window_navigation_matches_the_build_boundary() {
+    let packaged = !cfg!(debug_assertions);
+    for (url, allowed) in [
+        ("http://tauri.localhost/", packaged),
+        ("http://tauri.localhost/index.html#settings", packaged),
+        (
+            "http://tauri.localhost/prototype.html",
+            packaged && cfg!(feature = "ui-prototype"),
+        ),
+        ("http://tauri.localhost:5174/", false),
+        ("http://tauri.localhost.example.com/", false),
+        ("http://tauri.localhost@127.0.0.1/", false),
+        ("http://user@tauri.localhost/", false),
+        ("http://127.0.0.1:5174/", !packaged),
+        ("http://127.0.0.1:5175/", false),
+        ("http://user@127.0.0.1:5174/", false),
+        ("https://example.com/", false),
+        ("data:text/html,test", false),
+        ("file:///C:/test.html", false),
+    ] {
+        assert_eq!(
+            bootstrap::allows_navigation(&url.parse().unwrap()),
+            allowed,
+            "{url}"
+        );
+    }
+}
+
+#[test]
 fn response_failure_preserves_the_independent_native_commit() {
     for (code, expected) in [
         (0, "not-started"),

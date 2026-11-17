@@ -1,5 +1,7 @@
 # 图形部署工具
 
+本文保留 C++ 部署核心与原生兼容界面的设计。默认配置器已使用 React、TypeScript 和 Tauri，界面布局、交互与构建说明见[配置器界面重构](ui-refactor.md)。原生界面继续通过 `--compatibility` 或 `build.cmd native` 使用。
+
 ## 目标
 
 提供单文件 `ChatGPTLauncherSetup.exe`，内嵌同次构建的启动器。用户选择启动参数后，部署启动器并保存当前用户的登录自启快捷方式。高级选项允许选择部署目录，主界面和二级设置页均提供可复制的实时参数预览。

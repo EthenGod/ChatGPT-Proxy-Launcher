@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Build, test, and prepare local upload files. Does not publish or change user startup.
+param([switch]$TestPackage)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.IO.Compression
@@ -40,7 +41,7 @@ function Write-VerifiedZip([string]$Path, [System.Collections.IDictionary]$Files
 # Explicit list: never sweep the repository, work directory, Git data or private files.
 $sourceNames = @(
     '.editorconfig', '.gitattributes', '.gitignore', 'AGENTS.md', 'HANDOFF.md', 'LICENSE', 'README.md', 'README.en.md', 'README.ja.md', 'build.cmd', 'release.cmd', 'release.ps1', 'setup.ps1',
-    'tools/msvc-env.cmd', 'tools/locales.ps1', 'locales/languages.json', 'locales/catalog.schema.json',
+    'tools/msvc-env.cmd', 'tools/build-native.cmd', 'tools/locales.ps1', 'locales/languages.json', 'locales/catalog.schema.json',
     'assets/ChatGPT.ico', 'assets/README.md', 'assets/README.en.md', 'assets/README.ja.md',
     'docs/launcher-review.md', 'docs/maintainability-review.md', 'docs/performance-review.md', 'docs/release-upload.md', 'docs/setup-design.md', 'docs/taskbar-repair.md',
     'docs/automation-design.md', 'docs/automation-usage.md', 'docs/automation-review.md', 'docs/companion-protocol-v1.md',
@@ -75,7 +76,7 @@ $sourceNames = @(
     'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
     'tests/taskbar-tests.cpp', 'tests/test-build.cmd',
     'tests/SetupBridgeFixture.h', 'tests/setup-bridge-tests.cpp', 'tests/setup-bridge-actions-tests.cpp', 'tests/setup-bridge-runner.cpp', 'tests/test-bridge.cmd', 'tests/ui-stage1-tests.ps1',
-    'tests/webview-download-tests.ps1', 'tests/ui-prototype-tests.ps1',
+    'tests/webview-download-tests.ps1', 'tests/ui-prototype-tests.ps1', 'tests/delivery-tests.ps1',
     'tests/fixtures/setup-snapshot.json', 'tests/frontend/contract.test.ts', 'tests/frontend/desktop-service.test.ts', 'tests/frontend/interaction.test.tsx', 'tests/frontend/appearance.test.tsx', 'tests/frontend/errors.test.tsx',
     'tests/rust/bridge_contract.rs', 'tests/rust/embedded_assets.rs',
     'frontend/.npmrc', 'frontend/.cargo/config.toml', 'frontend/desktop.ps1', 'frontend/preview.ps1', 'frontend/index.html', 'frontend/prototype.html',
@@ -104,6 +105,8 @@ foreach ($name in $sourceNames) {
 
 Push-Location $projectRoot
 try {
+    & $env:ComSpec /d /c tests\analyze.cmd
+    if ($LASTEXITCODE -ne 0) { throw ('Static analysis failed with exit code ' + $LASTEXITCODE + '. No release files updated.') }
     & $env:ComSpec /d /c tests\test-build.cmd
     if ($LASTEXITCODE -ne 0) { throw ('Build/tests failed with exit code ' + $LASTEXITCODE + '. No release files updated.') }
     foreach ($name in $sourceNames) {
@@ -138,6 +141,11 @@ try {
     $uploads = @('ChatGPTLauncherSetup.exe', 'ChatGPTProxyLauncher.exe', 'ChatGPTLauncher-source.zip')
     $checksums = foreach ($name in $uploads) { (Get-Sha256 (Join-Path $stage $name)) + '  ' + $name }
     [IO.File]::WriteAllLines((Join-Path $stage 'SHA256SUMS.txt'), [string[]]$checksums, [Text.Encoding]::ASCII)
+    & (Join-Path $projectRoot 'tests\delivery-tests.ps1') -PackageDirectory $stage
+    if ($TestPackage) {
+        Write-Host ('Local test package: ' + $stage + '. Existing releases were not changed. Nothing was uploaded.')
+        return
+    }
     [IO.Directory]::CreateDirectory($releaseDir) | Out-Null
     foreach ($name in ($uploads + @('SHA256SUMS.txt'))) {
         $source = Join-Path $stage $name

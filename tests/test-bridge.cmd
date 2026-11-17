@@ -2,8 +2,11 @@
 rem SPDX-License-Identifier: GPL-3.0-only
 setlocal
 cd /d "%~dp0.."
-call build.cmd
+if /i "%~1"=="--reuse-build" goto native_ready
+if not "%~1"=="" exit /b 2
+call build.cmd native
 if errorlevel 1 exit /b %errorlevel%
+:native_ready
 call tools\msvc-env.cmd
 if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /W4 /WX /O1 /MT /utf-8 /DUNICODE /D_UNICODE /c /Fo:work\SetupBridge.obj src\SetupBridge.cpp

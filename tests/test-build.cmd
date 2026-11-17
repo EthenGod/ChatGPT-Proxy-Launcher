@@ -1,6 +1,7 @@
 @echo off
 rem SPDX-License-Identifier: GPL-3.0-only
 setlocal
+set "PSModulePath=%SystemRoot%\System32\WindowsPowerShell\v1.0\Modules"
 cd /d "%~dp0.."
 call build.cmd
 if errorlevel 1 exit /b %errorlevel%
@@ -74,4 +75,14 @@ if errorlevel 1 exit /b %errorlevel%
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-tests.ps1"
 if errorlevel 1 exit /b %errorlevel%
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0webview-download-tests.ps1"
+if errorlevel 1 exit /b %errorlevel%
+call tests\test-bridge.cmd --reuse-build
+if errorlevel 1 exit /b %errorlevel%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File frontend\desktop.ps1 -Command test -ReuseNativeBuild
+if errorlevel 1 exit /b %errorlevel%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File frontend\desktop.ps1 -Command harness -ReuseNativeBuild
+if errorlevel 1 exit /b %errorlevel%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ui-stage1-tests.ps1 -SkipGui
+if errorlevel 1 exit /b %errorlevel%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\delivery-tests.ps1
 exit /b %errorlevel%

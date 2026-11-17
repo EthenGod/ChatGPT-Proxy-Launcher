@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 param(
     [ValidateSet('build', 'dev', 'check', 'test', 'harness', 'prototype')][string]$Command = 'build',
-    [string]$RustBin = $env:CHATGPT_RUST_BIN
+    [string]$RustBin = $env:CHATGPT_RUST_BIN,
+    # Used by the full test pipeline after its native build has succeeded.
+    [switch]$ReuseNativeBuild
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot
 $previous = @{}
-foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache', 'CHATGPT_UI_DIST', 'TAURI_CONFIG')) {
+foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache', 'CHATGPT_UI_DIST', 'CHATGPT_UI_PROTOTYPE', 'TAURI_CONFIG')) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 function Check-Exit([string]$Step) { if ($LASTEXITCODE -ne 0) { throw "$Step failed: $LASTEXITCODE" } }
@@ -18,6 +20,7 @@ try {
     $env:CARGO_HOME = Join-Path $projectRoot 'work\ui-toolchain\cargo'
     $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'work\ui-target'
     $env:npm_config_cache = Join-Path $projectRoot 'work\npm-cache'
+    $env:CHATGPT_UI_PROTOTYPE = $(if ($Command -eq 'prototype') { '1' } else { '0' })
     # A fresh asset directory avoids embedding stale bundles, without deleting files.
     $buildId = [guid]::NewGuid().ToString('N')
     $env:CHATGPT_UI_DIST = Join-Path $projectRoot ('work\ui-assets\' + $buildId)
@@ -28,17 +31,25 @@ try {
     [IO.File]::WriteAllText($configFile, $env:TAURI_CONFIG)
     if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'node_modules\typescript'))) { throw 'Run npm ci in frontend first.' }
     Push-Location $projectRoot
-    try { & $env:ComSpec /d /c build.cmd; Check-Exit 'Native build' }
+    try {
+        if (!$ReuseNativeBuild) { & $env:ComSpec /d /c tools\build-native.cmd; Check-Exit 'Native build' }
+        foreach ($file in @('outputs\ChatGPTProxyLauncher.exe', 'work\SetupResources.res', 'work\LocalizationData.h')) {
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Native build output missing: $file" }
+        }
+    }
     finally { Pop-Location }
     Push-Location $PSScriptRoot
     try {
         if ($Command -eq 'test' -or $Command -eq 'check') {
             & npm.cmd run typecheck; Check-Exit 'TypeScript'
-            & npm.cmd test; Check-Exit 'Frontend tests'
+            if ($Command -eq 'test') { & npm.cmd test; Check-Exit 'Frontend tests' }
             & npm.cmd run build; Check-Exit 'Frontend build'
             & cargo.exe fmt --manifest-path src-tauri/Cargo.toml --check; Check-Exit 'Rust format'
-            & cargo.exe $Command --manifest-path src-tauri/Cargo.toml --locked --release --all-features; Check-Exit "Rust $Command"
-            & cargo.exe clippy --manifest-path src-tauri/Cargo.toml --locked --release --all-targets --all-features -- -D warnings; Check-Exit 'Clippy'
+            & cargo.exe $Command --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol; Check-Exit "Rust $Command"
+            if ($Command -eq 'check') {
+                & cargo.exe clippy --manifest-path src-tauri/Cargo.toml --locked --release --all-targets --features custom-protocol -- -D warnings; Check-Exit 'Clippy production'
+                & cargo.exe clippy --manifest-path src-tauri/Cargo.toml --locked --release --all-targets --all-features -- -D warnings; Check-Exit 'Clippy test features'
+            }
         } elseif ($Command -eq 'dev') {
             & npm.cmd exec -- tauri dev; Check-Exit 'Tauri dev'
         } else {
@@ -47,15 +58,20 @@ try {
             if ($Command -eq 'prototype') { $arguments += @('--features', 'ui-prototype') }
             $arguments += @('--', '--locked')
             & npm.cmd @arguments; Check-Exit 'Tauri build'
-            $directory = Join-Path $projectRoot $(if ($Command -eq 'prototype') { 'work\ui-prototype' } elseif ($Command -eq 'harness') { 'work\ui-stage1-test' } else { 'work\ui-stage1' })
+            $directory = Join-Path $projectRoot $(if ($Command -eq 'prototype') { 'work\ui-prototype' } elseif ($Command -eq 'harness') { 'work\ui-stage1-test' } else { 'outputs' })
             [IO.Directory]::CreateDirectory($directory) | Out-Null
             Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release\ChatGPTLauncherSetup.exe') -Destination $directory
             $metadata = @{
+                kind=$Command
+                prototype=($Command -eq 'prototype')
+                testHarness=($Command -eq 'prototype' -or $Command -eq 'harness')
+                assetsDirectory=('work/ui-assets/' + $buildId)
                 setupSha256=(Get-FileHash -LiteralPath (Join-Path $directory 'ChatGPTLauncherSetup.exe') -Algorithm SHA256).Hash
                 launcherSha256=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe') -Algorithm SHA256).Hash
                 payloadBytes=(Get-Item -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length
             }
-            [IO.File]::WriteAllText(($directory + '-build.json'), ($metadata | ConvertTo-Json))
+            $metadataPath = if ($Command -eq 'build') { Join-Path $projectRoot 'work\ui-build.json' } else { $directory + '-build.json' }
+            [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json))
             Write-Host ('Built: ' + (Join-Path $directory 'ChatGPTLauncherSetup.exe'))
         }
     } finally { Pop-Location }

@@ -265,7 +265,7 @@ fn main() {
                     // is required for an absolute, fully isolated test profile.
                     #[cfg(feature = "test-harness")]
                     let builder = builder.data_directory(harness::root().join("webview"));
-                    builder.build()
+                    builder.on_navigation(bootstrap::allows_navigation).build()
                 });
             if result.is_err() {
                 bridge::bootstrap_error(false);

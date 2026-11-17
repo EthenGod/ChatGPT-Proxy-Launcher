@@ -41,3 +41,19 @@ pub fn is_compatibility(tail: &[u16]) -> bool {
         .iter()
         .any(|value| tail[..end].iter().copied().eq(value.encode_utf16()))
 }
+
+pub fn allows_navigation(url: &tauri::Url) -> bool {
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    if cfg!(debug_assertions) {
+        return url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port() == Some(5174);
+    }
+    url.scheme() == "http"
+        && url.host_str() == Some("tauri.localhost")
+        && url.port().is_none()
+        && (matches!(url.path(), "/" | "/index.html")
+            || (cfg!(feature = "ui-prototype") && url.path() == "/prototype.html"))
+}

@@ -10,7 +10,7 @@ $testRoot = Join-Path $ProjectRoot ('work\ui-contract-' + [guid]::NewGuid().ToSt
 $null = [IO.Directory]::CreateDirectory($testRoot)
 $native = Join-Path $ProjectRoot 'work\setup-bridge-runner.exe'
 $desktop = Join-Path $ProjectRoot 'work\ui-stage1-test\ChatGPTLauncherSetup.exe'
-$production = Join-Path $ProjectRoot 'work\ui-stage1\ChatGPTLauncherSetup.exe'
+$production = Join-Path $ProjectRoot 'outputs\ChatGPTLauncherSetup.exe'
 foreach ($file in @($native, $desktop, $production)) {
     if (![IO.File]::Exists($file)) { throw "Build the bridge runner, normal UI and test harness first: $file" }
 }
@@ -43,10 +43,27 @@ public static class SetupPeResource {
         } finally { FreeLibrary(module); }
     }
 }
+public static class SetupWindowClose {
+    [DllImport("user32.dll", SetLastError=true)]
+    static extern bool PostMessageW(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    public static void Request(IntPtr window, int expectedProcessId) {
+        uint owner;
+        if (window == IntPtr.Zero || GetWindowThreadProcessId(window, out owner) == 0 || owner != expectedProcessId)
+            throw new InvalidOperationException("Unexpected setup window owner");
+        if (!PostMessageW(window, 0x0112, new UIntPtr(0xF060), IntPtr.Zero))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+}
 '@
 $expectedManifest = [xml][IO.File]::ReadAllText((Join-Path $ProjectRoot 'src\Setup.manifest'))
+$launcher = Join-Path $ProjectRoot 'outputs\ChatGPTProxyLauncher.exe'
+$expectedIcon = [SetupPeResource]::Read($launcher, 1, 14)
+$iconCount = [BitConverter]::ToUInt16($expectedIcon, 4)
 foreach ($exe in @($production, $desktop)) {
-    $metadata = Get-Content -LiteralPath ((Split-Path $exe) + '-build.json') -Raw | ConvertFrom-Json
+    $metadataPath = if ($exe -eq $production) { Join-Path $ProjectRoot 'work\ui-build.json' } else { (Split-Path $exe) + '-build.json' }
+    $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
     Require ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -eq $metadata.setupSha256) 'EXE changed after its recorded build'
     $bytes = [SetupPeResource]::Read($exe, 101, 10)
     $hash = [Security.Cryptography.SHA256]::Create()
@@ -58,21 +75,29 @@ foreach ($exe in @($production, $desktop)) {
     Require ($manifest.OuterXml -ceq $expectedManifest.OuterXml) 'Desktop manifest differs from the native manifest'
     $capability = [Text.Encoding]::UTF8.GetString([SetupPeResource]::Read($exe, 102, 10)) | ConvertFrom-Json
     Require ($capability.schemaVersion -eq 1 -and $capability.requiresWebView2 -eq $true -and $capability.compatibilityArgument -ceq '--compatibility') 'Missing dual-UI capability resource'
+    $icon = [SetupPeResource]::Read($exe, 32512, 14)
+    Require ([BitConverter]::ToUInt16($icon, 4) -eq $iconCount -and $iconCount -gt 0) 'Desktop icon sizes differ from the launcher'
+    for ($index=0; $index -lt $iconCount; $index++) {
+        $offset=6+14*$index+12
+        $expectedImage=[SetupPeResource]::Read($launcher, [BitConverter]::ToUInt16($expectedIcon, $offset), 3)
+        $image=[SetupPeResource]::Read($exe, [BitConverter]::ToUInt16($icon, $offset), 3)
+        Require ([Convert]::ToBase64String($image) -ceq [Convert]::ToBase64String($expectedImage)) 'Desktop icon image differs from the launcher'
+    }
 }
-Write-Host 'PASS single EXE resources: exact same-build launcher payload and original Windows manifest'
+Write-Host 'PASS single EXE resources: exact same-build launcher payload, shared icon images and original Windows manifest'
 function Quote-Argument([string]$Value) {
     # Windows argv quoting, including empty values, quotes and trailing backslashes.
     $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
     $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
     return '"' + $escaped + '"'
 }
-function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$WithoutWebView = $false) {
+function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$WithoutWebView = $false, [bool]$ShowWindow = $false) {
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $Exe
     $info.Arguments = $Tail
     $info.UseShellExecute = $false
-    $info.CreateNoWindow = $true
-    $info.WindowStyle = 'Hidden'
+    $info.CreateNoWindow = !$ShowWindow
+    $info.WindowStyle = if ($ShowWindow) { 'Normal' } else { 'Hidden' }
     $info.WorkingDirectory = $Root
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT'] = $Root
     if ($WithoutWebView) { $info.EnvironmentVariables['WEBVIEW2_BROWSER_EXECUTABLE_FOLDER'] = (Join-Path $Root 'no-webview') }
@@ -139,12 +164,18 @@ Require (![IO.File]::Exists((Join-Path $cliRoot 'compatibility-entered.json'))) 
 Write-Host "PASS desktop CLI: $caseIndex exact native/Tauri result comparisons, original arguments, create-new results, no GUI bootstrap"
 
 function Get-ProcessTree([int]$RootId) {
-    $rows = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name)
+    $rows = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate)
+    $byId = @{}
+    foreach ($row in $rows) { $byId[[int]$row.ProcessId] = $row }
     $ids = New-Object 'Collections.Generic.HashSet[int]'
     $null = $ids.Add($RootId)
     do {
         $added = $false
-        foreach ($row in $rows) { if ($ids.Contains([int]$row.ParentProcessId) -and $ids.Add([int]$row.ProcessId)) { $added = $true } }
+        foreach ($row in $rows) {
+            $parent = $byId[[int]$row.ParentProcessId]
+            if ($parent -and $row.CreationDate -ge $parent.CreationDate -and
+                $ids.Contains([int]$row.ParentProcessId) -and $ids.Add([int]$row.ProcessId)) { $added = $true }
+        }
     } while ($added)
     return @($rows | Where-Object { $ids.Contains([int]$_.ProcessId) })
 }
@@ -155,15 +186,15 @@ if (!$SkipGui) {
         $root = Join-Path $testRoot ('compatibility-' + $compatibility.Count)
         $null = [IO.Directory]::CreateDirectory($root)
         $timer = [Diagnostics.Stopwatch]::StartNew()
-        $process = Start-Isolated $desktop $root $case[0] $case[1]
+        $process = Start-Isolated $desktop $root $case[0] $case[1] $true
         try {
             $deadline = [DateTime]::UtcNow.AddSeconds(20)
             do {
                 $process.Refresh()
                 Require (!$process.HasExited) 'Compatibility window exited before showing'
                 Require ([DateTime]::UtcNow -lt $deadline) 'Compatibility window did not become ready'
-                if (!$process.MainWindowHandle) { Start-Sleep -Milliseconds 100 }
-            } while (!$process.MainWindowHandle)
+                if ($process.MainWindowHandle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+            } while ($process.MainWindowHandle -eq [IntPtr]::Zero)
             $readyMs = $timer.Elapsed.TotalMilliseconds
             Start-Sleep -Seconds 2
             Require ([IO.File]::Exists((Join-Path $root 'compatibility-entered.json'))) 'Native compatibility entry was not used'
@@ -174,7 +205,7 @@ if (!$SkipGui) {
             $process.Refresh()
             $compatibility += [pscustomobject]@{argument=$case[0]; withoutWebView=$case[1]; readyMs=[Math]::Round($readyMs,2); processes=$tree.Count;
                 privateMiB=[Math]::Round($process.PrivateMemorySize64 / 1MB,2); workingSetMiB=[Math]::Round($process.WorkingSet64 / 1MB,2)}
-            Require ($process.CloseMainWindow()) 'Could not close compatibility window normally'
+            [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
             Require ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'Compatibility did not exit cleanly'
             Require (![IO.Directory]::Exists((Join-Path $root 'state'))) 'Compatibility preview wrote deployment data'
         } finally { $process.Dispose() }
@@ -184,7 +215,7 @@ if (!$SkipGui) {
         $root = Join-Path $testRoot "window-$cycle"
         $null = [IO.Directory]::CreateDirectory($root)
         $timer = [Diagnostics.Stopwatch]::StartNew()
-        $process = Start-Isolated $desktop $root ''
+        $process = Start-Isolated $desktop $root '' $false $true
         try {
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
             while (![IO.File]::Exists((Join-Path $root 'ui-ready.json'))) {
@@ -206,7 +237,7 @@ if (!$SkipGui) {
             $private = ($handles | Measure-Object PrivateMemorySize64 -Sum).Sum
             $gui += [pscustomobject]@{cycle=$cycle; readyMs=[Math]::Round($readyMs, 2); idleSeconds=$seconds; processes=$tree.Count; workingSetMiB=[Math]::Round($workingSet / 1MB, 2); privateMiB=[Math]::Round($private / 1MB, 2); reads=$after.reads}
             $process.Refresh()
-            Require ($process.CloseMainWindow()) 'Could not request a normal window close'
+            [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
             Require ($process.WaitForExit(10000)) 'Desktop did not exit after normal close'
             $deadline = [DateTime]::UtcNow.AddSeconds(10)
             do {
@@ -222,7 +253,7 @@ if (!$SkipGui) {
 }
 $report = [ordered]@{
     schemaVersion=1
-    sizes=[ordered]@{nativeBytes=(Get-Item (Join-Path $ProjectRoot 'outputs\ChatGPTLauncherSetup.exe')).Length; tauriBytes=(Get-Item $production).Length; launcherBytes=(Get-Item (Join-Path $ProjectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length}
+    sizes=[ordered]@{nativeBytes=(Get-Item (Join-Path $ProjectRoot 'work\ui-native\ChatGPTLauncherSetup.exe')).Length; tauriBytes=(Get-Item $production).Length; launcherBytes=(Get-Item (Join-Path $ProjectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length}
     cli=$timings
     gui=$gui
     compatibility=$compatibility

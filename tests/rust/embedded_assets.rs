@@ -5,7 +5,15 @@ fn release_page_and_referenced_assets_are_embedded() {
         context.config().build.frontend_dist,
         Some(tauri::utils::config::FrontendDist::Url(_))
     ));
+    assert_eq!(
+        context.assets().get(&"prototype.html".into()).is_some(),
+        cfg!(feature = "ui-prototype"),
+        "Only the prototype build may embed the simulated entry"
+    );
     for entry in ["index.html", "prototype.html"] {
+        if entry == "prototype.html" && !cfg!(feature = "ui-prototype") {
+            continue;
+        }
         let page = context
             .assets()
             .get(&entry.into())
