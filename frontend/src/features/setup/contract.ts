@@ -20,4 +20,5 @@ export interface WindowHost {
   connect(onClose: () => void): Promise<() => void>
   ready(): Promise<void>
   close(): Promise<void>
+  setTheme(dark: boolean): Promise<void>
 }

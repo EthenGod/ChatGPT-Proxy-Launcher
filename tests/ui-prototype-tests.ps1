@@ -31,14 +31,20 @@ public static class PrototypeCloseMessage {
 }
 '@
 }
-function Tree([int]$RootId) {
-    $rows=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name)
+function Tree([int]$RootId, [object[]]$Rows=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate)) {
+    $byId=@{}
+    foreach($row in $Rows) { $byId[[int]$row.ProcessId]=$row }
     $ids=[Collections.Generic.HashSet[int]]::new(); $null=$ids.Add($RootId)
     do {
         $added=$false
-        foreach($row in $rows) { if($ids.Contains([int]$row.ParentProcessId) -and $ids.Add([int]$row.ProcessId)) { $added=$true } }
+        foreach($row in $Rows) {
+            $parent=$byId[[int]$row.ParentProcessId]
+            # ParentProcessId can point at a newer, unrelated process after PID reuse.
+            if($parent -and $row.CreationDate -ge $parent.CreationDate -and
+                $ids.Contains([int]$row.ParentProcessId) -and $ids.Add([int]$row.ProcessId)) { $added=$true }
+        }
     } while($added)
-    return @($rows | Where-Object { $ids.Contains([int]$_.ProcessId) })
+    return @($Rows | Where-Object { $ids.Contains([int]$_.ProcessId) })
 }
 function Start-Preview {
     Require ([IO.File]::Exists($exe)) 'Build the prototype first'
@@ -119,6 +125,15 @@ switch($Action) {
     }
     'VerifyClosed' { Verify-Closed (Resolve-Session) }
     'Smoke' {
+        $sampleTime=[datetime]'2026-01-01T00:00:00Z'
+        $sampleTree=@(
+            [pscustomobject]@{ProcessId=1;ParentProcessId=0;CreationDate=$sampleTime},
+            [pscustomobject]@{ProcessId=2;ParentProcessId=1;CreationDate=$sampleTime.AddSeconds(-2)},
+            [pscustomobject]@{ProcessId=3;ParentProcessId=1;CreationDate=$sampleTime.AddSeconds(1)},
+            [pscustomobject]@{ProcessId=4;ParentProcessId=2;CreationDate=$sampleTime.AddSeconds(2)},
+            [pscustomobject]@{ProcessId=5;ParentProcessId=3;CreationDate=$sampleTime.AddSeconds(2)}
+        )
+        Require (((Tree 1 $sampleTree).ProcessId -join ',') -eq '1,3,5') 'PID reuse included an unrelated process tree'
         for($cycle=1;$cycle -le 3;$cycle++) {
             $metadata=Start-Preview
             $sample=Inspect-Preview $metadata

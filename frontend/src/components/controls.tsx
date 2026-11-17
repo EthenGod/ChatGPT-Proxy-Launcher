@@ -1,9 +1,20 @@
-import { useId, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
+import { useId, useRef, type ReactElement, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
 import { Button } from '@base-ui/react/button'
 import { Switch } from '@base-ui/react/switch'
 import { Dialog } from '@base-ui/react/dialog'
 import { Menu } from '@base-ui/react/menu'
+import { Tooltip } from '@base-ui/react/tooltip'
 import { Check, ChevronDown } from 'lucide-react'
+import { ScrollBox } from './ScrollBox'
+
+export function Hint({ label, children }: { label: string; children: ReactElement }) {
+  return <Tooltip.Root>
+    <Tooltip.Trigger render={children} delay={500} />
+    <Tooltip.Portal><Tooltip.Positioner sideOffset={8} className="tooltip-positioner">
+      <Tooltip.Popup className="tooltip-popup">{label}</Tooltip.Popup>
+    </Tooltip.Positioner></Tooltip.Portal>
+  </Tooltip.Root>
+}
 
 export function SwitchControl({ id, label, describedBy, controls, checked, disabled, onChange }: {
   id?: string; label?: string; describedBy?: string; controls?: string;
@@ -39,16 +50,16 @@ export function ChoiceMenu({ label, value, items, onChange, disabled, icon, vari
   onChange: (value: string) => void; disabled?: boolean; icon?: ReactNode; variant?: 'default' | 'icon' | 'quiet'
 }) {
   return <Menu.Root>
-    <Menu.Trigger className={`menu-trigger ${variant === 'icon' ? 'icon-button' : 'control-button'} ${variant === 'quiet' ? 'quiet-button' : ''}`} disabled={disabled} aria-label={label} title={label}>
+    <Hint label={label}><Menu.Trigger className={`menu-trigger ${variant === 'icon' ? 'icon-button' : 'control-button'} ${variant === 'quiet' ? 'quiet-button' : ''}`} disabled={disabled} aria-label={label}>
       {icon}{variant !== 'icon' && <><span>{items.find(item => item.value === value)?.label}</span><ChevronDown size={14} /></>}
-    </Menu.Trigger>
+    </Menu.Trigger></Hint>
     <Menu.Portal><Menu.Positioner sideOffset={6} align="end" className="menu-positioner">
       <Menu.Popup className="menu-popup">
-        <Menu.RadioGroup value={value} onValueChange={onChange}>
+        <ScrollBox className="menu-scroll" tabIndex={-1} label={label}><Menu.RadioGroup value={value} onValueChange={onChange}>
           {items.map(item => <Menu.RadioItem className="menu-item" key={item.value} value={item.value} closeOnClick>
             <span>{item.label}</span><Menu.RadioItemIndicator><Check size={16} /></Menu.RadioItemIndicator>
           </Menu.RadioItem>)}
-        </Menu.RadioGroup>
+        </Menu.RadioGroup></ScrollBox>
       </Menu.Popup>
     </Menu.Positioner></Menu.Portal>
   </Menu.Root>
@@ -57,14 +68,16 @@ export function Modal({ open, title, description, children, actions, onClose, fo
   open: boolean; title: string; description?: string; children?: ReactNode; actions: ReactNode;
   onClose: () => void; focusReturn: RefObject<HTMLElement | null>; initialFocus?: RefObject<HTMLElement | null>
 }) {
+  const popup = useRef<HTMLDivElement | null>(null)
   return <Dialog.Root open={open} onOpenChange={open => { if (!open) onClose() }}>
     <Dialog.Portal><Dialog.Backdrop className="dialog-backdrop" />
-      <Dialog.Popup className="dialog" finalFocus={focusReturn} initialFocus={initialFocus}>
-        <div className="dialog-content">
+      <Dialog.Popup ref={popup} className="dialog" finalFocus={focusReturn} initialFocus={initialFocus ?? (() =>
+        popup.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], .dialog-actions button:not([disabled])') ?? false)}>
+        <ScrollBox className="dialog-scroll" contentClassName="dialog-content" label={title}>
           <Dialog.Title className="dialog-title">{title}</Dialog.Title>
           {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
           {children && <div className="dialog-body">{children}</div>}
-        </div>
+        </ScrollBox>
         <div className="dialog-actions">{actions}</div>
       </Dialog.Popup>
     </Dialog.Portal>

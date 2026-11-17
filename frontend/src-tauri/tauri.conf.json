@@ -15,6 +15,7 @@
     "windows": [{
       "label": "main",
       "title": "ChatGPT Launcher",
+      "theme": "Dark",
       "width": 640,
       "height": 560,
       "minWidth": 480,

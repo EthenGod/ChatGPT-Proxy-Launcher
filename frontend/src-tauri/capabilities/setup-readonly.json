@@ -3,5 +3,5 @@
   "identifier": "setup-readonly",
   "description": "Read existing settings and manage this configuration window.",
   "windows": ["main"],
-  "permissions": ["allow-read-setup-state", "allow-show-setup-window", "allow-close-setup-window", "core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": ["allow-read-setup-state", "allow-show-setup-window", "allow-close-setup-window", "core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-set-theme"]
 }

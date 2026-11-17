@@ -6,35 +6,50 @@ import '@testing-library/jest-dom/vitest'
 import { SetupPage } from '../../frontend/src/features/setup/SetupPage'
 import { MockSetupService } from '../../frontend/src/platform/mock'
 import type { WindowHost } from '../../frontend/src/features/setup/contract'
+import { translator } from '../../frontend/src/i18n'
 
 beforeEach(() => {
   Object.defineProperty(navigator, 'language', { configurable: true, value: 'zh-CN' })
   window.matchMedia = vi.fn().mockImplementation(query => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
   HTMLElement.prototype.scrollIntoView = vi.fn()
+  // jsdom has no layout timeline; real scrollbar motion is checked in the browser and desktop shell.
+  HTMLElement.prototype.getAnimations = vi.fn().mockReturnValue([])
   vi.stubGlobal('ResizeObserver', class { observe() {}; unobserve() {}; disconnect() {} })
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 function mount(service = new MockSetupService('normal', 0)) {
   let requestClose = () => {}
-  const host: WindowHost = { connect: vi.fn(async callback => { requestClose = callback; return () => {} }), ready: vi.fn(async () => {}), close: vi.fn(async () => {}) }
+  const host: WindowHost = { connect: vi.fn(async callback => { requestClose = callback; return () => {} }), ready: vi.fn(async () => {}), close: vi.fn(async () => {}), setTheme: vi.fn(async () => {}) }
   render(<SetupPage service={service} host={host} />)
   return { service, host, requestClose: () => act(() => requestClose()), user: userEvent.setup() }
 }
 async function loaded() { await screen.findByRole('textbox', { name: '端口' }) }
 
 describe('settings prototype behavior', () => {
+  it.each(['zh-CN', 'en-US', 'ja-JP'])('preserves the original Codex help in %s', async language => {
+    Object.defineProperty(navigator, 'language', { configurable: true, value: language })
+    const t = translator(language)
+    const { user } = mount()
+    await screen.findByRole('textbox', { name: t('setup.label.port') })
+    await user.click(screen.getByRole('button', { name: t('setup.help.codex') }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('.dialog-description')?.textContent).toBe(t('help.codex'))
+  })
   it('retains values and disabled silent mode across language and theme changes', async () => {
-    const { user } = mount(new MockSetupService('silent', 0)); await loaded()
+    const { user, host } = mount(new MockSetupService('silent', 0)); await loaded()
+    expect(host.setTheme).toHaveBeenLastCalledWith(true)
     expect(screen.getByRole('switch', { name: '静默启动' })).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByRole('switch', { name: '静默启动' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('switch', { name: '静默启动' })).toHaveAccessibleDescription('暂不可用')
     fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '12345' } })
     await user.click(screen.getByRole('button', { name: '切换为浅色' }))
     expect(document.documentElement).toHaveClass('light')
+    expect(host.setTheme).toHaveBeenLastCalledWith(false)
     await user.click(screen.getByRole('button', { name: '语言' }))
     await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
     expect(screen.getByRole('textbox', { name: 'Port' })).toHaveValue('12345')
     expect(screen.getByRole('region', { name: 'Launch arguments' })).toHaveTextContent('--no-startup-window')
+    expect(host.setTheme).toHaveBeenCalledTimes(2)
   })
   it('hides proxy fields without discarding input and can reopen them from the keyboard', async () => {
     const { user } = mount(); await loaded()
