@@ -210,14 +210,18 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             response[L"arguments"] = Json(arguments);
             response[L"errors"] = Json::Object();
             response[L"detail"] = Json(result.message);
+            response[L"nativeError"] = Json::Number(result.code);
         } else if (action == SETUP_DETECT) {
             request.Fields({L"protocol", L"host"});
             const auto& protocol = request.At(L"protocol").String(16);
             const auto& host = request.At(L"host").String(1024);
             // Isolated sessions never inspect the user's proxy applications/configuration.
-            const auto found = isolated ? setup::ProxyDetection{host == L"127.0.0.1" ? L"7897" : L"", L""}
-                : setup::DetectProxyPort(protocol, host);
-            response[L"port"] = Json(found.port); response[L"message"] = Json(found.message);
+            setup::ProxyDetection found;
+            if (!isolated) found = setup::DetectProxyPort(protocol, host);
+            else if (host != L"127.0.0.1" && host != L"localhost") found.message = l10n::Text("proxy.localonly");
+            else if (protocol != L"http" && protocol != L"socks5") found.message = l10n::Text("proxy.httpsmanual");
+            else found = {L"7897", l10n::Format("proxy.detected", {{"source", l10n::Text("ui.detect.fixture")}}), l10n::Text("ui.detect.fixture")};
+            response[L"port"] = Json(found.port); response[L"message"] = Json(found.message); response[L"source"] = Json(found.source);
         } else if (action == SETUP_SAVE) {
             auto options = ParseOptions(request);
             CheckIsolatedPath(paths, options.directory, isolated);
@@ -268,6 +272,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             response[L"message"] = Json(message); response[L"detail"] = Json(detail);
             response[L"tasks"] = std::move(tasks); response[L"warnings"] = std::move(warnings);
             response[L"conflictDirectory"] = Json(result.conflictDirectory);
+            response[L"nativeError"] = Json::Number(result.code);
             response[L"options"] = Options(options);
         } else if (action == SETUP_DIRECTORY || action == SETUP_ADD_PROGRAM) {
             const bool program = action == SETUP_ADD_PROGRAM;

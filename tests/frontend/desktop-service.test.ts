@@ -32,11 +32,18 @@ describe('desktop command boundary', () => {
     expect(invoke).toHaveBeenCalledTimes(1)
   })
   it('keeps a committed result with warnings and rejects malformed outcomes', () => {
-    const saved = { commit: 'saved', message: 'ui.save.response', detail: '', tasks: [], warnings: ['ui.save.response'], conflictDirectory: '', options: null }
+    const saved = { commit: 'saved', message: 'ui.save.response', detail: '', nativeError: 8, tasks: [], warnings: ['ui.save.response'], conflictDirectory: '', options: null }
     expect(parseSaveResult(saved).commit).toBe('saved')
+    expect(parseSaveResult(saved).nativeError).toBe(8)
+    expect(() => parseSaveResult({ ...saved, nativeError: -1 })).toThrow()
     expect(() => parseSaveResult({ ...saved, commit: 'maybe' })).toThrow()
     expect(() => parseSaveResult({ ...saved, warnings: ['unrecognized'] })).toThrow()
     expect(() => parseSaveResult({ ...saved, options: { ...fixture.options, silent: undefined } })).toThrow()
     expect(parseSaveResult({ ...saved, options: fixture.options }).options?.extra).toBe(fixture.options.extra)
+  })
+  it('preserves the detection source and native explanation', async () => {
+    const response = {port: '7897', source: 'Clash Verge Rev', message: 'Detected locally'}
+    vi.mocked(invoke).mockResolvedValue(response)
+    expect(await createSetupService().detectPort('http', '127.0.0.1')).toEqual(response)
   })
 })

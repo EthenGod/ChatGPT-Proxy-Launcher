@@ -1,11 +1,16 @@
-import { useId, useRef, type ReactElement, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
-import { Button } from '@base-ui/react/button'
+import { Children, useId, useRef, type ComponentProps, type ReactElement, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
+import { Button as BaseButton } from '@base-ui/react/button'
 import { Switch } from '@base-ui/react/switch'
 import { Dialog } from '@base-ui/react/dialog'
 import { Menu } from '@base-ui/react/menu'
 import { Tooltip } from '@base-ui/react/tooltip'
 import { Check, ChevronDown } from 'lucide-react'
 import { ScrollBox } from './ScrollBox'
+
+export function Button({ children, ...props }: ComponentProps<typeof BaseButton>) {
+  return <BaseButton {...props}>{typeof children === 'function' ? children : Children.map(children, child =>
+    typeof child === 'string' || typeof child === 'number' ? <span data-motion-text>{child}</span> : child)}</BaseButton>
+}
 
 export function Hint({ label, children }: { label: string; children: ReactElement }) {
   return <Tooltip.Root>
@@ -30,7 +35,7 @@ export function Toggle({ label, checked, disabled, onChange, help, badge }: {
 }) {
   const id = useId()
   return <div className="setting-row">
-    <div className="setting-label"><label htmlFor={id}>{label}</label>{help}{badge && <span id={`${id}-badge`} className="setting-badge">{badge}</span>}</div>
+    <div className="setting-label"><label htmlFor={id}>{label}</label>{help}{badge && <span id={`${id}-badge`} className="setting-badge"><span data-motion-text>{badge}</span></span>}</div>
     <SwitchControl id={id} describedBy={badge ? `${id}-badge` : undefined} checked={checked} disabled={disabled} onChange={onChange} />
   </div>
 }
@@ -51,7 +56,7 @@ export function ChoiceMenu({ label, value, items, onChange, disabled, icon, vari
 }) {
   return <Menu.Root>
     <Hint label={label}><Menu.Trigger className={`menu-trigger ${variant === 'icon' ? 'icon-button' : 'control-button'} ${variant === 'quiet' ? 'quiet-button' : ''}`} disabled={disabled} aria-label={label}>
-      {icon}{variant !== 'icon' && <><span>{items.find(item => item.value === value)?.label}</span><ChevronDown size={14} /></>}
+      {icon}{variant !== 'icon' && <><span data-motion-text>{items.find(item => item.value === value)?.label}</span><ChevronDown size={14} /></>}
     </Menu.Trigger></Hint>
     <Menu.Portal><Menu.Positioner sideOffset={6} align="end" className="menu-positioner">
       <Menu.Popup className="menu-popup">
@@ -83,4 +88,3 @@ export function Modal({ open, title, description, children, actions, onClose, fo
     </Dialog.Portal>
   </Dialog.Root>
 }
-export { Button }

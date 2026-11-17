@@ -73,6 +73,7 @@ pub struct Validation {
     pub arguments: String,
     pub errors: std::collections::BTreeMap<String, String>,
     pub detail: String,
+    pub native_error: u32,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -88,6 +89,7 @@ pub struct SaveResult {
     pub commit: Commit,
     pub message: String,
     pub detail: String,
+    pub native_error: u32,
     pub tasks: Vec<String>,
     pub warnings: Vec<String>,
     pub conflict_directory: String,
@@ -95,7 +97,7 @@ pub struct SaveResult {
 }
 impl SaveResult {
     // The independent ABI outcome survives JSON encoding/decoding/allocation failures.
-    pub fn unavailable(commit: u32, detail: String) -> Self {
+    pub fn unavailable(commit: u32, detail: String, native_error: u32) -> Self {
         Self {
             commit: match commit {
                 1 => Commit::Saved,
@@ -111,6 +113,7 @@ impl SaveResult {
             }
             .into(),
             detail,
+            native_error,
             tasks: vec![],
             warnings: if commit == 1 {
                 vec!["ui.save.response".into()]
@@ -127,6 +130,7 @@ impl SaveResult {
 pub struct Detection {
     pub port: String,
     pub message: String,
+    pub source: String,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

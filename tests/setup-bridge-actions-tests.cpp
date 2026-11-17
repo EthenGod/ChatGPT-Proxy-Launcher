@@ -61,6 +61,11 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(call(SETUP_VALIDATE, Options(invalid)) == 0 && !reply.At(L"valid").Bool());
         invalid = options; invalid.port = L"65536";
         REQUIRE(call(SETUP_VALIDATE, Options(invalid)) == 0 && !reply.At(L"valid").Bool());
+        REQUIRE(automation::WriteJson(reply.At(L"nativeError")) != "0");
+        auto detection = Json::Object(); detection[L"protocol"] = Json(L"http"); detection[L"host"] = Json(L"127.0.0.1");
+        REQUIRE(call(SETUP_DETECT, detection) == 0 && reply.At(L"port").String() == L"7897" && !reply.At(L"source").String().empty());
+        detection[L"protocol"] = Json(L"https");
+        REQUIRE(call(SETUP_DETECT, detection) == 0 && reply.At(L"port").String().empty() && reply.At(L"source").String().empty() && !reply.At(L"message").String().empty());
         auto malformed = Options(options); malformed[L"startup"] = Json(L"true");
         REQUIRE(call(SETUP_SAVE, malformed) != 0 && commit == 0);
         malformed = Options(options); malformed[L"extraKey"] = Json(true);

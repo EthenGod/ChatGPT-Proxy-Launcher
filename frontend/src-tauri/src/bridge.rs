@@ -120,5 +120,6 @@ pub fn action<T: DeserializeOwned>(
 pub fn save(options: Options, paths: Option<&[u8]>) -> Result<SaveResult, BridgeError> {
     let request = serde_json::to_value(options).map_err(|_| BridgeError::native(13))?;
     let (commit, result) = action::<SaveResult>(3, &request, paths, 0);
-    Ok(result.unwrap_or_else(|error| SaveResult::unavailable(commit, error.message)))
+    Ok(result
+        .unwrap_or_else(|error| SaveResult::unavailable(commit, error.message, error.native_error)))
 }

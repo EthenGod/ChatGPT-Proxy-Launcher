@@ -6,6 +6,7 @@
 - 图形配置工具入口为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
 - 新 UI 位于 `frontend/src/`，Tauri/Rust 位于 `frontend/src-tauri/`，C ABI 连接层为 `src/SetupBridge.*`。设置交互在 `features/setup/`，共用控件在 `components/`，真实接口在 `platform/setup-service.ts`，模拟接口在 `platform/mock.ts`。`src/SetupUiServices.*` 供新旧界面共用偏好、原生选择器和保存后处理。默认构建仍使用原生 GUI；阶段约定与验证见 `docs/ui-refactor.md`。
 - `components/ScrollBox.tsx` 统一正文和弹层滚动；`useAppearanceTransition.ts` 处理语言和主题过渡。窗口外观经 `platform/prototype-window.ts` 同步到原生标题栏，权限仅授予主窗口。
+- `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。
 - 新 UI 构建入口为 `frontend/desktop.ps1`。测试源码统一放在 `tests/frontend/`、`tests/rust/` 和 `tests/setup-bridge-*`；测试包及缓存放在 `work/`。`test-harness` 只编入隔离测试包，不进入普通 Tauri 构建或发布产物。
 - `frontend/desktop.ps1 -Command prototype` 构建内存模拟原型，`-Command harness` 构建真实接口的隔离测试包。`frontend/preview.ps1` 默认打开原型，加 `-Functional` 打开隔离功能界面。`tests/ui-prototype-tests.ps1` 同样支持 `-Functional`，检查内嵌页面、调用计数、关闭保护和所属进程清理。两种测试包均强制使用隔离路径；系统操作用替身。
 - `src/SetupNative.h` 提供原生兼容入口，同一 EXE 用 `--compatibility` 在 WebView2 初始化前分流。`src/SetupUiCapabilities.json` 内嵌为资源 102，供 PowerShell 只读识别双界面构建；旧版无此资源，不探测运行库或传入新参数。下载选择与安装替身测试见 `tests/webview-download-tests.ps1`。

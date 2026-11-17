@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { parseSnapshot } from './types'
-import type { SetupService, SaveResult, Validation, ProgramEntry } from '../features/setup/contract'
+import type { SetupService, SaveResult, Validation, ProgramEntry, Detection } from '../features/setup/contract'
 import type { MessageKey } from '../i18n'
 import catalog from '../../../locales/zh-CN.json'
 
@@ -15,7 +15,8 @@ export function parseSaveResult(value: unknown): SaveResult {
     || !messageKey(result.message) || typeof result.detail !== 'string'
     || !Array.isArray(result.tasks) || result.tasks.some(t => t !== 'startup' && t !== 'restart')
     || !Array.isArray(result.warnings) || result.warnings.some(k => !messageKey(k))
-    || typeof result.conflictDirectory !== 'string') throw new Error('Invalid save result')
+    || typeof result.conflictDirectory !== 'string'
+    || !Number.isInteger(result.nativeError) || Number(result.nativeError) < 0 || Number(result.nativeError) > 0xffffffff) throw new Error('Invalid save result')
   // Rust already validates the full Options object. Do not accept malformed data in JS either.
   if (result.options !== null) {
     const options = record(result.options)
@@ -39,8 +40,9 @@ export function createSetupService(): SetupService {
     load: async () => parseSnapshot(await call('read_setup_state')),
     validate: options => call<Validation>('validate_setup', { options }),
     detectPort: async (protocol, host) => {
-      const result = await call<{ port: string }>('detect_setup_port', { protocol, host })
-      return result.port || null
+      const result = await call<Detection>('detect_setup_port', { protocol, host })
+      if (typeof result.port !== 'string' || typeof result.source !== 'string' || typeof result.message !== 'string') throw new Error('Invalid detection result')
+      return { ...result, port: result.port || null }
     },
     save: async options => parseSaveResult(await call('save_setup', { options })),
     chooseDirectory: async initial => (await call<{ path: string }>('choose_setup_directory', { initial })).path || null,

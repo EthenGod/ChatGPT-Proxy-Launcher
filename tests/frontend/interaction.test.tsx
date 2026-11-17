@@ -51,8 +51,11 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('region', { name: 'Launch arguments' })).toHaveTextContent('--no-startup-window')
     expect(host.setTheme).toHaveBeenCalledTimes(2)
   })
-  it('hides proxy fields without discarding input and can reopen them from the keyboard', async () => {
-    const { user } = mount(); await loaded()
+  it('preserves hidden fields and detects once when the proxy is reopened from the keyboard', async () => {
+    const { user, service } = mount(); await loaded()
+    expect(service.calls.detect).toBe(0)
+    let finish!: (value: Awaited<ReturnType<typeof service.detectPort>>) => void
+    const detect = vi.spyOn(service, 'detectPort').mockImplementation(() => new Promise(resolve => { finish = resolve }))
     fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
     const proxy = screen.getByRole('switch', { name: '使用指定代理' })
     await user.click(proxy)
@@ -60,15 +63,20 @@ describe('settings prototype behavior', () => {
     expect(proxy).toHaveFocus()
     await user.keyboard(' ')
     expect(await screen.findByRole('textbox', { name: '端口' })).toHaveValue('24680')
+    expect(detect).toHaveBeenCalledExactlyOnceWith('http', '127.0.0.1')
+    await act(async () => finish({port:'7897', source:'Clash Verge Rev', message:''}))
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('7897')
+    expect(await screen.findByText('来源：Clash Verge Rev')).toBeInTheDocument()
+    expect(proxy).toHaveFocus()
     expect(screen.getByRole('switch', { name: '应用于 Codex' })).toHaveAttribute('aria-checked', 'true')
   })
   it('keeps newer manual input when an older port detection resolves', async () => {
     const { service, user } = mount(); await loaded()
-    let resolve!: (port: string) => void
+    let resolve!: (result: Awaited<ReturnType<typeof service.detectPort>>) => void
     vi.spyOn(service, 'detectPort').mockImplementation(() => new Promise(done => { resolve = done }))
     await user.click(screen.getByRole('button', { name: '检测端口' }))
     fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
-    await act(async () => resolve('7897'))
+    await act(async () => resolve({port: '7897', source: 'Demo', message: ''}))
     expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('24680')
     expect(screen.queryByText(/已填入检测/)).not.toBeInTheDocument()
   })
@@ -94,7 +102,7 @@ describe('settings prototype behavior', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('7897'))
     expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '关闭' }))
-    expect(await screen.findByRole('dialog')).toHaveTextContent('放弃并关闭')
+    expect(await screen.findByRole('dialog', {name:'关闭配置工具'})).toHaveTextContent('放弃并关闭')
   })
   it('dismisses an open help dialog on native close and restores its trigger', async () => {
     const { user, host, requestClose } = mount(); await loaded()

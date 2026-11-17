@@ -6,14 +6,17 @@ import { AlertCircle, ArrowUpRight, CheckCircle2, ChevronDown, CircleHelp, File,
   FolderOpen, Globe2, LoaderCircle, Moon, Plus, Search, Sun } from 'lucide-react'
 import { Button, ChoiceMenu, Hint, Modal, SwitchControl, TextField, Toggle } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
+import { ErrorDetails } from '../../components/ErrorDetails'
+import { NoticeToasts, createNoticeManager, type NoticeData } from '../../components/NoticeToasts'
 import { useAppearanceTransition } from '../../components/useAppearanceTransition'
 import { resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeMessage } from '../../platform/setup-service'
+import { nativeIssue, type ErrorInfo } from './errors'
 import { previewOptions, sameOptions } from './preview'
 import type { ProgramEntry, SaveResult, SetupService, WindowHost, Validation } from './contract'
 
-type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | null
+type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | null
 export function SetupPage({ service, host, scenarioControls, onLanguageChange }: {
   service: SetupService; host: WindowHost; scenarioControls?: React.ReactNode; onLanguageChange?: (language: string) => void
 }) {
@@ -25,7 +28,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const transitionAppearance = useAppearanceTransition()
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
-  const [errorDetail, setErrorDetail] = useState('')
+  const [error, setError] = useState<ErrorInfo | null>(null)
+  const [noticeManager] = useState(createNoticeManager)
   const [preferenceWarnings, setPreferenceWarnings] = useState<MessageKey[]>([])
   const [selecting, setSelecting] = useState(false)
   const [nativeValidation, setNativeValidation] = useState<{ options: SetupOptions; value: Validation } | null>(null)
@@ -63,6 +67,15 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     : previewOptions(options) : null
   const locked = busy || loading || result?.commit === 'rollback-incomplete'
 
+  function notify(message: MessageKey, values: Record<string, string> = {}, detail: NoticeData['detail'] = '', type = 'info', problem?: ErrorInfo) {
+    noticeManager.add({ id: 'activity', type, timeout: problem ? 10000 : 6000,
+      data: { message, values, detail, error: problem } })
+  }
+  function reportFailure(message: MessageKey, cause: unknown) {
+    const problem = nativeIssue(cause)
+    setNotice(message); setError(problem); notify(message, {}, '', 'error', problem)
+  }
+
   const openDialog = (next: Exclude<DialogState, null>) => {
     focusReturn.current = document.activeElement as HTMLElement | null
     setDialog(next); setDialogOpen(true)
@@ -70,7 +83,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   async function close() {
     if (inFlight.current) return
     try { await service.settled?.(); await host.close(); if (alive.current) { setDialogOpen(false); setClosed(true) } }
-    catch { if (alive.current) setNotice('ui.close.failed') }
+    catch (cause) { if (alive.current) reportFailure('ui.close.failed', cause) }
   }
   closeRequest.current = () => {
     if (inFlight.current) return
@@ -86,9 +99,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       if (!alive.current || revision !== loadRevision.current) return
       setSnapshot(data); setOptions({ ...data.options }); setLanguage(data.preferences.language)
       requestedLanguage.current = data.preferences.language
-      setPrograms(data.programs); setErrorDetail(''); setPreferenceWarnings([])
+      setPrograms(data.programs); setError(null); setPreferenceWarnings([])
       setDark(data.preferences.dark); setResult(null); setNotice(null)
-    } catch (error) { if (alive.current && revision === loadRevision.current) { setLoadError(true); setErrorDetail(nativeMessage(error)) } }
+    } catch (cause) { if (alive.current && revision === loadRevision.current) { setLoadError(true); setError(nativeIssue(cause)) } }
     finally { if (alive.current && revision === loadRevision.current) setLoading(false) }
   }, [service])
   useEffect(() => {
@@ -97,7 +110,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     void host.connect(() => closeRequest.current()).then(remove => {
       if (!alive.current) remove()
       else { disconnect = remove; return host.ready() }
-    }).catch(() => { if (alive.current) setNotice('ui.close.failed') })
+    }).catch(cause => { if (alive.current) reportFailure('ui.close.failed', cause) })
     void load()
     return () => { alive.current = false; ++detectRevision.current; ++loadRevision.current; disconnect?.() }
   }, [host, load])
@@ -110,7 +123,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   useLayoutEffect(() => { requestedDark.current = dark }, [dark])
   useEffect(() => {
     let current = true
-    void host.setTheme(dark).catch(() => { if (current) setNotice('ui.theme.failed') })
+    void host.setTheme(dark).catch(cause => { if (current) reportFailure('ui.theme.failed', cause) })
     return () => { current = false }
   }, [dark, host])
   useEffect(() => {
@@ -126,7 +139,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     const timer = setTimeout(() => {
       void service.validate!(options).then(value => {
         if (current && alive.current) setNativeValidation({ options, value })
-      }).catch(error => { if (current && alive.current) setNativeValidation({ options, value: { valid: false, arguments: '', errors: {}, detail: nativeMessage(error) || t('ui.save.invalid') } }) })
+      }).catch(cause => { if (current && alive.current) setNativeValidation({ options, value: { valid: false, arguments: '', errors: {}, ...nativeIssue(cause), detail: nativeMessage(cause) || t('ui.save.invalid') } }) })
     }, 180)
     return () => { current = false; clearTimeout(timer) }
   }, [options, service, busy, resolved])
@@ -154,11 +167,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     if (!options || inFlight.current) return
     if (!service.chooseDirectory) { setSelection(options.directory); openDialog('directory'); return }
     const trigger = document.activeElement as HTMLElement | null
-    inFlight.current = true; setBusy(true); setSelecting(true); setErrorDetail('')
+    inFlight.current = true; setBusy(true); setSelecting(true); setError(null)
     try {
       const path = await service.chooseDirectory(options.directory)
       if (alive.current && path) { setOptions(current => current ? { ...current, directory: path } : current); setResult(null) }
-    } catch (error) { if (alive.current) { setNotice('setup.error.directory'); setErrorDetail(nativeMessage(error)) } }
+    } catch (cause) { if (alive.current) reportFailure('setup.error.directory', cause) }
     finally {
       inFlight.current = false
       if (alive.current) { setBusy(false); setSelecting(false); requestAnimationFrame(() => { if (alive.current) trigger?.focus() }) }
@@ -173,9 +186,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       const entry = await service.selectProgram()
       if (alive.current && entry) {
         setPrograms(current => current.some(p => p.name === entry.name) ? current : [...current, entry])
-        setNotice(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy'); setErrorDetail('')
+        notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success'); setError(null); setNotice(null)
       }
-    } catch (error) { if (alive.current) { setNotice('setup.error.add'); setErrorDetail(nativeMessage(error)) } }
+    } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
     finally {
       inFlight.current = false
       if (alive.current) { setBusy(false); setAdding(false); requestAnimationFrame(() => { if (alive.current) trigger?.focus() }) }
@@ -184,29 +197,38 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
 
   function update<K extends keyof SetupOptions>(key: K, value: SetupOptions[K]) {
     if (locked || !options) return
-    if (['host', 'port', 'protocol', 'proxy'].includes(key)) { ++detectRevision.current; setDetecting(false) }
-    setOptions({ ...options, [key]: value }); setResult(null); setNotice(null); setErrorDetail('')
+    if (['host', 'port', 'protocol', 'proxy'].includes(key)) { ++detectRevision.current; setDetecting(false); noticeManager.close('activity') }
+    setOptions({ ...options, [key]: value }); setResult(null); setNotice(null); setError(null)
   }
-  async function detect() {
-    if (!options || detecting || locked || !options.proxy) return
+  function changeProxy(enabled: boolean) {
+    if (!options || locked || enabled === options.proxy) return
+    update('proxy', enabled)
+    if (enabled) void detect({ ...options, proxy: true })
+  }
+  async function detect(input = options) {
+    if (!input || detecting || locked || !input.proxy) return
     const revision = ++detectRevision.current
     setDetecting(true); setNotice(null); setResult(null)
     try {
-      const port = await service.detectPort(options.protocol, options.host)
+      const detection = await service.detectPort(input.protocol, input.host)
       if (!alive.current || revision !== detectRevision.current || inFlight.current) return
-      if (port) setOptions(current => current ? { ...current, port } : current)
-      setNotice(port ? 'ui.detect.found' : 'ui.detect.empty')
-    } catch { if (alive.current && revision === detectRevision.current) setNotice('ui.detect.failed') }
+      if (detection.port) setOptions(current => current ? { ...current, port: detection.port! } : current)
+      setError(null)
+      notify(detection.port ? 'ui.detect.port' : 'ui.detect.empty', { port: detection.port ?? '' },
+        detection.port && detection.source ? { message: 'ui.detect.source', values: { source: detection.source } } : detection.message,
+        detection.port ? 'success' : 'info')
+    } catch (cause) { if (alive.current && revision === detectRevision.current) reportFailure('ui.detect.failed', cause) }
     finally { if (alive.current && revision === detectRevision.current) setDetecting(false) }
   }
   async function save() {
     if (!options || !snapshot || !validation?.valid || locked || inFlight.current || (snapshot.deployed && !dirty && result?.commit === 'saved')) return
     inFlight.current = true; focusAfterSave.current = true; ++detectRevision.current; setDetecting(false); setBusy(true); setNotice(null); setResult(null)
+    noticeManager.close('activity')
     const submitted = { ...options }
     try {
       const saved = await service.save(submitted)
       if (!alive.current) return
-      setResult(saved); setErrorDetail('')
+      setResult(saved); setError(null)
       if (saved.commit === 'saved') {
         const committed = saved.options ?? submitted
         setOptions(committed)
@@ -216,9 +238,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
           setDialog('result'); setDialogOpen(true)
         }
       }
-    } catch {
+    } catch (cause) {
       // A lost response cannot establish whether writes happened.
-      if (alive.current) setResult({ commit: 'rollback-incomplete', message: 'ui.save.unknown', tasks: [] })
+      if (alive.current) setResult({ commit: 'rollback-incomplete', message: 'ui.save.unknown', tasks: [], ...nativeIssue(cause) })
     } finally {
       inFlight.current = false
       if (alive.current) setBusy(false)
@@ -239,15 +261,15 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       await service.addProgram(entry)
       if (!alive.current) return
       setPrograms(current => current.some(p => p.path === entry.path) ? current : [...current, { ...entry }])
-      setNotice('setup.status.added'); setDialogOpen(false)
-    } catch { if (alive.current) setNotice('setup.error.add') }
+      notify('setup.status.added', {}, '', 'success'); setDialogOpen(false)
+    } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setAdding(false) } }
   }
   async function openLocation(location: 'startup' | 'deployment' | 'windows') {
     if (inFlight.current) return
     inFlight.current = true; setBusy(true); setSelecting(true)
-    try { await service.openLocation(location); if (alive.current && !service.native) setNotice('ui.location.preview') }
-    catch (error) { if (alive.current) { setNotice('setup.error.openfolder'); setErrorDetail(nativeMessage(error)) } }
+    try { await service.openLocation(location); if (alive.current && !service.native) notify('ui.location.preview') }
+    catch (cause) { if (alive.current) reportFailure('setup.error.openfolder', cause) }
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setSelecting(false) } }
   }
   const helpButton = (key: MessageKey, label: string) => <Hint label={label}><Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button></Hint>
@@ -262,7 +284,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     : t(snapshot?.hasSettings ? 'setup.state.missing' : 'setup.state.absent')
   const discard = dialog === 'discard'
   const dialogTitle = t(discard ? 'setup.dialog.close' : dialog === 'help' ? 'ui.help.title' : dialog === 'directory' ? 'setup.dialog.directory'
-    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'preview' ? 'ui.prototype.title' : saved ? 'ui.save.followup' : 'setup.error.saving')
+    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title' : saved ? 'ui.save.followup' : 'setup.error.saving')
 
   if (closed) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1>{t('ui.closed')}</h1><p>{t('ui.prototype.description')}</p>
     <Button className="button primary-button" onClick={() => { setClosed(false); void load() }}>{t('ui.reopen')}</Button></div>
@@ -281,7 +303,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
         </div>
       </header>
       {loading ? <div className="load-state" role="status"><LoaderCircle className="spinner" size={20} />{t('setup.preview.loading')}</div>
-        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t('ui.load.failed')}</p>{errorDetail && <p className="error-detail">{errorDetail}</p>}<Button className="button secondary-button" onClick={() => void load()}>{t('ui.retry')}</Button></div>
+        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t('ui.load.failed')}</p>{error && <ErrorDetails error={error} t={t} />}<Button className="button secondary-button" onClick={() => void load()}>{t('ui.retry')}</Button></div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}
@@ -292,10 +314,10 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
           </div></section>
           <section className="settings-section" aria-labelledby="proxy-title"><Collapsible.Root open={options.proxy}>
             <div className="section-heading"><h2 id="proxy-title"><label htmlFor="proxy-enabled">{t('ui.proxy')}</label></h2>{helpButton('ui.help.proxy', t('setup.dialog.proxy'))}
-              <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls={options.proxy ? 'proxy-details' : undefined} checked={options.proxy} disabled={locked} onChange={value => update('proxy', value)} /></div>
+              <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls={options.proxy ? 'proxy-details' : undefined} checked={options.proxy} disabled={locked} onChange={changeProxy} /></div>
             <Collapsible.Panel id="proxy-details" className="disclosure-panel">
               <div className="settings-card proxy-card">
-                <div className="connection-fields"><div className="field protocol-field"><span id="protocol-label">{t('setup.label.protocol')}</span>
+                <div className="connection-fields"><div className="field protocol-field"><span id="protocol-label" data-motion-text>{t('setup.label.protocol')}</span>
                   <RadioGroup aria-labelledby="protocol-label" className="segmented" value={options.protocol} disabled={locked} onValueChange={value => update('protocol', String(value))}>
                     {['http', 'https', 'socks5'].map(protocol => <Radio.Root key={protocol} value={protocol} className="segment">{protocol.toUpperCase()}</Radio.Root>)}
                   </RadioGroup></div>
@@ -308,9 +330,10 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
             </Collapsible.Panel></Collapsible.Root></section>
           <section className="settings-section" aria-labelledby="preview-title"><h2 id="preview-title">{t('ui.arguments')}</h2>
             <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre className={`argument-preview ${!validation?.valid ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{validation?.valid ? validation.arguments || t('ui.arguments.empty') : validation?.detail || t('setup.preview.invalid')}</pre></ScrollBox>
+            {!validation?.valid && !!validation?.nativeError && <Button className="text-button" onClick={() => { setError(validation); openDialog('error') }}>{t('ui.details')}</Button>}
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
-            <Collapsible.Trigger className="advanced-trigger" disabled={busy}>{t('setup.section.advanced')}<ChevronDown size={16} /></Collapsible.Trigger>
+            <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>
             <Collapsible.Panel className="disclosure-panel advanced-panel">
               <div className="settings-card advanced-card">
                 <TextField label={t('setup.label.directory')} value={options.directory} onChange={event => update('directory', event.target.value)} disabled={locked} error={fieldError('directory')} spellCheck={false}
@@ -330,11 +353,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     <footer className="settings-footer">
       <ScrollBox className="status-scroll" label={t('ui.status')}><div className={`footer-status ${failed ? 'error-text' : saved ? 'success-text' : ''}`} role={failed ? 'alert' : 'status'}>
         {failed ? <AlertCircle size={16} /> : saved ? <CheckCircle2 size={16} /> : null}
-        <span>{status}{errorDetail && <span className="error-detail">{errorDetail}</span>}</span>
+        <span>{status}</span>
+        {error && !loadError && <Button className="text-button" onClick={() => openDialog('error')}>{t('ui.details')}</Button>}
         {result && (failed || result.tasks.length > 0 || !!result.warnings?.length) && <Button className="text-button" onClick={() => openDialog('result')}>{t('ui.details')}</Button>}
       </div></ScrollBox>
       <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
         {!saved && <Button ref={saveButton} className="button primary-button" disabled={locked || !validation?.valid || loadError} onClick={() => void save()}>{busy && !adding && !selecting && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding && !selecting ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
+      <NoticeToasts manager={noticeManager} t={t} onError={problem => { setError(problem); openDialog('error'); focusReturn.current = doneButton.current }} />
     </footer>
     <Modal open={dialogOpen} title={dialogTitle} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!inFlight.current) setDialogOpen(false) }}
       description={discard ? t('setup.dialog.discard') : dialog === 'help' ? t(help) : dialog === 'preview' ? t('ui.prototype.description')
@@ -349,12 +374,12 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       </RadioGroup>}
       {dialog === 'result' && result && <>
         {result.warnings?.map(key => <p key={key}>{t(key)}</p>)}
-        {result.detail && <p className="error-detail">{result.detail}</p>}
+        {!saved || !!result.nativeError ? <ErrorDetails error={result} t={t} /> : result.detail && <p className="error-detail">{result.detail}</p>}
         {result.commit === 'rollback-incomplete' && <p>{t('ui.recovery')}</p>}
         {result.conflictDirectory && <p className="error-detail">{result.conflictDirectory}</p>}
         {result.tasks.map(task => <div className="followup" key={task}><p>{t(task === 'startup' ? 'ui.task.startup' : 'ui.task.restart')}</p>{task === 'startup' && <Button className="control-button" onClick={() => void openLocation('windows')}>{t('ui.openstartup')}<ArrowUpRight size={14} /></Button>}</div>)}
-        {notice === 'ui.location.preview' && <p className="secondary small" role="status">{t(notice)}</p>}
       </>}
+      {dialog === 'error' && error && <ErrorDetails error={error} t={t} />}
     </Modal>
   </div>
 }

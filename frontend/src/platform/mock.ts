@@ -1,6 +1,6 @@
 import type { SetupOptions, SetupSnapshot } from './types'
-import type { SetupService, SaveResult, ProgramEntry } from '../features/setup/contract'
-import type { MessageKey } from '../i18n'
+import type { SetupService, SaveResult, ProgramEntry, Detection } from '../features/setup/contract'
+import { translator, resolveLanguage, type MessageKey } from '../i18n'
 import { previewOptions } from '../features/setup/preview'
 
 export const scenarios = ['normal', 'first', 'missing', 'unknown', 'silent', 'long', 'load-error', 'saving', 'save-error', 'rollback', 'incomplete', 'warnings'] as const
@@ -38,13 +38,16 @@ export class MockSetupService implements SetupService {
   async load() {
     this.calls.load++
     await wait(180 * this.delay)
-    if (this.scenario === 'load-error') throw new Error('ui.load.failed')
+    if (this.scenario === 'load-error') throw { nativeError: 5, message: this.snapshot.options.directory }
     return structuredClone(this.snapshot)
   }
-  async detectPort(protocol: string, host: string): Promise<string | null> {
+  async detectPort(protocol: string, host: string): Promise<Detection> {
     this.calls.detect++
     await wait(1000 * this.delay)
-    return ['127.0.0.1', 'localhost'].includes(host) && protocol !== 'https' ? '7897' : null
+    const t = translator(resolveLanguage(document.documentElement.lang || 'auto'))
+    const found = ['127.0.0.1', 'localhost'].includes(host) && protocol !== 'https'
+    return { port: found ? '7897' : null, source: found ? t('ui.detect.fixture') : '',
+      message: found ? '' : t(protocol === 'https' ? 'proxy.httpsmanual' : 'proxy.localonly') }
   }
   async save(options: SetupOptions): Promise<SaveResult> {
     this.calls.save++
@@ -54,7 +57,7 @@ export class MockSetupService implements SetupService {
     if (this.scenario in failure) {
       const commit = failure[this.scenario as keyof typeof failure]
       return { commit, message: commit === 'not-started' ? 'ui.save.failed' : commit === 'rolled-back' ? 'ui.save.rollback' : 'ui.save.incomplete',
-        detail: options.directory + '\\ChatGPTProxyLauncher.exe', tasks: [] }
+        detail: options.directory + '\\ChatGPTProxyLauncher.exe', nativeError: commit === 'rollback-incomplete' ? 29 : 5, tasks: [] }
     }
     this.snapshot.options = structuredClone(options)
     this.snapshot.deployed = this.snapshot.hasSettings = true

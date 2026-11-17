@@ -73,9 +73,10 @@ fn response_failure_preserves_the_independent_native_commit() {
         (2, "rolled-back"),
         (3, "rollback-incomplete"),
     ] {
-        let response = model::SaveResult::unavailable(code, String::new());
+        let response = model::SaveResult::unavailable(code, String::new(), 8);
         let json = serde_json::to_value(response).unwrap();
         assert_eq!(json["commit"], expected);
+        assert_eq!(json["nativeError"], 8);
         if code == 1 {
             assert_eq!(json["warnings"][0], "ui.save.response");
         }

@@ -6,6 +6,7 @@ export interface SaveResult {
   commit: CommitState
   message: MessageKey
   detail?: string
+  nativeError?: number
   tasks: Array<'startup' | 'restart'>
   warnings?: MessageKey[]
   options?: SetupOptions | null
@@ -13,8 +14,9 @@ export interface SaveResult {
 }
 export interface ProgramEntry { name: string; path: string; arguments: string }
 export interface Validation {
-  valid: boolean; arguments: string; errors: Partial<Record<keyof SetupOptions, MessageKey>>; detail?: string
+  valid: boolean; arguments: string; errors: Partial<Record<keyof SetupOptions, MessageKey>>; detail?: string; nativeError?: number
 }
+export interface Detection { port: string | null; source: string; message: string }
 export interface SetupService {
   native?: boolean
   settled?(): Promise<unknown>
@@ -24,7 +26,7 @@ export interface SetupService {
   selectProgram?(): Promise<ProgramEntry | null>
   setPreferences?(dark: boolean, language: string): Promise<{ preferences: SetupSnapshot['preferences']; warnings: MessageKey[] }>
   load(): Promise<SetupSnapshot>
-  detectPort(protocol: string, host: string): Promise<string | null>
+  detectPort(protocol: string, host: string): Promise<Detection>
   save(options: SetupOptions): Promise<SaveResult>
   addProgram(entry: ProgramEntry): Promise<void>
   openLocation(location: 'startup' | 'deployment' | 'windows'): Promise<void>
