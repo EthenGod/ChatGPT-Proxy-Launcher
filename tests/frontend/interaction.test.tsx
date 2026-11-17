@@ -26,7 +26,7 @@ function mount(service = new MockSetupService('normal', 0)) {
 async function loaded() { await screen.findByRole('textbox', { name: '端口' }) }
 
 describe('settings prototype behavior', () => {
-  it.each(['zh-CN', 'en-US', 'ja-JP'])('preserves the original Codex help in %s', async language => {
+  it.each(['zh-CN', 'en-US', 'ja-JP'])('renders the shared native Codex help in %s', async language => {
     Object.defineProperty(navigator, 'language', { configurable: true, value: language })
     const t = translator(language)
     const { user } = mount()
