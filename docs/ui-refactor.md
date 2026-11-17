@@ -11,6 +11,22 @@
 
 第 1、2、3 阶段及界面细化已完成。按用户确认，第 4 阶段已完成默认入口和交付检查实现。本轮只生成本地测试包，完成验证后暂停。独立原型入口继续使用内存模拟数据。
 
+### 当前验收状态
+
+以下清单汇总最新结果。后文的各轮记录保留当时范围，不表示所有真实环境项目均已通过。
+
+| 项目 | 状态与边界 |
+| --- | --- |
+| 四阶段实现、构建、静态分析、自动回归、单文件与源码包 | 已通过。保留原生兼容入口，不提交、合并或发布。 |
+| 隔离部署、恢复、回滚、并发、快捷方式、附加程序、原生文件选择与命令权限 | 已通过。文件操作只在隔离目录，系统副作用使用替身。 |
+| 三语、主题、语言动画、键盘、短窗口、错误详情、媒体模拟和重复开关 | 已通过限定场景。媒体模拟不代表真实 Windows 设置。最终视觉效果仍由用户确认。 |
+| 正式包读取已有配置与后台只读预检 | 已通过。`info` 和 `plan` 返回成功，预检不提交。原有部署、`.env`、快捷方式和已记录的偏好值不变。 |
+| 真实端口发现与代理 HTTPS 连通 | 已通过。来源提示与详情可用；经当前代理访问两个公开 HTTPS 页面均返回 200，保留证书校验。未验证登录后的 Codex 对话或 WebSocket。 |
+| Windows 150% / 200% 缩放、系统高对比度 | 用户明确要求暂缓，不操作这些设置。 |
+| 跨显示器、独立机器与真实屏幕阅读器 | 未完成。当前没有第二显示器或可用的独立 Windows 测试环境；无障碍树检查不能代替朗读验收。 |
+| WebView2 全新安装 | 未完成。真实引导程序下载和微软签名校验通过，未运行安装器。现有运行库已能打开正式界面；缺少运行库时的分流只用替身验证。 |
+| 登录自启、实际退出 ChatGPT | 未完成真实操作。需要登录周期或独立观察；退出流程会影响承载本任务的桌面应用。已有隔离检查不替代这两项。 |
+
 第 4 阶段仅调整构建、交付边界和相应文档。原生编译抽成共用入口，默认配置器写入 `outputs/`，旧 GUI 单独保存在 `work/ui-native/`。正式前端不内嵌模拟页面，普通 EXE 不包含测试路径入口。风险主要是递归构建、混入旧资源或测试 feature、源码漏打包，以及 WebView2 的启动和内存开销。验收包含原有回归、桥接对照、TypeScript、Rust、静态分析、资源与源码包核验、60 秒空闲和重复关闭。测试只用隔离目录和系统操作替身；真实安装、自启、联网及退出 ChatGPT 另列待验。
 
 第 3 阶段复用现有 C++ 参数、部署、回滚和系统操作。Rust 串行执行原生命令，任务结束前阻止关闭。文件选择沿用 Windows 对话框，保留 `.lnk` 本身；偏好沿用原注册表位置。桥接另传不依赖 JSON 分配的提交状态，避免保存成功后响应失败被误报为未写入。测试包只写隔离路径，代理检测、自启处理、应用退出和打开位置使用替身。实际桌面验收同时检查命令权限、原生选择器和进程退出。
@@ -271,7 +287,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\frontend\preview.ps1 -
 
 - 默认构建输出单个 Tauri 配置器和独立 C++ 启动器。旧 GUI 可单独构建，也继续内嵌为兼容模式。没有修改部署核心或新增常驻服务。
 - 正式包只包含实际设置页，不包含模拟页面和测试路径入口。主窗口只允许内嵌页面导航。前端、Rust、C++、资源版本及同次构建载荷在构建和交付检查中核对。
-- 完整检查接入 `test-build.cmd` 和 `analyze.cmd`。发布脚本先检查再生成两个 EXE、源码 ZIP 和 SHA-256；测试模式只写新的 `work/release-stage-*`。当前源码清单共 190 个文件，不收集缓存、依赖、本机数据或旧产物。
+- 完整检查接入 `test-build.cmd` 和 `analyze.cmd`。发布脚本先检查再生成两个 EXE、源码 ZIP 和 SHA-256；测试模式只写新的 `work/release-stage-*`。当前源码清单共 191 个文件，不收集缓存、依赖、本机数据或旧产物。
 - 三语 README 更新实际操作和构建前提；原生设计与性能文档保留为兼容实现基线。模块地图和交接说明已同步。
 
 ### 验证记录
@@ -324,7 +340,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ui-prototype-tests
 ```powershell
 $root = (Get-Location).Path
 $session = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ui-prototype-tests.ps1 -Action Start -Functional -RemoteDebugging | ConvertFrom-Json
-$endpoint = (Invoke-RestMethod "http://127.0.0.1:$($session.port)/json/version").webSocketDebuggerUrl
+Add-Type -AssemblyName System.Net.Http
+$handler = [Net.Http.HttpClientHandler]::new()
+$handler.UseProxy = $false
+$client = [Net.Http.HttpClient]::new($handler)
+try {
+    $endpoint = ($client.GetStringAsync("http://127.0.0.1:$($session.port)/json/version").GetAwaiter().GetResult() | ConvertFrom-Json).webSocketDebuggerUrl
+} finally { $client.Dispose() }
 $env:npm_config_cache = Join-Path $root 'work/npm-cache'
 $null = New-Item -ItemType Directory -Force -Path 'work/playwright'
 Push-Location 'work/playwright'
@@ -349,3 +371,38 @@ try {
 - 未保存关闭先按 Esc 返回，输入仍在；再次关闭并放弃后，整个所属进程树退出。没有保存部署、安装运行库、更改自启、修改系统代理或关闭真实 ChatGPT。
 
 仍待用户视觉确认、真实 Windows 150% / 200% 及跨显示器、独立机器和真实系统操作。阶段结束后暂停，不提交、合并或发布。
+
+## 无障碍与错误详情补充检查
+
+本轮检查正常和短窗口中的键盘、长输入、错误详情、高对比度及减少动画。只操作隔离功能包，媒体覆盖仅用于当前 WebView2，不改 Windows 设置。判定重点为操作可达、焦点不逃出弹窗、详情可滚动、错误码和处理建议完整，以及输入不丢失。屏幕阅读器和系统级无障碍设置另验。
+
+按上节连接 Playwright CLI，在简体中文界面执行以下命令。脚本不点击保存。先检查正常窗口，再调整隔离窗口外框为 480×400 后重跑。退出和所属进程核验沿用上节步骤。
+
+```powershell
+Push-Location 'work/playwright'
+try {
+    npx.cmd --yes --package @playwright/cli@0.1.24 playwright-cli -s=ui-acceptance run-code --filename=../../tests/ui-accessibility-checks.js
+} finally { Pop-Location }
+```
+
+模拟采用 [Playwright 页面媒体覆盖](https://playwright.dev/docs/emulation)。键盘检查参考 [WAI-ARIA 模态弹窗模式](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)。原生主题先完成切换，再固定模拟的系统配色；两者不能同时切换后立即取样。弹窗焦点占位在下一帧跳转，检查须等待实际焦点稳定。键盘聚焦的提示须移开焦点才会收起。
+
+本轮验证结果：
+
+- 在实际 WebView2 的 640×760 和 464×361 页面中，检查减少动画、浅色与深色高对比度配色、增强对比度各与应用深浅色组合，共 16 组。底部操作和弹窗按钮可见，没有横向溢出。系统配色仅在页面内模拟，不代表 Windows 无障碍设置已验收。
+- Tab、Shift+Tab、Enter、Space、Esc 及短窗口帮助正文的 End 滚动通过。焦点留在弹窗内，关闭后回到入口。无障碍树中的可用按钮、开关、单选和输入均有名称；未进行真实屏幕阅读器朗读检查。
+- 原生校验返回端口错误 87、路径过长错误 206。界面显示错误码、含义、简要解释、处理建议和可展开的技术详情。长参数、中文、空参数及引号保留。减少动画模式没有运行中的动画；检查结束后还原媒体覆盖。
+- 控制台无错误或警告。测试没有提交保存；正常关闭后整个所属进程树退出。Windows PowerShell 5.1 的无代理回环调试客户端、脚本语法、文档检查通过。
+- 本轮只新增桌面验收脚本并更新源码清单和开发文档，产品源码不变。测试包保留相同 EXE，源码包纳入新增脚本，另存新的本地目录，不覆盖旧包。
+
+四阶段实现和本机隔离检查已完成。上述结果不覆盖真实系统缩放、跨显示器、系统高对比度、屏幕阅读器和独立机器。最新暂缓项目与外部环境边界见顶部清单，不将未验证的项目标为通过。
+
+## 正式包与只读环境补充验收
+
+- 正式单 EXE 在已有 WebView2 上打开实际设置页，能识别现有部署并恢复原输入。页面不含原型工具栏，静默启动保留旧值且不可编辑，原生校验通过。`info` 和保留配置的 `plan` 返回成功；`plan` 的 `committed` 为 `false`。
+- 点击真实端口检测后，临时提示显示检测来源，详情保留“检测不代表联网已成功”的说明。详情可关闭，字段没有校验错误。没有提交保存。
+- 用页面读出的当前代理发送两次无账号、无 Cookie 的 HTTPS HEAD 请求。两个公开页面均返回 200，TLS 证书校验正常。此项只证明这两次请求的代理连通性，不证明登录、自启、Codex 对话或 WebSocket 行为。
+- 项目使用的 WebView2 引导程序完成真实下载，并通过有效微软签名校验。没有执行安装器，没有卸载现有运行库。
+- 隔离窗口持续空闲约 57 分钟，只加载一次并执行一次初始校验，没有重复业务调用。结束前进程树共 7 个进程，私有内存约 188.89 MiB。此时尚未附加调试器；没有同窗口的早期内存采样，不能据此判定长期增长趋势。
+- 正式窗口和本轮隔离窗口都通过关闭按钮退出，所属进程无残留。既有部署、设置、`.env` 和快捷方式逐项核对未变，记录过的注册表基线值也未变。原始记录只留在忽略的 `work/` 目录，源码包不包含个人配置、快照或备份。
+- 本轮没有改产品代码。只更新验收说明，并复核本地测试包。Windows 缩放与系统高对比度按用户要求暂缓；真实安装、登录周期和退出当前桌面应用等项目仍保留明确边界。
