@@ -3,12 +3,14 @@ param(
     [ValidateSet('Smoke','Start','Inspect','RequestClose','VerifyClosed')][string]$Action='Smoke',
     [string]$Session,
     [switch]$RemoteDebugging,
+    [switch]$Functional,
+    [ValidateRange(0,5000)][int]$SaveDelayMilliseconds=0,
     [ValidateRange(1,60)][int]$IdleSeconds=60
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot
-$exe=Join-Path $projectRoot 'work\ui-prototype\ChatGPTLauncherSetup.exe'
-$parent=Join-Path $projectRoot 'work\ui-prototype-tests'
+$exe=Join-Path $projectRoot $(if($Functional) {'work\ui-stage1-test\ChatGPTLauncherSetup.exe'} else {'work\ui-prototype\ChatGPTLauncherSetup.exe'})
+$parent=Join-Path $projectRoot $(if($Functional) {'work\ui-functional-tests'} else {'work\ui-prototype-tests'})
 function Require([bool]$Value, [string]$Message) { if (!$Value) { throw $Message } }
 if (!('PrototypeCloseMessage' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -53,6 +55,7 @@ function Start-Preview {
     $info=[Diagnostics.ProcessStartInfo]::new()
     $info.FileName=$exe; $info.WorkingDirectory=$root; $info.UseShellExecute=$false
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT']=$root
+    if($Functional -and $SaveDelayMilliseconds) { $info.EnvironmentVariables['CHATGPT_SETUP_TEST_SAVE_DELAY_MS']=[string]$SaveDelayMilliseconds }
     $port=0
     if($RemoteDebugging) {
         $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
@@ -66,6 +69,12 @@ function Start-Preview {
         while(![IO.File]::Exists((Join-Path $root 'ui-ready.json'))) {
             Require (!$process.HasExited -and [DateTime]::UtcNow -lt $deadline) 'Prototype did not become ready'
             Start-Sleep -Milliseconds 100
+        }
+        if($Functional) {
+            while(![IO.File]::Exists((Join-Path $root 'actions.json'))) {
+                Require (!$process.HasExited -and [DateTime]::UtcNow -lt $deadline) 'Initial native validation did not finish'
+                Start-Sleep -Milliseconds 50
+            }
         }
         $metadata=@{processId=$process.Id; started=$process.StartTime.ToUniversalTime().Ticks; readyMs=$timer.Elapsed.TotalMilliseconds; port=$port; exe=$exe; root=$root}
         [IO.File]::WriteAllText((Join-Path $root 'session.json'),($metadata | ConvertTo-Json))
@@ -89,8 +98,11 @@ function Owned-Process($Metadata) {
     return $process
 }
 function Inspect-Preview($Metadata) {
-    Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state'
-    Require (![IO.File]::Exists((Join-Path $Metadata.root 'read-ok.json'))) 'Prototype called the real read bridge'
+    if(!$Functional) { Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state' }
+    if($Functional) {
+        $read=Get-Content -LiteralPath (Join-Path $Metadata.root 'read-ok.json') -Raw | ConvertFrom-Json
+        Require ($read.reads -eq 1) 'Operational page must load once, without polling'
+    } else { Require (![IO.File]::Exists((Join-Path $Metadata.root 'read-ok.json'))) 'Prototype called the real read bridge' }
     $rows=@(Tree $Metadata.processId)
     $samples=@(foreach($row in $rows) {
         $process=Get-Process -Id $row.ProcessId -ErrorAction Stop
@@ -112,8 +124,8 @@ function Verify-Closed($Metadata) {
         if($remaining.Count) { Start-Sleep -Milliseconds 100 }
     } while($remaining.Count -and [DateTime]::UtcNow -lt $deadline)
     Require ($remaining.Count -eq 0) 'An owned prototype process remained after close'
-    Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state'
-    Write-Host 'PASS normal close with no remaining owned process or deployment writes'
+    if(!$Functional) { Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state' }
+    Write-Host 'PASS normal close with no remaining owned process; isolated session'
 }
 switch($Action) {
     'Start' { Start-Preview | ConvertTo-Json }
@@ -139,8 +151,10 @@ switch($Action) {
             $sample=Inspect-Preview $metadata
             $seconds=if($cycle -eq 1) { $IdleSeconds } else { 2 }
             Write-Host "Prototype cycle $cycle ready; observing $seconds seconds"
+            $actionsBefore=if($Functional) { [IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) } else { '' }
             for($second=0;$second -lt $seconds;$second++) { Start-Sleep -Seconds 1 }
             $sample=Inspect-Preview $metadata
+            if($Functional) { Require ([IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) -eq $actionsBefore) 'Idle page repeated a native command' }
             [IO.File]::WriteAllText((Join-Path $metadata.root 'metrics.json'),($sample | ConvertTo-Json))
             Write-Output ($sample | ConvertTo-Json -Compress)
             $process=Owned-Process $metadata

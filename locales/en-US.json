@@ -58,7 +58,7 @@
     "ui.invalid.extra": "Arguments are too long or contain invalid characters",
     "ui.invalid.bypass": "Addresses cannot contain newlines or null characters",
     "ui.arguments.empty": "No launch arguments",
-    "ui.save.invalid": "Correct the highlighted fields first",
+    "ui.save.invalid": "Check the entered values",
     "ui.save.failed": "Could not save: the target file is in use. Nothing was written.",
     "ui.save.rollback": "Saving failed. The previous configuration was restored.",
     "ui.save.incomplete": "Rollback is incomplete. Check the target folder and reopen setup.",
@@ -349,6 +349,7 @@
     "download.redirected": "The temporary folder was redirected; cleanup was skipped: {path}",
     "download.removefile": "Could not remove temporary file: {path}",
     "download.keepfolder": "Temporary folder retained: {path}",
-    "download.incompletecleanup": "Temporary download files could not be fully removed."
+    "download.incompletecleanup": "Temporary download files could not be fully removed.",
+    "ui.save.response": "Settings were saved, but the full result is unavailable. Reopen the configurator to check the settings, startup options, and whether ChatGPT needs to be restarted."
   }
 }

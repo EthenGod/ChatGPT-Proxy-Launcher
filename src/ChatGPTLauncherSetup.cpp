@@ -3,6 +3,7 @@
 #include "Localization.h"
 #include "SetupCommandLine.h"
 #include "SetupNative.h"
+#include "SetupUiServices.h"
 #include "StartupApps.h"
 #include "SetupResources.h"
 #include "StartupIntegration.h"
@@ -85,31 +86,11 @@ PCWSTR ChatGPTCloseMessage(setup::ChatGPTCloseResult result) {
     if (result == setup::ChatGPTCloseResult::NotRunning) return l10n::Text("setup.quit.absent");
     return l10n::Text("setup.quit.manual");
 }
-bool ReadCodexEnvPreference() {
-    DWORD enabled = 1, size = sizeof(enabled);
-    return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"ConfigureCodexEnv", RRF_RT_REG_DWORD,
-        nullptr, &enabled, &size) != ERROR_SUCCESS || enabled != 0;
-}
-bool SaveCodexEnvPreference(bool enabled) {
-    const DWORD value = enabled ? 1 : 0;
-    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"ConfigureCodexEnv", REG_DWORD,
-        &value, sizeof(value)) == ERROR_SUCCESS;
-}
-bool ReadDarkPreference() {
-    DWORD light = 0, size = sizeof(light);
-    return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", RRF_RT_REG_DWORD,
-        nullptr, &light, &size) != ERROR_SUCCESS || light != 1;
-}
-bool SaveDarkPreference(bool dark) {
-    const DWORD light = dark ? 0 : 1;
-    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", REG_DWORD,
-        &light, sizeof(light)) == ERROR_SUCCESS;
-}
-bool SaveLanguagePreference() {
-    PCWSTR value = l10n::FollowsSystem() ? L"auto" : l10n::Current().tag;
-    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"Language", REG_SZ,
-        value, static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
-}
+using setup::ui::ReadCodexEnvPreference;
+using setup::ui::SaveCodexEnvPreference;
+using setup::ui::ReadDarkPreference;
+using setup::ui::SaveDarkPreference;
+using setup::ui::SaveLanguagePreference;
 constexpr UINT LanguageMenuBase = 40000;
 PCWSTR LanguageMenuText(size_t index) { return index == 0 ? l10n::Text("setup.language.system") : l10n::At(index - 1).name; }
 bool LanguageMenuSelected(size_t index) {
@@ -945,52 +926,16 @@ void App::Command(int id, int notification) {
     }
     if ((id == Browse || id == AddProgram) && notification == BN_CLICKED) {
         const bool selectProgram = id == AddProgram;
-        IFileOpenDialog* dialog = nullptr;
-        HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
-        native::ComPtr<IFileOpenDialog> ownedDialog(dialog);
-        if (SUCCEEDED(hr)) {
-            DWORD flags = 0;
-            hr = dialog->GetOptions(&flags);
-            if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | (selectProgram ? FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS : FOS_PICKFOLDERS) | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-            std::wstring supported;
-            if (selectProgram) for (const auto& format : companions::Formats) {
-                if (!supported.empty()) supported += L';';
-                supported += L'*'; supported += format.ext;
-            }
-            const COMDLG_FILTERSPEC filters[] = {
-                {l10n::Text("setup.filter.supported"), supported.c_str()},
-                {l10n::Text("setup.filter.shortcuts"), L"*.lnk"}, {l10n::Text("setup.filter.batch"), L"*.bat;*.cmd"},
-                {l10n::Text("setup.filter.powershell"), L"*.ps1"}, {l10n::Text("setup.filter.windows"), L"*.vbs;*.js;*.wsf"},
-                {l10n::Text("setup.filter.python"), L"*.py;*.pyw"}, {l10n::Text("setup.filter.node"), L"*.cjs;*.mjs"},
-                {l10n::Text("setup.filter.java"), L"*.jar"}, {l10n::Text("setup.filter.apps"), L"*.exe"}
-            };
-            if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
-            dialog->SetTitle(selectProgram ? l10n::Text("setup.dialog.program") : l10n::Text("setup.dialog.directory"));
-            IShellItem* initial = nullptr;
-            if (!selectProgram && SUCCEEDED(SHCreateItemFromParsingName(Text(Directory).c_str(), nullptr, IID_PPV_ARGS(&initial)))) {
-                dialog->SetFolder(initial); initial->Release();
-            }
-            if (SUCCEEDED(hr)) hr = dialog->Show(window);
-            if (SUCCEEDED(hr)) {
-                IShellItem* item = nullptr;
-                hr = dialog->GetResult(&item);
-                if (SUCCEEDED(hr)) {
-                    native::ComPtr<IShellItem> ownedItem(item);
-                    PWSTR path = nullptr; hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
-                    native::TaskPtr<wchar_t> ownedPath(path);
-                    if (SUCCEEDED(hr)) {
-                        if (selectProgram) {
-                            const auto added = setup::AddCompanionProgram(paths, path);
-                            if (!added) ShowSetupError(window, added, l10n::Text("setup.error.add"));
-                            else Set(Footer, savedThisSession ? l10n::Text("setup.status.added")
-                                : l10n::Text("setup.status.addeddeploy"));
-                        } else Set(Directory, path);
-                    }
-                }
-            }
+        std::wstring path;
+        const auto selected = setup::ui::ChoosePath(window, selectProgram, selectProgram ? L"" : Text(Directory), path);
+        if (!selected) ShowSetupError(window, selected, l10n::Text(selectProgram ? "setup.error.program" : "setup.error.directory"));
+        else if (!path.empty()) {
+            if (selectProgram) {
+                const auto added = setup::AddCompanionProgram(paths, path);
+                if (!added) ShowSetupError(window, added, l10n::Text("setup.error.add"));
+                else Set(Footer, savedThisSession ? l10n::Text("setup.status.added") : l10n::Text("setup.status.addeddeploy"));
+            } else Set(Directory, path);
         }
-        if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED))
-            MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), selectProgram ? l10n::Text("setup.error.program") : l10n::Text("setup.error.directory"), MB_OK | MB_ICONERROR);
         return;
     }
     if (id == CloseButton && notification == BN_CLICKED) { SendMessageW(window, WM_CLOSE, 0, 0); return; }
@@ -1036,14 +981,8 @@ void App::BeginSave() {
                     completion->result.code = ERROR_NOT_ENOUGH_MEMORY;
                     completion->result.message.swap(failureMessage);
                 }
-                if (completion->result && completion->checkStartup) {
-                    try { completion->startupReport = setup::TryDisableOfficialStartup(); }
-                    catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
-                }
-                if (completion->result && completion->wroteCodexEnv) {
-                    try { completion->closeResult = setup::TryCloseChatGPT(); }
-                    catch (...) { completion->closeResult = setup::ChatGPTCloseResult::NeedsManualExit; }
-                }
+                if (completion->result) setup::ui::CompleteSave(completion->checkStartup, completion->wroteCodexEnv,
+                    completion->startupReport, completion->closeResult);
                 CoUninitialize();
             }
             saveFinished.store(true, std::memory_order_release);

@@ -1,7 +1,23 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "setup-readonly",
-  "description": "Read existing settings and manage this configuration window.",
-  "windows": ["main"],
-  "permissions": ["allow-read-setup-state", "allow-show-setup-window", "allow-close-setup-window", "core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-set-theme"]
+  "description": "Configure the launcher through bounded native commands for the main window only.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-read-setup-state",
+    "allow-show-setup-window",
+    "allow-close-setup-window",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-theme",
+    "allow-validate-setup",
+    "allow-detect-setup-port",
+    "allow-save-setup",
+    "allow-choose-setup-directory",
+    "allow-add-setup-program",
+    "allow-open-setup-location",
+    "allow-set-setup-preferences"
+  ]
 }

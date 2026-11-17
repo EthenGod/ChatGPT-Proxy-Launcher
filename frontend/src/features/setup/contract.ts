@@ -7,9 +7,22 @@ export interface SaveResult {
   message: MessageKey
   detail?: string
   tasks: Array<'startup' | 'restart'>
+  warnings?: MessageKey[]
+  options?: SetupOptions | null
+  conflictDirectory?: string
 }
 export interface ProgramEntry { name: string; path: string; arguments: string }
+export interface Validation {
+  valid: boolean; arguments: string; errors: Partial<Record<keyof SetupOptions, MessageKey>>; detail?: string
+}
 export interface SetupService {
+  native?: boolean
+  settled?(): Promise<unknown>
+  picker?: { directories: string[]; programs: ProgramEntry[] }
+  validate?(options: SetupOptions): Promise<Validation>
+  chooseDirectory?(initial: string): Promise<string | null>
+  selectProgram?(): Promise<ProgramEntry | null>
+  setPreferences?(dark: boolean, language: string): Promise<{ preferences: SetupSnapshot['preferences']; warnings: MessageKey[] }>
   load(): Promise<SetupSnapshot>
   detectPort(protocol: string, host: string): Promise<string | null>
   save(options: SetupOptions): Promise<SaveResult>

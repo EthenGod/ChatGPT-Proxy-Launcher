@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
+param([switch]$Functional)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot
-$exe = Join-Path $projectRoot 'work\ui-prototype\ChatGPTLauncherSetup.exe'
-if (![IO.File]::Exists($exe)) { throw 'Build first: frontend\desktop.ps1 -Command prototype' }
+$exe = Join-Path $projectRoot $(if ($Functional) { 'work\ui-stage1-test\ChatGPTLauncherSetup.exe' } else { 'work\ui-prototype\ChatGPTLauncherSetup.exe' })
+if (![IO.File]::Exists($exe)) { throw 'Build first: frontend\desktop.ps1 -Command prototype (or harness for -Functional)' }
 $session = Join-Path $projectRoot ('work\ui-prototype-sessions\' + [guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($session)
 $info = New-Object Diagnostics.ProcessStartInfo

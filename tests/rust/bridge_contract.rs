@@ -64,3 +64,20 @@ fn compatibility_accepts_only_a_single_explicit_switch() {
         );
     }
 }
+
+#[test]
+fn response_failure_preserves_the_independent_native_commit() {
+    for (code, expected) in [
+        (0, "not-started"),
+        (1, "saved"),
+        (2, "rolled-back"),
+        (3, "rollback-incomplete"),
+    ] {
+        let response = model::SaveResult::unavailable(code, String::new());
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["commit"], expected);
+        if code == 1 {
+            assert_eq!(json["warnings"][0], "ui.save.response");
+        }
+    }
+}

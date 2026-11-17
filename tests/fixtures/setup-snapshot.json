@@ -20,5 +20,11 @@
     "extra": "\"\" \"中文 参数\" \"quote\\\"end\"",
     "directory": "C:\\Example\\Launcher"
   },
-  "preferences": { "dark": true, "language": "auto", "resolvedLanguage": "zh-CN" }
+  "preferences": {
+    "dark": true,
+    "language": "auto",
+    "resolvedLanguage": "zh-CN"
+  },
+  "defaultDirectory": "C:\\Apps\\ChatGPT Launcher",
+  "programs": []
 }

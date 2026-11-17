@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Options {
     pub startup: bool,
@@ -37,6 +37,8 @@ pub struct Snapshot {
     pub options: Options,
     pub preferences: Preferences,
     pub payload_bytes: u32,
+    pub default_directory: String,
+    pub programs: Vec<ProgramEntry>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -55,4 +57,86 @@ impl BridgeError {
             commit: "not-started".into(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramEntry {
+    pub name: String,
+    pub path: String,
+    pub arguments: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Validation {
+    pub valid: bool,
+    pub arguments: String,
+    pub errors: std::collections::BTreeMap<String, String>,
+    pub detail: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Commit {
+    NotStarted,
+    Saved,
+    RolledBack,
+    RollbackIncomplete,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveResult {
+    pub commit: Commit,
+    pub message: String,
+    pub detail: String,
+    pub tasks: Vec<String>,
+    pub warnings: Vec<String>,
+    pub conflict_directory: String,
+    pub options: Option<Options>,
+}
+impl SaveResult {
+    // The independent ABI outcome survives JSON encoding/decoding/allocation failures.
+    pub fn unavailable(commit: u32, detail: String) -> Self {
+        Self {
+            commit: match commit {
+                1 => Commit::Saved,
+                2 => Commit::RolledBack,
+                3 => Commit::RollbackIncomplete,
+                _ => Commit::NotStarted,
+            },
+            message: match commit {
+                1 => "ui.save.response",
+                2 => "ui.save.rollback",
+                3 => "ui.save.incomplete",
+                _ => "ui.save.failed",
+            }
+            .into(),
+            detail,
+            tasks: vec![],
+            warnings: if commit == 1 {
+                vec!["ui.save.response".into()]
+            } else {
+                vec![]
+            },
+            conflict_directory: String::new(),
+            options: None,
+        }
+    }
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Detection {
+    pub port: String,
+    pub message: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Selection {
+    pub path: String,
+    pub entry: Option<ProgramEntry>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreferenceResult {
+    pub preferences: Preferences,
+    pub warnings: Vec<String>,
 }

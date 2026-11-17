@@ -21,12 +21,13 @@ const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms
 
 /** No invoke, filesystem, registry, fetch, storage or system actions. Reset on reload. */
 export class MockSetupService implements SetupService {
+  picker = { directories: [defaultDirectory, 'D:\\Tools\\ChatGPT Launcher', 'C:\\Apps\\工作工具\\ChatGPT Launcher'], programs: samplePrograms }
   programs: ProgramEntry[] = []
   calls = { load: 0, detect: 0, save: 0, add: 0, open: 0 }
   private snapshot: SetupSnapshot
   constructor(readonly scenario: Scenario = 'normal', private delay = 1) {
     this.snapshot = {
-      schemaVersion: 1, setupVersion: '1.1.3', deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
+      schemaVersion: 1, defaultDirectory, programs: [], setupVersion: '1.1.3', deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
       deployed: !['first', 'missing'].includes(scenario), hasSettings: scenario !== 'first', validArguments: true, notice: '', payloadBytes: 1,
       preferences: { dark: true, language: 'auto', resolvedLanguage: 'zh-CN' },
       options: { startup: false, silent: scenario === 'silent', desktop: true, proxy: true, codexEnv: true,

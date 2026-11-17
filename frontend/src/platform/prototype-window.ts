@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { desktop } from './desktop'
 import type { WindowHost } from '../features/setup/contract'
 
-// Prototype interaction never calls native configuration commands.
+// Shared window lifecycle for operational and prototype pages; no configuration I/O.
 export const prototypeWindow: WindowHost = {
   connect: async onClose => isTauri() ? listen('setup-close-requested', onClose) : () => {},
   ready: async () => { if (isTauri()) await desktop.ready() },

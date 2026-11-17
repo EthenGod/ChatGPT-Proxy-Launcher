@@ -52,7 +52,6 @@ pub fn record_read(state: &crate::model::Snapshot) {
     .expect("test read observation");
 }
 
-#[cfg(feature = "ui-prototype")]
 pub fn record_close(approved: bool) {
     use std::sync::Mutex;
     static COUNTS: Mutex<(usize, usize)> = Mutex::new((0, 0));
@@ -68,4 +67,26 @@ pub fn record_close(approved: bool) {
         serde_json::to_vec(&report).unwrap(),
     )
     .expect("test close observation");
+}
+
+pub fn record_action(action: u32) {
+    use std::{collections::BTreeMap, sync::Mutex};
+    static COUNTS: Mutex<BTreeMap<u32, usize>> = Mutex::new(BTreeMap::new());
+    let mut counts = COUNTS.lock().expect("test action counts");
+    *counts.entry(action).or_default() += 1;
+    std::fs::write(
+        root().join("actions.json"),
+        serde_json::to_vec(&*counts).unwrap(),
+    )
+    .expect("test command observation");
+    drop(counts);
+    if action == 3 {
+        if let Some(delay) = std::env::var("CHATGPT_SETUP_TEST_SAVE_DELAY_MS")
+            .ok()
+            .and_then(|text| text.parse::<u64>().ok())
+            .filter(|delay| *delay <= 5000)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+    }
 }

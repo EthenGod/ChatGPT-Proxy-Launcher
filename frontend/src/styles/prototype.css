@@ -240,3 +240,6 @@ button svg { flex-shrink: 0; }
   .scroll-thumb { background: CanvasText; forced-color-adjust: none; }
   .scroll-track:hover .scroll-thumb { background: Highlight; }
 }
+
+/* The operational page has no prototype status toolbar. */
+.setup-shell.native-shell { grid-template-rows: minmax(0, 1fr) auto; }

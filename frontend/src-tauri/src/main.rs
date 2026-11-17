@@ -9,46 +9,184 @@ mod embedded_assets;
 mod harness;
 mod model;
 
-use model::{BridgeError, Snapshot};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use model::{
+    BridgeError, Detection, Options, PreferenceResult, SaveResult, Selection, Snapshot, Validation,
 };
-#[cfg(feature = "ui-prototype")]
-use tauri::Emitter;
-use tauri::Manager;
+use serde::de::DeserializeOwned;
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+use tauri::{Emitter, Manager};
 
+// Closing and task admission share one total order across both atomics.
 struct NativeState {
-    busy: Arc<AtomicBool>,
+    pending: Arc<AtomicUsize>,
+    serial: Arc<Mutex<()>>,
+    closing: Arc<AtomicBool>,
     paths: Option<Vec<u8>>,
-    #[cfg(feature = "ui-prototype")]
-    allow_close: AtomicBool,
 }
-struct BusyGuard(Arc<AtomicBool>);
-impl Drop for BusyGuard {
+struct JobGuard(Arc<AtomicUsize>);
+impl Drop for JobGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
-
-#[tauri::command]
-async fn read_setup_state(state: tauri::State<'_, NativeState>) -> Result<Snapshot, BridgeError> {
-    if state.busy.swap(true, Ordering::Acquire) {
+async fn run<R, F>(state: &NativeState, work: F) -> Result<R, BridgeError>
+where
+    R: Send + 'static,
+    F: FnOnce(Option<&[u8]>) -> Result<R, BridgeError> + Send + 'static,
+{
+    if state.closing.load(Ordering::SeqCst) {
         return Err(BridgeError::native(170));
     }
-    let guard = BusyGuard(state.busy.clone());
+    state.pending.fetch_add(1, Ordering::SeqCst);
+    let guard = JobGuard(state.pending.clone());
+    if state.closing.load(Ordering::SeqCst) {
+        return Err(BridgeError::native(170));
+    }
+    let serial = state.serial.clone();
     let paths = state.paths.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = guard;
-        let snapshot = bridge::read_state(paths.as_deref())?;
+        let _pending = guard;
+        let _serial = serial.lock().map_err(|_| BridgeError::native(13))?;
+        work(paths.as_deref())
+    })
+    .await
+    .map_err(|_| BridgeError {
+        native_error: 13,
+        message: String::new(),
+        commit: "unknown".into(),
+    })?
+}
+async fn action<T: DeserializeOwned + Send + 'static>(
+    state: &NativeState,
+    code: u32,
+    request: serde_json::Value,
+    owner: usize,
+) -> Result<T, BridgeError> {
+    // The visual prototype can never write real or isolated deployment data.
+    if cfg!(feature = "ui-prototype") {
+        return Err(BridgeError::native(5));
+    }
+    run(state, move |paths| {
+        #[cfg(feature = "test-harness")]
+        harness::record_action(code);
+        bridge::action(code, &request, paths, owner).1
+    })
+    .await
+}
+#[tauri::command]
+async fn read_setup_state(state: tauri::State<'_, NativeState>) -> Result<Snapshot, BridgeError> {
+    run(&state, |paths| {
+        let snapshot = bridge::read_state(paths)?;
         #[cfg(feature = "test-harness")]
         harness::record_read(&snapshot);
         Ok(snapshot)
     })
     .await
-    .map_err(|_| BridgeError::native(13))?
 }
-
+#[tauri::command]
+async fn validate_setup(
+    state: tauri::State<'_, NativeState>,
+    options: Options,
+) -> Result<Validation, BridgeError> {
+    action(
+        &state,
+        1,
+        serde_json::to_value(options).map_err(|_| BridgeError::native(13))?,
+        0,
+    )
+    .await
+}
+#[tauri::command]
+async fn detect_setup_port(
+    state: tauri::State<'_, NativeState>,
+    protocol: String,
+    host: String,
+) -> Result<Detection, BridgeError> {
+    action(
+        &state,
+        2,
+        serde_json::json!({"protocol":protocol,"host":host}),
+        0,
+    )
+    .await
+}
+#[tauri::command]
+async fn save_setup(
+    state: tauri::State<'_, NativeState>,
+    options: Options,
+) -> Result<SaveResult, BridgeError> {
+    if cfg!(feature = "ui-prototype") {
+        return Err(BridgeError::native(5));
+    }
+    run(&state, move |paths| {
+        #[cfg(feature = "test-harness")]
+        harness::record_action(3);
+        bridge::save(options, paths)
+    })
+    .await
+}
+fn owner(window: &tauri::WebviewWindow) -> Result<usize, BridgeError> {
+    if window.label() != "main" {
+        return Err(BridgeError::native(5));
+    }
+    window
+        .hwnd()
+        .map(|hwnd| hwnd.0 as usize)
+        .map_err(|_| BridgeError::native(6))
+}
+#[tauri::command]
+async fn choose_setup_directory(
+    state: tauri::State<'_, NativeState>,
+    window: tauri::WebviewWindow,
+    initial: String,
+) -> Result<Selection, BridgeError> {
+    action(
+        &state,
+        4,
+        serde_json::json!({"initial":initial}),
+        owner(&window)?,
+    )
+    .await
+}
+#[tauri::command]
+async fn add_setup_program(
+    state: tauri::State<'_, NativeState>,
+    window: tauri::WebviewWindow,
+) -> Result<Selection, BridgeError> {
+    action(&state, 5, serde_json::json!({}), owner(&window)?).await
+}
+#[tauri::command]
+async fn open_setup_location(
+    state: tauri::State<'_, NativeState>,
+    window: tauri::WebviewWindow,
+    location: String,
+) -> Result<(), BridgeError> {
+    let _: serde_json::Value = action(
+        &state,
+        6,
+        serde_json::json!({"location":location}),
+        owner(&window)?,
+    )
+    .await?;
+    Ok(())
+}
+#[tauri::command]
+async fn set_setup_preferences(
+    state: tauri::State<'_, NativeState>,
+    dark: bool,
+    language: String,
+) -> Result<PreferenceResult, BridgeError> {
+    action(
+        &state,
+        7,
+        serde_json::json!({"dark":dark,"language":language}),
+        0,
+    )
+    .await
+}
 #[tauri::command]
 fn show_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -61,18 +199,26 @@ fn show_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
     }
     Ok(())
 }
-
 #[tauri::command]
-async fn close_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
-    // Closing a WebView from its synchronous IPC callback can block teardown.
-    #[cfg(feature = "ui-prototype")]
+async fn close_setup_window(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, NativeState>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("unexpected-window".into());
+    }
+    state.closing.store(true, Ordering::SeqCst);
+    if state.pending.load(Ordering::SeqCst) != 0 {
+        state.closing.store(false, Ordering::SeqCst);
+        return Err("busy".into());
+    }
+    #[cfg(feature = "test-harness")]
     harness::record_close(true);
-    #[cfg(feature = "ui-prototype")]
-    window
-        .state::<NativeState>()
-        .allow_close
-        .store(true, Ordering::Release);
-    window.close().map_err(|e| e.to_string())
+    if let Err(error) = window.close() {
+        state.closing.store(false, Ordering::SeqCst);
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 fn main() {
@@ -99,10 +245,10 @@ fn main() {
     let context = tauri::generate_context!();
     let result = tauri::Builder::default()
         .manage(NativeState {
-            busy: Arc::new(AtomicBool::new(false)),
+            pending: Arc::new(AtomicUsize::new(0)),
+            serial: Arc::new(Mutex::new(())),
+            closing: Arc::new(AtomicBool::new(false)),
             paths,
-            #[cfg(feature = "ui-prototype")]
-            allow_close: AtomicBool::new(false),
         })
         .setup(|app| {
             let config = &app.config().app.windows[0];
@@ -132,24 +278,24 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             read_setup_state,
             show_setup_window,
-            close_setup_window
+            close_setup_window,
+            validate_setup,
+            detect_setup_port,
+            save_setup,
+            choose_setup_directory,
+            add_setup_program,
+            open_setup_location,
+            set_setup_preferences
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Even read-only native work must finish before the process exits.
-                if window.state::<NativeState>().busy.load(Ordering::Acquire) {
-                    api.prevent_close();
-                }
-                #[cfg(feature = "ui-prototype")]
-                if !window
-                    .state::<NativeState>()
-                    .allow_close
-                    .load(Ordering::Acquire)
+                let state = window.state::<NativeState>();
+                if state.pending.load(Ordering::SeqCst) != 0
+                    || !state.closing.load(Ordering::SeqCst)
                 {
                     api.prevent_close();
                     #[cfg(feature = "test-harness")]
                     harness::record_close(false);
-                    // Leave the native close callback before evaluating WebView code.
                     let request_window = window.clone();
                     tauri::async_runtime::spawn(async move {
                         let _ = request_window.emit("setup-close-requested", ());

@@ -58,7 +58,7 @@
     "ui.invalid.extra": "参数过长或含无效字符",
     "ui.invalid.bypass": "地址不能包含换行或空字符",
     "ui.arguments.empty": "未添加启动参数",
-    "ui.save.invalid": "请先修正标出的输入",
+    "ui.save.invalid": "请检查输入内容",
     "ui.save.failed": "未能保存：目标文件被占用，设置尚未写入",
     "ui.save.rollback": "保存失败，已恢复原配置",
     "ui.save.incomplete": "回滚未完成，请检查目标目录后重新打开配置器",
@@ -349,6 +349,7 @@
     "download.redirected": "临时目录被重定向，已跳过清理：{path}",
     "download.removefile": "无法删除临时文件：{path}",
     "download.keepfolder": "临时目录已保留：{path}",
-    "download.incompletecleanup": "未能清理全部临时下载文件。"
+    "download.incompletecleanup": "未能清理全部临时下载文件。",
+    "ui.save.response": "配置已保存，但未能取得完整结果。请重新打开配置器核对，并检查自启和 ChatGPT 是否需要重新打开。"
   }
 }

@@ -58,7 +58,7 @@
     "ui.invalid.extra": "引数が長すぎるか、無効な文字を含んでいます",
     "ui.invalid.bypass": "アドレスに改行やヌル文字は使えません",
     "ui.arguments.empty": "起動引数はありません",
-    "ui.save.invalid": "表示された入力エラーを修正してください",
+    "ui.save.invalid": "入力内容を確認してください",
     "ui.save.failed": "保存できません。対象ファイルが使用中のため、設定は書き込まれていません",
     "ui.save.rollback": "保存に失敗しました。元の設定を復元しました",
     "ui.save.incomplete": "復元が完了していません。対象フォルダーを確認し、設定ツールを開き直してください",
@@ -349,6 +349,7 @@
     "download.redirected": "一時フォルダーが別の場所に転送されたため、削除を行いませんでした：{path}",
     "download.removefile": "一時ファイルを削除できませんでした：{path}",
     "download.keepfolder": "一時フォルダーを残しました：{path}",
-    "download.incompletecleanup": "ダウンロードした一時ファイルをすべて削除できませんでした。"
+    "download.incompletecleanup": "ダウンロードした一時ファイルをすべて削除できませんでした。",
+    "ui.save.response": "設定は保存されましたが、結果の詳細を取得できませんでした。設定画面を開き直して設定と自動起動を確認し、必要に応じて ChatGPT を再起動してください。"
   }
 }

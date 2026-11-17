@@ -16,6 +16,7 @@
     "types": ["vite/client", "node"],
     "paths": {
       "vitest": ["./node_modules/vitest"],
+      "@tauri-apps/api/*": ["./node_modules/@tauri-apps/api/*"],
       "react": ["./node_modules/@types/react"],
       "react/*": ["./node_modules/@types/react/*"],
       "@testing-library/react": ["./node_modules/@testing-library/react"],

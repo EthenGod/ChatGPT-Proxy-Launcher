@@ -8,7 +8,7 @@ export default defineConfig({
   clearScreen: false,
   resolve: {
     dedupe: ['react', 'react-dom'],
-    alias: Object.fromEntries(['react', 'react-dom', '@testing-library/react', '@testing-library/user-event', '@testing-library/jest-dom']
+    alias: Object.fromEntries(['@tauri-apps/api', 'react', 'react-dom', '@testing-library/react', '@testing-library/user-event', '@testing-library/jest-dom']
       .map(name => [name, fileURLToPath(new URL(`./node_modules/${name}`, import.meta.url))])),
   },
   build: { target: 'es2022', outDir: process.env.CHATGPT_UI_DIST ?? 'dist', emptyOutDir: false,

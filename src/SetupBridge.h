@@ -23,6 +23,16 @@ void setup_bridge_free(SetupBridgeBuffer* buffer) SETUP_NOEXCEPT;
 // explicit paths as UTF-8 JSON. Paths are never accepted from the webview.
 uint32_t setup_bridge_read_state(const uint8_t* paths, size_t length,
     SetupBridgeBuffer* output) SETUP_NOEXCEPT;
+enum SetupBridgeAction {
+    SETUP_VALIDATE = 1, SETUP_DETECT = 2, SETUP_SAVE = 3, SETUP_DIRECTORY = 4,
+    SETUP_ADD_PROGRAM = 5, SETUP_OPEN_LOCATION = 6, SETUP_PREFERENCES = 7
+};
+// commit: 0 not started, 1 saved, 2 rolled back, 3 rollback incomplete.
+// Written before serializing the response, even when allocation fails afterwards.
+// owner is the trusted main HWND; request and paths are bounded UTF-8 JSON.
+uint32_t setup_bridge_action(uint32_t action, const uint8_t* request, size_t requestLength,
+    const uint8_t* paths, size_t pathsLength, uintptr_t owner,
+    SetupBridgeBuffer* output, uint32_t* commit) SETUP_NOEXCEPT;
 int32_t setup_bridge_headless(const uint16_t* tail, size_t tailLength,
     const uint8_t* paths, size_t pathsLength) SETUP_NOEXCEPT;
 int32_t setup_bridge_compatibility(const uint8_t* paths, size_t length) SETUP_NOEXCEPT;

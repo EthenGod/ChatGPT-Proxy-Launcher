@@ -1,4 +1,5 @@
-use crate::model::{BridgeError, Snapshot};
+use crate::model::{BridgeError, Options, SaveResult, Snapshot};
+use serde::de::DeserializeOwned;
 use std::{ptr, slice};
 
 const MAX_RESPONSE: usize = 1024 * 1024;
@@ -23,6 +24,16 @@ impl Drop for Buffer {
 }
 unsafe extern "C" {
     fn setup_bridge_initialize();
+    fn setup_bridge_action(
+        action: u32,
+        request: *const u8,
+        request_length: usize,
+        paths: *const u8,
+        paths_length: usize,
+        owner: usize,
+        output: *mut Buffer,
+        commit: *mut u32,
+    ) -> u32;
     fn setup_bridge_free(buffer: *mut Buffer);
     fn setup_bridge_read_state(paths: *const u8, length: usize, output: *mut Buffer) -> u32;
     fn setup_bridge_headless(
@@ -67,4 +78,47 @@ pub fn read_state(paths: Option<&[u8]>) -> Result<Snapshot, BridgeError> {
         return Err(BridgeError::native(13));
     }
     Ok(state)
+}
+
+pub fn action<T: DeserializeOwned>(
+    action: u32,
+    request: &serde_json::Value,
+    paths: Option<&[u8]>,
+    owner: usize,
+) -> (u32, Result<T, BridgeError>) {
+    let mut buffer = Buffer::default();
+    let request = match serde_json::to_vec(request) {
+        Ok(value) => value,
+        Err(_) => return (0, Err(BridgeError::native(13))),
+    };
+    let (paths, length) = bytes(paths);
+    let mut commit = 0;
+    let code = unsafe {
+        setup_bridge_action(
+            action,
+            request.as_ptr(),
+            request.len(),
+            paths,
+            length,
+            owner,
+            &mut buffer,
+            &mut commit,
+        )
+    };
+    let value = if buffer.data.is_null() || buffer.length == 0 || buffer.length > MAX_RESPONSE {
+        Err(BridgeError::native(if code == 0 { 13 } else { code }))
+    } else {
+        let data = unsafe { slice::from_raw_parts(buffer.data, buffer.length) };
+        if code != 0 {
+            Err(serde_json::from_slice(data).unwrap_or_else(|_| BridgeError::native(code)))
+        } else {
+            serde_json::from_slice(data).map_err(|_| BridgeError::native(13))
+        }
+    };
+    (commit, value)
+}
+pub fn save(options: Options, paths: Option<&[u8]>) -> Result<SaveResult, BridgeError> {
+    let request = serde_json::to_value(options).map_err(|_| BridgeError::native(13))?;
+    let (commit, result) = action::<SaveResult>(3, &request, paths, 0);
+    Ok(result.unwrap_or_else(|error| SaveResult::unavailable(commit, error.message)))
 }

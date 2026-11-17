@@ -55,6 +55,7 @@ fn main() {
         "CompanionRegistry",
         "StartupIntegration",
         "SetupBridge",
+        "SetupUiServices",
         "ChatGPTLauncherSetup",
         "ProxyDetection",
         "CodexClose",
@@ -132,6 +133,13 @@ fn main() {
                 "read_setup_state",
                 "show_setup_window",
                 "close_setup_window",
+                "validate_setup",
+                "detect_setup_port",
+                "save_setup",
+                "choose_setup_directory",
+                "add_setup_program",
+                "open_setup_location",
+                "set_setup_preferences",
             ])),
     )
     .expect("Tauri build configuration failed");

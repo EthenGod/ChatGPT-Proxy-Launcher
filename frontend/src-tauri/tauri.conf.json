@@ -9,28 +9,39 @@
     "devUrl": "http://127.0.0.1:5174",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist",
-    "windows": { "staticVCRuntime": true }
-  },
-  "app": {
-    "windows": [{
-      "label": "main",
-      "title": "ChatGPT Launcher",
-      "theme": "Dark",
-      "width": 640,
-      "height": 560,
-      "minWidth": 480,
-      "minHeight": 400,
-      "center": true,
-      "visible": false,
-      "create": false,
-      "resizable": true,
-      "dragDropEnabled": false,
-      "backgroundColor": "#111111"
-    }],
-    "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",
-      "capabilities": ["setup-readonly"]
+    "windows": {
+      "staticVCRuntime": true
     }
   },
-  "bundle": { "active": false, "icon": ["../../assets/ChatGPT.ico"] }
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ChatGPT Launcher",
+        "theme": "Dark",
+        "width": 640,
+        "height": 760,
+        "minWidth": 480,
+        "minHeight": 400,
+        "center": true,
+        "visible": false,
+        "create": false,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#111111"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",
+      "capabilities": [
+        "setup-readonly"
+      ]
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../assets/ChatGPT.ico"
+    ]
+  }
 }

@@ -126,6 +126,7 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #define wWinMain SetupEntryForTest
 #define ShowWindow TestShowWindow
 #define SetForegroundWindow TestSetForegroundWindow
+#include "../src/SetupUiServices.cpp"
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
 #undef ShowWindow

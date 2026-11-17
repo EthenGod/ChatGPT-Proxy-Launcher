@@ -178,3 +178,38 @@ describe('settings prototype behavior', () => {
     expect(service.calls.save).toBe(0)
   })
 })
+
+
+describe('native settings behavior', () => {
+  it('waits for current native validation and ignores an obsolete validation response', async () => {
+    const base = new MockSetupService('normal', 0)
+    const pending: Array<{ options: import('../../frontend/src/platform/types').SetupOptions; resolve: (value: import('../../frontend/src/features/setup/contract').Validation) => void }> = []
+    const service = Object.assign(base, { native: true, validate: vi.fn((options: import('../../frontend/src/platform/types').SetupOptions) => new Promise<import('../../frontend/src/features/setup/contract').Validation>(resolve => pending.push({options, resolve}))) })
+    mount(service); await loaded()
+    await waitFor(() => expect(pending).toHaveLength(1))
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
+    await waitFor(() => expect(pending).toHaveLength(2))
+    await act(async () => pending[0]!.resolve({ valid: true, arguments: 'obsolete', errors: {} }))
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
+    await act(async () => pending[1]!.resolve({ valid: true, arguments: 'current-native-arguments', errors: {} }))
+    expect(screen.getByRole('region', { name: '启动参数' })).toHaveTextContent('current-native-arguments')
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
+    expect(screen.queryByText('原型预览')).not.toBeInTheDocument()
+  })
+  it('keeps user inputs when native preferences and a canceled folder picker finish', async () => {
+    const base = new MockSetupService('normal', 0)
+    const service = Object.assign(base, { native: true,
+      chooseDirectory: vi.fn(async () => null),
+      setPreferences: vi.fn(async (dark: boolean, language: string) => ({ preferences: {dark, language, resolvedLanguage: language}, warnings: [] })) })
+    const { user } = mount(service); await loaded()
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    await user.click(screen.getByRole('button', { name: '浏览…' }))
+    expect(service.chooseDirectory).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('24680')
+    await user.click(screen.getByRole('button', { name: '语言' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
+    await waitFor(() => expect(service.setPreferences).toHaveBeenCalledWith(true, 'en-US'))
+    expect(screen.getByRole('textbox', { name: 'Port' })).toHaveValue('24680')
+  })
+})
