@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 param(
-    [ValidateSet('Smoke','Start','Inspect','RequestClose','VerifyClosed')][string]$Action='Smoke',
+    [ValidateSet('Smoke','Start','Inspect','Resize','RequestClose','VerifyClosed')][string]$Action='Smoke',
     [string]$Session,
     [switch]$RemoteDebugging,
     [switch]$Functional,
     [ValidateRange(0,5000)][int]$SaveDelayMilliseconds=0,
-    [ValidateRange(1,60)][int]$IdleSeconds=60
+    [ValidateRange(1,600)][int]$IdleSeconds=60,
+    [ValidateRange(1,30)][int]$Cycles=3,
+    [ValidateRange(480,1600)][int]$Width=640,
+    [ValidateRange(400,1200)][int]$Height=760
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot
@@ -22,6 +25,18 @@ public static class PrototypeCloseMessage {
     static extern bool PostMessageW(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr window);
+    [DllImport("user32.dll", SetLastError=true)]
+    static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    public static void Resize(IntPtr window, int expectedProcessId, int width, int height) {
+        uint owner;
+        if (window == IntPtr.Zero || GetWindowThreadProcessId(window, out owner) == 0 || owner != expectedProcessId)
+            throw new InvalidOperationException("Unexpected preview window owner");
+        // Resize only this test window, in physical pixels. Keep position, z-order and activation.
+        if (!SetWindowPos(window, IntPtr.Zero, 0, 0, width, height, 0x0016))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
     public static void Request(IntPtr window, int expectedProcessId) {
         uint owner;
         if (window == IntPtr.Zero || GetWindowThreadProcessId(window, out owner) == 0 || owner != expectedProcessId)
@@ -98,6 +113,12 @@ function Owned-Process($Metadata) {
     return $process
 }
 function Inspect-Preview($Metadata) {
+    $owner=Owned-Process $Metadata
+    Require ($null -ne $owner) 'Preview exited before inspection'
+    try {
+        $dpi=[PrototypeCloseMessage]::GetDpiForWindow($owner.MainWindowHandle)
+        Require ($dpi -gt 0) 'Preview has no visible main window'
+    } finally { $owner.Dispose() }
     if(!$Functional) { Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state' }
     if($Functional) {
         $read=Get-Content -LiteralPath (Join-Path $Metadata.root 'read-ok.json') -Raw | ConvertFrom-Json
@@ -106,12 +127,15 @@ function Inspect-Preview($Metadata) {
     $rows=@(Tree $Metadata.processId)
     $samples=@(foreach($row in $rows) {
         $process=Get-Process -Id $row.ProcessId -ErrorAction Stop
-        try { [pscustomobject]@{id=$process.Id; started=$process.StartTime.ToUniversalTime().Ticks; working=$process.WorkingSet64; private=$process.PrivateMemorySize64} }
+        try { [pscustomobject]@{id=$process.Id; started=$process.StartTime.ToUniversalTime().Ticks; working=$process.WorkingSet64; private=$process.PrivateMemorySize64;
+            handles=$process.HandleCount; threads=$process.Threads.Count; cpuMs=$process.TotalProcessorTime.TotalMilliseconds} }
         finally { $process.Dispose() }
     })
     [IO.File]::WriteAllText((Join-Path $Metadata.root 'tree.json'),(ConvertTo-Json -InputObject $samples))
     return @{processes=$samples.Count; privateMiB=[Math]::Round(($samples | Measure-Object private -Sum).Sum/1MB,2);
-        workingMiB=[Math]::Round(($samples | Measure-Object working -Sum).Sum/1MB,2); readyMs=[Math]::Round($Metadata.readyMs,2)}
+        workingMiB=[Math]::Round(($samples | Measure-Object working -Sum).Sum/1MB,2); readyMs=[Math]::Round($Metadata.readyMs,2);
+        handles=($samples | Measure-Object handles -Sum).Sum; threads=($samples | Measure-Object threads -Sum).Sum;
+        cpuMs=[Math]::Round(($samples | Measure-Object cpuMs -Sum).Sum,2); windowDpi=$dpi}
 }
 function Verify-Closed($Metadata) {
     $rows=@(Get-Content -LiteralPath (Join-Path $Metadata.root 'tree.json') -Raw | ConvertFrom-Json)
@@ -130,6 +154,11 @@ function Verify-Closed($Metadata) {
 switch($Action) {
     'Start' { Start-Preview | ConvertTo-Json }
     'Inspect' { Inspect-Preview (Resolve-Session) | ConvertTo-Json }
+    'Resize' {
+        $process=Owned-Process (Resolve-Session)
+        Require ($null -ne $process) 'Preview has already exited'
+        try { [PrototypeCloseMessage]::Resize($process.MainWindowHandle,$process.Id,$Width,$Height) } finally { $process.Dispose() }
+    }
     'RequestClose' {
         $process=Owned-Process (Resolve-Session)
         Require ($null -ne $process) 'Prototype has already exited'
@@ -146,14 +175,25 @@ switch($Action) {
             [pscustomobject]@{ProcessId=5;ParentProcessId=3;CreationDate=$sampleTime.AddSeconds(2)}
         )
         Require (((Tree 1 $sampleTree).ProcessId -join ',') -eq '1,3,5') 'PID reuse included an unrelated process tree'
-        for($cycle=1;$cycle -le 3;$cycle++) {
+        $measurements=@()
+        for($cycle=1;$cycle -le $Cycles;$cycle++) {
             $metadata=Start-Preview
-            $sample=Inspect-Preview $metadata
+            $initial=Inspect-Preview $metadata
+            $initialIdentities=(@(Get-Content -LiteralPath (Join-Path $metadata.root 'tree.json') -Raw | ConvertFrom-Json) |
+                Sort-Object id | ForEach-Object { "$($_.id):$($_.started)" }) -join ','
             $seconds=if($cycle -eq 1) { $IdleSeconds } else { 2 }
             Write-Host "Prototype cycle $cycle ready; observing $seconds seconds"
             $actionsBefore=if($Functional) { [IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) } else { '' }
             for($second=0;$second -lt $seconds;$second++) { Start-Sleep -Seconds 1 }
             $sample=Inspect-Preview $metadata
+            $sample.initialPrivateMiB=$initial.privateMiB
+            $sample.idleSeconds=$seconds
+            $finalIdentities=(@(Get-Content -LiteralPath (Join-Path $metadata.root 'tree.json') -Raw | ConvertFrom-Json) |
+                Sort-Object id | ForEach-Object { "$($_.id):$($_.started)" }) -join ','
+            $sample.processTreeChanged=$initialIdentities -cne $finalIdentities
+            # Lifetime CPU sums are comparable only while the exact process set stays the same.
+            $sample.idleCpuMs=if ($sample.processTreeChanged) { $null } else { [Math]::Round($sample.cpuMs-$initial.cpuMs,2) }
+            $sample.cycle=$cycle
             if($Functional) { Require ([IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) -eq $actionsBefore) 'Idle page repeated a native command' }
             [IO.File]::WriteAllText((Join-Path $metadata.root 'metrics.json'),($sample | ConvertTo-Json))
             Write-Output ($sample | ConvertTo-Json -Compress)
@@ -166,7 +206,11 @@ switch($Action) {
             Verify-Closed $metadata
             $closeEvents=Get-Content -LiteralPath (Join-Path $metadata.root 'close-events.json') -Raw | ConvertFrom-Json
             Require ($closeEvents.requested -eq 1 -and $closeEvents.approved -eq 1) 'Native close did not pass through the page exactly once'
+            $measurements+=$sample
         }
-        Write-Host 'PASS embedded prototype, event permissions, three native closes and isolated lifecycle'
+        $report=Join-Path $parent ('lifecycle-'+[guid]::NewGuid().ToString('N')+'.json')
+        [IO.File]::WriteAllText($report, (ConvertTo-Json -InputObject $measurements))
+        Write-Host "PASS embedded page, event permissions, $Cycles native closes and isolated lifecycle"
+        Write-Host "Local measurements: $report"
     }
 }

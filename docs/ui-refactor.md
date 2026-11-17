@@ -271,7 +271,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\frontend\preview.ps1 -
 
 - 默认构建输出单个 Tauri 配置器和独立 C++ 启动器。旧 GUI 可单独构建，也继续内嵌为兼容模式。没有修改部署核心或新增常驻服务。
 - 正式包只包含实际设置页，不包含模拟页面和测试路径入口。主窗口只允许内嵌页面导航。前端、Rust、C++、资源版本及同次构建载荷在构建和交付检查中核对。
-- 完整检查接入 `test-build.cmd` 和 `analyze.cmd`。发布脚本先检查再生成两个 EXE、源码 ZIP 和 SHA-256；测试模式只写新的 `work/release-stage-*`。源码清单共 189 个文件，不收集缓存、依赖、本机数据或旧产物。
+- 完整检查接入 `test-build.cmd` 和 `analyze.cmd`。发布脚本先检查再生成两个 EXE、源码 ZIP 和 SHA-256；测试模式只写新的 `work/release-stage-*`。当前源码清单共 190 个文件，不收集缓存、依赖、本机数据或旧产物。
 - 三语 README 更新实际操作和构建前提；原生设计与性能文档保留为兼容实现基线。模块地图和交接说明已同步。
 
 ### 验证记录
@@ -299,6 +299,53 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\frontend\preview.ps1 -
 
 ### 待验与交付边界
 
-- 用户视觉验收、真实 Windows 100% / 150% / 200% 缩放、独立机器和长时间反复操作。
+- 用户视觉验收、真实 Windows 150% / 200% 缩放、跨显示器、独立机器和更长时间使用。本机 100% 与限定轮次的反复操作结果见下节。
 - 真实 WebView2 安装、实际登录自启、代理连通性和退出 ChatGPT。本轮没有执行这些系统操作。
 - 本地测试包保留当前版本号，不覆盖用户部署或旧 Release；本轮不提交、合并、上传或发布。测试目录和性能原始记录只保存在 `work/`。
+
+## 交付后补充验收
+
+本轮在本机继续检查多次开关、较长空闲、重复语言与主题切换，以及不同窗口尺寸和渲染缩放。仅使用隔离功能包；不修改全局显示设置，不执行真实安装、自启、联网或退出 ChatGPT。
+
+生命周期脚本支持 `-Cycles` 与最多 600 秒的 `-IdleSeconds`，默认仍为三次开关和首轮空闲 60 秒。每轮记录整个进程树的内存、句柄、线程、CPU 时间和窗口实际 DPI；记录留在 `work/`。窗口 DPI 与页面渲染缩放分开记录，CDP 模拟不能替代真实 Windows 150% / 200% 或跨显示器验收。
+
+验收条件：空闲无重复业务调用；正常关闭后无所属进程残留；反复操作后没有遗留弹层、临时样式或持续动画；输入保留，短窗口与缩放场景仍能使用主要操作。发现问题时只修复相关模块，并运行对应回归。
+
+### 复测方法
+
+先构建隔离功能包 `frontend/desktop.ps1 -Command harness`。生命周期检查从项目根目录运行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ui-prototype-tests.ps1 -Functional -Cycles 10 -IdleSeconds 180
+```
+
+交互检查用 Playwright CLI 附加实际 WebView2。以下命令仅启动隔离包；脚本不点击保存。CLI 缓存和截图留在 `work/`。
+
+```powershell
+$root = (Get-Location).Path
+$session = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ui-prototype-tests.ps1 -Action Start -Functional -RemoteDebugging | ConvertFrom-Json
+$endpoint = (Invoke-RestMethod "http://127.0.0.1:$($session.port)/json/version").webSocketDebuggerUrl
+$env:npm_config_cache = Join-Path $root 'work/npm-cache'
+$null = New-Item -ItemType Directory -Force -Path 'work/playwright'
+Push-Location 'work/playwright'
+try {
+    npx.cmd --yes --package @playwright/cli@0.1.24 playwright-cli -s=ui-acceptance attach --cdp=$endpoint
+    npx.cmd --yes --package @playwright/cli@0.1.24 playwright-cli -s=ui-acceptance snapshot
+    npx.cmd --yes --package @playwright/cli@0.1.24 playwright-cli -s=ui-acceptance run-code --filename=../../tests/ui-interaction-checks.js
+} finally { Pop-Location }
+```
+
+在同一会话用 `-Action Resize -Functional -Session $session.root -Width 480 -Height 400` 调整外框后，可再运行交互检查。尺寸单位是物理像素，页面可用尺寸会扣除标题栏和边框。结束前先用 `-Action Inspect` 记录所属进程；点击标题栏关闭，检查 Esc 返回和放弃更改，再用 `-Action VerifyClosed` 核对退出。后三个动作也须传入 `-Functional -Session $session.root`。不要把脚本附加到正式配置器。
+
+窗口实际 DPI 来自 [GetDpiForWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdpiforwindow)。页面密度由 [CDP Emulation](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/) 临时覆盖，结束后还原；它不验证 Windows 原生控件缩放。
+
+### 补充结果
+
+- 本轮只修改验收脚本、源码包清单和开发文档，没有改产品代码或增加产品依赖。脚本语法、Windows PowerShell 5.1 运行、文档和交付检查通过。上一轮完整编译、C++、前端、Rust 及静态分析结果仍对应当前产品源码。
+- 连续打开并正常关闭 10 次，首轮空闲 180 秒，后九轮各 2 秒。每轮加载一次，空闲期间无重复业务调用，关闭后均无所属进程残留。首轮私有内存由 195.16 降至 191.95 MiB；后九轮为 192.49–197.44 MiB，没有逐轮上升。测量未连接调试器，不能据此保证长期无增长。
+- 实际窗口为 96 DPI，即本机 100%。在页面 640×760 和短窗口 464×361 两种可用尺寸下，检查三语、深浅色及 1 / 1.5 / 2 渲染密度，共 36 种组合。没有横向溢出；底部操作、帮助弹窗按钮和焦点恢复通过。缩放模拟不替代真实 Windows 150% / 200% 验收。
+- 同一窗口累计 90 轮语言、主题、协议和折叠操作。空参数、中文及带引号输入保留；方向键、空格、点击选项文字与帮助 Esc 行为通过。未见遗留过渡样式、持续动画或控制台错误。
+- 最后 30 轮的 DOM 节点从 410 到 408，事件监听数保持 405，回收后的 JS 堆约 9.66 到 9.75 MiB。操作后再空闲 60 秒，没有重复后台调用；调试会话进程树私有内存从 315.52 降至 314.24 MiB，句柄从 3773 降至 3771。这是已预热且连接调试器的样本，不与无调试启动基线直接比较。
+- 未保存关闭先按 Esc 返回，输入仍在；再次关闭并放弃后，整个所属进程树退出。没有保存部署、安装运行库、更改自启、修改系统代理或关闭真实 ChatGPT。
+
+仍待用户视觉确认、真实 Windows 150% / 200% 及跨显示器、独立机器和真实系统操作。阶段结束后暂停，不提交、合并或发布。

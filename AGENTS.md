@@ -9,6 +9,7 @@
 - `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。
 - 新 UI 构建入口为 `frontend/desktop.ps1`。测试源码统一放在 `tests/frontend/`、`tests/rust/` 和 `tests/setup-bridge-*`；测试包及缓存放在 `work/`。`test-harness` 只编入隔离测试包，不进入普通 Tauri 构建或发布产物。
 - `frontend/desktop.ps1 -Command prototype` 构建内存模拟原型，`-Command harness` 构建真实接口的隔离测试包。`frontend/preview.ps1` 默认打开原型，加 `-Functional` 打开隔离功能界面。`tests/ui-prototype-tests.ps1` 同样支持 `-Functional`，检查内嵌页面、调用计数、关闭保护和所属进程清理。两种测试包均强制使用隔离路径；系统操作用替身。
+- 延长生命周期检查使用 `ui-prototype-tests.ps1 -Cycles <次数> -IdleSeconds <首轮秒数>`。`tests/ui-interaction-checks.js` 由 Playwright CLI 附加隔离功能窗口执行，覆盖三语、主题、渲染缩放和反复操作后的样式、DOM 清理；不能附加正式配置器。`-Action Resize` 只调整指定隔离测试窗口的物理尺寸。
 - `src/SetupNative.h` 提供原生兼容入口，同一 EXE 用 `--compatibility` 在 WebView2 初始化前分流。`src/SetupUiCapabilities.json` 内嵌为资源 102，供 PowerShell 只读识别双界面构建；旧版无此资源，不探测运行库或传入新参数。下载选择与安装替身测试见 `tests/webview-download-tests.ps1`。
 - 用户可见名称为 `ChatGPT Launcher`。新旧快捷方式名在 `SetupCore.h`，读取、迁移和回滚在 `SetupCore.cpp`；EXE 文件名、配置根目录和协议标记保持兼容。测试须显式传入隔离的新旧路径。
 - `src/SetupArguments.cpp` 只处理启动参数的生成、解析和校验；`src/CodexEnv.cpp` 只合并 `.env` 字节。文件读写、所有权检查与回滚统一留在 `src/SetupCore.cpp`。
