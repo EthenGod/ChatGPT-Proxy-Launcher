@@ -39,15 +39,15 @@ export function Toggle({ label, checked, disabled, onChange, help, badge }: {
     <SwitchControl id={id} describedBy={badge ? `${id}-badge` : undefined} checked={checked} disabled={disabled} onChange={onChange} />
   </div>
 }
-export function TextField({ label, error, suffix, labelActions, className = '', ...props }: InputHTMLAttributes<HTMLInputElement> & {
-  label: string; error?: string; suffix?: ReactNode; labelActions?: ReactNode
+export function TextField({ label, error, errorDescriptionId, suffix, labelActions, className = '', ...props }: InputHTMLAttributes<HTMLInputElement> & {
+  label: string; error?: string; errorDescriptionId?: string; suffix?: ReactNode; labelActions?: ReactNode
 }) {
   const generated = useId()
   const id = props.id ?? generated
   return <div className={`field ${className}`}>
     <div className="field-heading"><label htmlFor={id}>{label}</label>{labelActions}</div>
-    <div className="input-wrap"><input {...props} id={id} aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined} />{suffix}</div>
-    {error && <span id={`${id}-error`} className="field-error">{error}</span>}
+    <div className="input-wrap"><input {...props} id={id} aria-invalid={!!error} aria-describedby={error ? errorDescriptionId ?? `${id}-error` : undefined} />{suffix}</div>
+    {error && !errorDescriptionId && <span id={`${id}-error`} className="field-error">{error}</span>}
   </div>
 }
 export function ChoiceMenu({ label, value, items, onChange, disabled, icon, variant = 'default' }: {

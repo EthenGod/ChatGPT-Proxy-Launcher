@@ -177,13 +177,26 @@ describe('settings prototype behavior', () => {
     await user.click(screen.getByRole('button', { name: '关闭' }))
     expect(host.close).toHaveBeenCalledOnce()
   })
-  it('shows inline errors and blocks invalid submission', async () => {
+  it('describes port errors in the preview without inserting a row into the proxy card', async () => {
     const { service } = mount(); await loaded()
     fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '99999' } })
     expect(screen.getByRole('textbox', { name: '端口' })).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.getByText('端口范围为 1–65535')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveAccessibleDescription('端口范围为 1–65535')
+    expect(within(screen.getByRole('region', {name:'代理'})).queryByText('端口范围为 1–65535')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', {name:'启动参数'})).toHaveTextContent('端口范围为 1–65535')
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
     expect(service.calls.save).toBe(0)
+  })
+  it('switches protocols from the keyboard without losing the port or detecting again', async () => {
+    const { user, service } = mount(); await loaded()
+    await user.click(screen.getByRole('radio', {name:'HTTP'}))
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('radio', {name:'HTTPS'})).toHaveAttribute('aria-checked','true')
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('radio', {name:'SOCKS5'})).toHaveAttribute('aria-checked','true')
+    expect(screen.getByRole('textbox', {name:'端口'})).toHaveValue('7890')
+    expect(screen.getByRole('region', {name:'启动参数'})).toHaveTextContent('socks5://127.0.0.1:7890')
+    expect(service.calls.detect).toBe(0)
   })
 })
 

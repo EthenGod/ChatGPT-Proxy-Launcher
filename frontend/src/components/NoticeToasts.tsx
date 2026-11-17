@@ -6,7 +6,7 @@ import { Button } from './controls'
 
 type NoticeText = { message: MessageKey; values?: Record<string, string> }
 export interface NoticeData extends NoticeText { detail?: string | NoticeText; error?: ErrorInfo }
-export const createNoticeManager = () => Toast.createToastManager<NoticeData>()
+export const createNoticeManager = Toast.createToastManager<NoticeData>
 type Manager = ReturnType<typeof createNoticeManager>
 
 function NoticeList({ t, onError }: { t: ReturnType<typeof translator>; onError: (error: ErrorInfo) => void }) {
@@ -25,5 +25,5 @@ function NoticeList({ t, onError }: { t: ReturnType<typeof translator>; onError:
   </Toast.Viewport>
 }
 export function NoticeToasts({ manager, t, onError }: { manager: Manager; t: ReturnType<typeof translator>; onError: (error: ErrorInfo) => void }) {
-  return <Toast.Provider toastManager={manager} timeout={6000} limit={1}><NoticeList t={t} onError={onError} /></Toast.Provider>
+  return <Toast.Provider toastManager={manager} timeout={3500} limit={1}><NoticeList t={t} onError={onError} /></Toast.Provider>
 }

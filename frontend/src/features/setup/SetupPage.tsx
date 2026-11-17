@@ -13,7 +13,7 @@ import { resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeMessage } from '../../platform/setup-service'
 import { nativeIssue, type ErrorInfo } from './errors'
-import { previewOptions, sameOptions } from './preview'
+import { portErrorKey, previewOptions, sameOptions } from './preview'
 import type { ProgramEntry, SaveResult, SetupService, WindowHost, Validation } from './contract'
 
 type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | null
@@ -68,7 +68,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const locked = busy || loading || result?.commit === 'rollback-incomplete'
 
   function notify(message: MessageKey, values: Record<string, string> = {}, detail: NoticeData['detail'] = '', type = 'info', problem?: ErrorInfo) {
-    noticeManager.add({ id: 'activity', type, timeout: problem ? 10000 : 6000,
+    noticeManager.add({ id: 'activity', type, timeout: problem ? 5000 : 3500,
       data: { message, values, detail, error: problem } })
   }
   function reportFailure(message: MessageKey, cause: unknown) {
@@ -273,7 +273,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setSelecting(false) } }
   }
   const helpButton = (key: MessageKey, label: string) => <Hint label={label}><Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button></Hint>
-  const fieldError = (key: keyof SetupOptions) => validation?.errors[key] ? t(validation.errors[key]) : undefined
+  const portError = options?.proxy ? portErrorKey(options.port) : undefined
+  const fieldError = (key: keyof SetupOptions) => key === 'port' && portError ? t(portError)
+    : validation?.errors[key] ? t(validation.errors[key]) : undefined
   const primaryStatus = busy || loading || loadError ? '' : result ? t(result.message)
     : notice ? t(notice) : !validation?.valid && options ? t('ui.save.invalid')
       : options?.proxy && options.codexEnv ? t('setup.status.quitwarning') : dirty ? t('setup.status.unsaved') : ''
@@ -318,19 +320,20 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
             <Collapsible.Panel id="proxy-details" className="disclosure-panel">
               <div className="settings-card proxy-card">
                 <div className="connection-fields"><div className="field protocol-field"><span id="protocol-label" data-motion-text>{t('setup.label.protocol')}</span>
-                  <RadioGroup aria-labelledby="protocol-label" className="segmented" value={options.protocol} disabled={locked} onValueChange={value => update('protocol', String(value))}>
+                  <RadioGroup aria-labelledby="protocol-label" className="segmented" data-protocol={options.protocol} value={options.protocol} disabled={locked} onValueChange={value => update('protocol', String(value))}>
                     {['http', 'https', 'socks5'].map(protocol => <Radio.Root key={protocol} value={protocol} className="segment">{protocol.toUpperCase()}</Radio.Root>)}
                   </RadioGroup></div>
                   <TextField id="proxy-host" label={t('setup.label.host')} value={options.host} onChange={event => update('host', event.target.value)} disabled={locked} error={fieldError('host')} autoComplete="off" spellCheck={false} />
-                  <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} inputMode="numeric" maxLength={5} autoComplete="off"
+                  <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} errorDescriptionId="validation-message" inputMode="numeric" maxLength={5} autoComplete="off"
                     suffix={<Hint label={t('ui.detect')}><Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} disabled={locked || detecting} onClick={() => void detect()}>{detecting ? <LoaderCircle className="spinner" size={16} /> : <Search size={16} />}</Button></Hint>} />
                 </div>
                 <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex', t('setup.help.codex'))} />
               </div>
             </Collapsible.Panel></Collapsible.Root></section>
-          <section className="settings-section" aria-labelledby="preview-title"><h2 id="preview-title">{t('ui.arguments')}</h2>
-            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre className={`argument-preview ${!validation?.valid ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{validation?.valid ? validation.arguments || t('ui.arguments.empty') : validation?.detail || t('setup.preview.invalid')}</pre></ScrollBox>
-            {!validation?.valid && !!validation?.nativeError && <Button className="text-button" onClick={() => { setError(validation); openDialog('error') }}>{t('ui.details')}</Button>}
+          <section className="settings-section" aria-labelledby="preview-title"><div className="preview-heading"><h2 id="preview-title">{t('ui.arguments')}</h2>
+              {!validation?.valid && !!validation?.nativeError && <Button className="text-button" onClick={() => { setError(validation); openDialog('error') }}>{t('ui.details')}</Button>}
+            </div>
+            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre id="validation-message" className={`argument-preview ${portError || validation && !validation.valid ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{portError ? t(portError) : validation?.valid ? validation.arguments || t('ui.arguments.empty') : validation?.detail || t(validation ? 'setup.preview.invalid' : 'setup.preview.loading')}</pre></ScrollBox>
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
             <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>

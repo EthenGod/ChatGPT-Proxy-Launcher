@@ -1,7 +1,11 @@
 import type { SetupOptions } from '../../platform/types'
 import type { MessageKey } from '../../i18n'
 
-// Prototype-only feedback. The production boundary remains SetupArguments.cpp.
+// Immediate field feedback; SetupArguments.cpp still validates every real save.
+export function portErrorKey(port: string): MessageKey | undefined {
+  return /^\d{1,5}$/.test(port) && +port >= 1 && +port <= 65535 ? undefined : 'ui.invalid.port'
+}
+// Prototype-only argument generation.
 export function quoteArgument(value: string): string {
   if (value && !/[\s"]/.test(value)) return value
   return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"'
@@ -10,7 +14,8 @@ export function previewOptions(options: SetupOptions) {
   const errors: Partial<Record<keyof SetupOptions, MessageKey>> = {}
   if (options.proxy) {
     if (!options.host || /[\s/\\"@]/.test(options.host)) errors.host = 'ui.invalid.host'
-    if (!/^\d{1,5}$/.test(options.port) || +options.port < 1 || +options.port > 65535) errors.port = 'ui.invalid.port'
+    const portError = portErrorKey(options.port)
+    if (portError) errors.port = portError
     if (!['http', 'https', 'socks5'].includes(options.protocol)) errors.protocol = 'ui.invalid.protocol'
   }
   if (!/^[a-z]:\\.+/i.test(options.directory) || /[<>"|?*\r\n]/.test(options.directory)) errors.directory = 'ui.invalid.directory'
