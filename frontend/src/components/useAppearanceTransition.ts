@@ -8,7 +8,7 @@ function separateLanguageLayers() {
   const boxes = '.appearance-controls, .settings-card, .argument-scroll, .advanced-trigger, .settings-footer, .prototype-bar, .button, .control-button, .icon-button, .text-button, .input-action, .input-wrap input, .segmented, .segment, .switch, .version-badge, .setting-badge, .dialog, .menu-popup, .notice-toast, .error-guide'
   const elements = [...document.querySelectorAll<HTMLElement>(`${boxes}, ${text}`)].filter(element => !element.matches('.appearance-controls .icon-button'))
   const properties = ['view-transition-name', 'view-transition-class', 'background-color', 'border-color', 'box-shadow']
-  const previous = elements.map(element => ({ element, text: element.textContent, values: properties.map(property => [property, element.style.getPropertyValue(property), element.style.getPropertyPriority(property)] as const), paint: getComputedStyle(element) }))
+  const previous = elements.map(element => ({ element, text: element.textContent, values: properties.map(property => [property, element.style.getPropertyValue(property), element.style.getPropertyPriority(property)] as const), transition: [element.style.getPropertyValue('transition'), element.style.getPropertyPriority('transition')] as const, paint: getComputedStyle(element) }))
   const decorations = document.createElement('style')
   document.head.append(decorations)
   const gutters = [...document.querySelectorAll<HTMLElement>('.scroll-content')].map(element => ({
@@ -16,6 +16,8 @@ function separateLanguageLayers() {
   }))
   previous.forEach(({ element, paint }, index) => {
     const isText = element.matches(text)
+    // Keep the guard independent of the snapshot name, including during cleanup.
+    element.style.setProperty('transition', 'none', 'important')
     element.style.setProperty('view-transition-name', `language-${index}`)
     element.style.setProperty('view-transition-class', isText ? 'language-text' : element.matches('input') ? 'language-input' : 'language-frame')
     if (isText || paint.opacity !== '1') return
@@ -61,6 +63,12 @@ function separateLanguageLayers() {
       }))
       gutters.forEach(({ element, value, priority }) => {
         if (value) element.style.setProperty('margin-inline-end', value, priority); else element.style.removeProperty('margin-inline-end')
+      })
+      // Commit the restored paint while transitions are still disabled. Removing
+      // both in one style update would fade the live controls in from transparent.
+      document.documentElement.getBoundingClientRect()
+      previous.forEach(({ element, transition: [value, priority] }) => {
+        if (value) element.style.setProperty('transition', value, priority); else element.style.removeProperty('transition')
       })
     },
   }

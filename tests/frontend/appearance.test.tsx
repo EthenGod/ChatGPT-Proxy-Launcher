@@ -59,11 +59,16 @@ describe('appearance changes', () => {
     expect(document.documentElement.dataset.appearanceTransition).toBeUndefined()
   })
   it.each(['finish', 'unmount', 'throw'])('restores surface styling and temporary rules after %s', async outcome => {
-    const { container } = render(<div className="settings-card" style={{ opacity: 1, backgroundColor: 'rgb(20, 20, 20)', border: '1px solid rgb(60, 60, 60)', borderRadius: 12 }}>
+    const { container } = render(<div className="settings-card" style={{ opacity: 1, backgroundColor: 'rgb(20, 20, 20)', border: '1px solid rgb(60, 60, 60)', borderRadius: 12, transition: 'background-color 150ms ease-out' }}>
       <span data-motion-text>Before</span>
     </div>)
     const card = container.firstElementChild as HTMLElement
     const original = card.style.cssText, sheets = document.styleSheets.length
+    const paintAtHandoff: string[][] = []
+    vi.spyOn(document.documentElement, 'getBoundingClientRect').mockImplementation(() => {
+      paintAtHandoff.push([card.style.backgroundColor, card.style.transition, card.style.getPropertyPriority('transition')])
+      return new DOMRect()
+    })
     const { commits, finishes, start } = transitions()
     if (outcome === 'throw') start.mockImplementationOnce(() => { throw new Error('snapshot unavailable') })
     const { result, unmount } = renderHook(useAppearanceTransition)
@@ -76,6 +81,7 @@ describe('appearance changes', () => {
       else await act(async () => finishes[0]!())
     }
     expect(update).toHaveBeenCalledOnce()
+    expect(paintAtHandoff).toEqual([['rgb(20, 20, 20)', 'none', 'important']])
     expect(card.style.cssText).toBe(original)
     expect(document.styleSheets).toHaveLength(sheets)
     expect(document.documentElement.dataset.appearanceTransition).toBeUndefined()
