@@ -340,7 +340,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
 
   return <div className={`setup-shell ${service.native ? 'native-shell' : ''}`}>
     {!service.native && <div className="prototype-bar"><Button className="prototype-label" onClick={() => openDialog('preview')} disabled={busy}><FlaskConical size={13} />{t('ui.prototype.title')}</Button><fieldset disabled={busy}>{scenarioControls}</fieldset></div>}
-    <ScrollBox className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main role="main" aria-busy={loading} />}>
+    <ScrollBox persistent className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main role="main" aria-busy={loading} />}>
       <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
         {snapshot ? <span className="version-badge" aria-label={t('setup.version', { version: snapshot.setupVersion })}>v{snapshot.setupVersion}</span>
           : loading && <span className="skeleton-bar skeleton-version" aria-hidden="true" />}</div>

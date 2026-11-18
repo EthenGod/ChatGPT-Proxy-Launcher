@@ -84,11 +84,15 @@ pub struct ListedProgram {
     pub path: String,
     pub arguments: String,
     pub status: ProgramStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<usize>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProgramList {
     pub entries: Vec<ListedProgram>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub icons: Vec<String>,
     pub incomplete: bool,
 }
 #[derive(Debug, Deserialize, Serialize)]

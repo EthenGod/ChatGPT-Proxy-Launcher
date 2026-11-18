@@ -31,6 +31,18 @@ static void Put(const std::wstring& path, const std::string& bytes) {
     if (!file) throw automation::IoError(GetLastError());
     automation::WriteBytes(file.value, bytes);
 }
+static void PutTestIcon(const std::wstring& path) {
+    BITMAPINFOHEADER dib{};
+    dib.biSize = sizeof(dib); dib.biWidth = 16; dib.biHeight = 32; dib.biPlanes = 1; dib.biBitCount = 32;
+    constexpr DWORD maskBytes = 16 * 4;
+    const DWORD entry[] = {sizeof(dib) + 16 * 16 * 4 + maskBytes, 22};
+    std::string bytes("\0\0\1\0\1\0\x10\x10\0\0\1\0\x20\0", 14);
+    bytes.append(reinterpret_cast<const char*>(entry), sizeof(entry));
+    bytes.append(reinterpret_cast<const char*>(&dib), sizeof(dib));
+    for (int i = 0; i < 16 * 16; ++i) bytes.append("\x73\xA6\x21\xFF", 4);
+    bytes.append(maskBytes, '\0');
+    Put(path, bytes);
+}
 int wmain(int argc, wchar_t** argv) {
     if (argc != 3) return 2;
     try {
@@ -114,6 +126,9 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)));
         IShellLinkW* link = nullptr;
         REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))));
+        const auto iconPath = setup::Join(root, L"custom.ico");
+        PutTestIcon(iconPath);
+        REQUIRE(SUCCEEDED(link->SetIconLocation(iconPath.c_str(), 0)));
         link->SetPath(target.c_str()); link->SetArguments(options.extra.c_str()); link->SetWorkingDirectory(root.c_str());
         IPersistFile* persist = nullptr; REQUIRE(SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&persist))));
         REQUIRE(SUCCEEDED(persist->Save(shortcut.c_str(), TRUE))); persist->Release(); link->Release(); CoUninitialize();
@@ -148,15 +163,30 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && commit == 0 && !reply.At(L"incomplete").Bool());
         REQUIRE(reply.At(L"entries").array.size() == 3 && listed(L"Example Tool", L"adapted")
             && listed(L"ordinary.ps1", L"ordinary") && listed(L"org.example.broken", L"invalid"));
+        const auto imageOf = [&](PCWSTR name) -> std::wstring {
+            const auto& icons = reply.At(L"icons").array;
+            for (const auto& row : reply.At(L"entries").array) {
+                if (row.At(L"name").text == name && row.Has(L"icon"))
+                    return icons.at(static_cast<size_t>(row.At(L"icon").Integer(0, 1024))).text;
+            }
+            return {};
+        };
+        const auto exeImage = imageOf(L"Example Tool"), typeImage = imageOf(L"ordinary.ps1");
+        REQUIRE(exeImage.find(L"iVBORw0KGgo") == 0 && typeImage.find(L"iVBORw0KGgo") == 0 && exeImage != typeImage);
         record[L"overrides"][L"enabled"] = Json(false); Put(registration, automation::WriteJson(record));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"entries").array.size() == 4);
         REQUIRE(listed(L"Example Tool", L"adapted-disabled") && listed(L"工具.lnk", L"ordinary"));
+        const auto linkImage = imageOf(L"工具.lnk");
+        REQUIRE(linkImage.find(L"iVBORw0KGgo") == 0 && linkImage != exeImage && imageOf(L"Example Tool") == exeImage);
+        REQUIRE(MoveFileW(iconPath.c_str(), setup::Join(root, L"moved.ico").c_str()));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && imageOf(L"工具.lnk") == exeImage);
         spec[L"id"] = Json(L"org.example.different"); Put(manifest, automation::WriteJson(spec));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled"));
         record[L"overrides"][L"enabled"] = Json(true); Put(registration, automation::WriteJson(record));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"invalid") && listed(L"工具.lnk", L"ordinary"));
         for (unsigned i = 0; i < 256; ++i) Put(setup::Join(folder, L"item-" + std::to_wstring(i) + L".ps1"), "");
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool() && listed(L"org.example.broken", L"invalid"));
+        REQUIRE(reply.At(L"entries").array.size() >= 256 && reply.At(L"icons").array.size() < 8);
         pick[L"testSelection"] = Json(argv[2]);
         REQUIRE(call(SETUP_ADD_PROGRAM, pick) != 0 && commit == 0); // Outside harness root.
         pick[L"testSelection"] = Json(L"");

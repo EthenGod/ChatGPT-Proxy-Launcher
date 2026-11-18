@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { parseSnapshot } from './types'
-import type { SetupService, SaveResult, Validation, ProgramEntry, ProgramList, Detection } from '../features/setup/contract'
+import type { SetupService, SaveResult, Validation, ProgramEntry, ListedProgram, ProgramList, Detection } from '../features/setup/contract'
 import type { MessageKey } from '../i18n'
 import catalog from '../../../locales/zh-CN.json'
 
@@ -13,14 +13,20 @@ export function parseProgramList(value: unknown): ProgramList {
   const list = record(value)
   if (typeof list.incomplete !== 'boolean' || !Array.isArray(list.entries)) throw new Error('Invalid program list')
   const ids = new Set<string>()
-  for (const item of list.entries) {
+  // Only native, bounded PNGs reach an image element. A bad optional icon leaves the row usable.
+  const icons = Array.isArray(list.icons) ? list.icons.map(data =>
+    typeof data === 'string' && data.length <= 21848 && /^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(data)
+      ? 'data:image/png;base64,' + data : undefined) : []
+  const entries = list.entries.map((item): ListedProgram => {
     const row = record(item)
     if (typeof row.id !== 'string' || !row.id || ids.has(row.id) || typeof row.name !== 'string' || !row.name
       || typeof row.path !== 'string' || typeof row.arguments !== 'string'
       || typeof row.status !== 'string' || !['ordinary', 'adapted', 'adapted-disabled', 'disabled', 'invalid', 'unavailable'].includes(row.status)) throw new Error('Invalid program entry')
     ids.add(row.id)
-  }
-  return value as ProgramList
+    const icon = typeof row.icon === 'number' && Number.isInteger(row.icon) ? icons[row.icon] : undefined
+    return { id: row.id, name: row.name, path: row.path, arguments: row.arguments, status: row.status as ListedProgram['status'], ...(icon && { icon }) }
+  })
+  return { entries, incomplete: list.incomplete }
 }
 export function parseSaveResult(value: unknown): SaveResult {
   const result = record(value)

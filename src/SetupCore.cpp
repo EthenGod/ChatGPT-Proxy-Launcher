@@ -284,7 +284,7 @@ Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
     }
     return {};
 }
-Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget) {
+Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget, LinkIcon* icon) {
     Com<IShellLinkW> link;
     HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
     if (FAILED(hr)) return Hr(hr, l10n::Text("error.link.read"));
@@ -303,6 +303,12 @@ Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget) {
         || !field(link->GetArguments(text.data(), 32768), read.arguments)
         || !field(link->GetWorkingDirectory(text.data(), 32768), read.directory)
         || !field(link->GetDescription(text.data(), 1024), read.description)) return Hr(hr, l10n::Text("error.link.readproperties"));
+    if (icon) {
+        *icon = {};
+        int index = 0;
+        if (link->GetIconLocation(text.data(), static_cast<int>(text.size()), &index) == S_OK)
+            *icon = {text.data(), index};
+    }
     value = std::move(read);
     return {};
 }

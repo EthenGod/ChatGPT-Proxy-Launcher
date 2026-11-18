@@ -25,15 +25,18 @@ async page => {
     }
   };
   const geometry = async () => {
-    const result = await group.evaluate(el => ({
-      width: el.clientWidth, overflows: el.scrollWidth > el.clientWidth,
-      overlap: [...el.querySelectorAll('.program-row:has(.program-tags)')].some(row => {
-        const name = row.querySelector('.program-name').getBoundingClientRect();
-        const status = row.querySelector('.program-tags').getBoundingClientRect();
-        return name.right > status.left + 1 && name.bottom > status.top + 1;
-      }),
-    }));
-    if (result.overflows || result.overlap) throw Error('Row layout overlaps or overflows: ' + JSON.stringify(result));
+    const result = await group.evaluate(el => {
+      const invalidBadge = [...el.querySelectorAll('.program-row:has(.program-badge)')].some(row => {
+        const label = row.querySelector('.program-name'), name = label.getBoundingClientRect();
+        const badge = row.querySelector('.program-badge').getBoundingClientRect();
+        const end = row.querySelector('.program-state, .program-chevron').getBoundingClientRect();
+        const gap = badge.left - name.right;
+        return gap < 3 || gap > 7 || Math.abs(badge.top - name.top) > 2 || name.width < 16 || badge.right > end.left
+          || (label.scrollWidth > label.clientWidth && end.left - badge.right > 10);
+      });
+      return { width: el.clientWidth, overflows: el.scrollWidth > el.clientWidth, invalidBadge };
+    });
+    if (result.overflows || result.invalidBadge) throw Error('Badge or row layout incorrect: ' + JSON.stringify(result));
     return result;
   };
   await rows.first().waitFor();
@@ -55,6 +58,42 @@ async page => {
   })) throw Error('The sample section is outside the opening viewport');
 
   await language('简体中文', 'zh-CN');
+  const logo = rows.first().locator('.program-icon img');
+  await logo.evaluate(img => img.decode());
+  if (!await rows.filter({ hasText: 'Quick Notes.lnk' }).locator('.program-icon svg').count()) throw Error('Missing file-type fallback');
+  const viewport = group.locator('.program-scroll > .scroll-viewport'), rail = group.locator('.program-scroll > .scroll-track');
+  const thumbOpacity = async visible => page.waitForFunction(want => {
+    const rail = document.querySelector('.program-scroll > .scroll-track');
+    return !!rail && Number(getComputedStyle(rail).opacity) === (want ? 1 : 0);
+  }, visible);
+  await thumbOpacity(false);
+  const rightBefore = (await rows.first().locator('.program-chevron').boundingBox()).x;
+  await viewport.hover();
+  await page.mouse.wheel(0, 95);
+  await thumbOpacity(true);
+  await thumbOpacity(false); // Remain inside the list even after the pointer comes to rest.
+  const target = await rail.boundingBox();
+  const thumb = await rail.locator('.scroll-thumb').boundingBox();
+  const grabY = thumb.y + thumb.height / 2;
+  await page.mouse.move(target.x + target.width / 2, grabY);
+  await thumbOpacity(true);
+  await thumbOpacity(false); // A parked pointer over the rail also fades out.
+  await page.mouse.down();
+  const scrollBefore = await viewport.evaluate(el => el.scrollTop);
+  await page.mouse.move(target.x + target.width / 2, grabY - 25, { steps: 4 });
+  await thumbOpacity(true);
+  await page.mouse.up();
+  if (await viewport.evaluate(el => el.scrollTop) >= scrollBefore) throw Error('Hidden scrollbar did not support dragging');
+  await page.mouse.move(2, 2);
+  await viewport.evaluate(el => { el.scrollTop = 0; });
+  await thumbOpacity(false);
+  await viewport.focus();
+  await page.keyboard.press('End');
+  await thumbOpacity(true);
+  await thumbOpacity(false);
+  await page.keyboard.press('Home');
+  await thumbOpacity(false);
+  if (Math.abs((await rows.first().locator('.program-chevron').boundingBox()).x - rightBefore) > 1) throw Error('Idle scrollbar shifted the row');
   const archive = rows.filter({ hasText: 'Meeting Notes and Transcription Archive' });
   await archive.focus();
   await page.keyboard.press('Enter');
@@ -84,12 +123,23 @@ async page => {
     await group.scrollIntoViewIfNeeded();
     await group.locator('.program-scroll > .scroll-viewport').evaluate(el => { el.scrollTop = 0; });
     await page.mouse.move(2, 2);
+    await thumbOpacity(false);
     await group.screenshot({ path: 'output/playwright/companion-sample-' + (dark ? 'dark' : 'light') + '.png' });
   }
   await page.setViewportSize({ width: 338, height: 470 });
-  await group.scrollIntoViewIfNeeded();
-  layouts.push(await geometry());
+  for (const [label, tag] of [['English','en-US'], ['日本語','ja-JP'], ['简体中文','zh-CN']]) {
+    await language(label, tag);
+    await group.scrollIntoViewIfNeeded();
+    layouts.push(await geometry());
+  }
   if (!await archive.locator('.program-name').evaluate(el => el.scrollWidth > el.clientWidth)) throw Error('Long-name example did not exercise truncation');
+  await viewport.evaluate(el => { el.scrollTop = 0; });
+  await page.mouse.move(2, 2);
+  await thumbOpacity(false);
+  await group.screenshot({ path: 'output/playwright/companion-sample-narrow.png' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  if (await rail.evaluate(el => getComputedStyle(el).transitionDuration !== '0s')) throw Error('Scrollbar ignored reduced motion');
+  await page.emulateMedia({ reducedMotion: null });
   await archive.click();
   await dialog.waitFor();
   if (await dialog.evaluate(el => el.scrollWidth > el.clientWidth || el.getBoundingClientRect().right > innerWidth)) throw Error('Narrow details overflowed');
@@ -117,5 +167,5 @@ async page => {
     if (await rows.count() !== 7) throw Error('Refresh failed to restore the examples');
   }
   if (errors.length) throw Error(errors.join('\n'));
-  return { programs:7, scenarios:4, languages:3, themes:2, keyboardAndFocus:true, layouts, errors };
+  return { programs:7, scenarios:4, languages:3, themes:2, keyboardAndFocus:true, idleScrollbar:true, icons:true, layouts, errors };
 }

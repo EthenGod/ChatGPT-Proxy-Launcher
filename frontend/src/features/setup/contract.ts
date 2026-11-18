@@ -14,7 +14,7 @@ export interface SaveResult {
 }
 export interface ProgramEntry { name: string; path: string; arguments: string }
 export type ProgramStatus = 'ordinary' | 'adapted' | 'adapted-disabled' | 'disabled' | 'invalid' | 'unavailable'
-export interface ListedProgram extends ProgramEntry { id: string; status: ProgramStatus }
+export interface ListedProgram extends ProgramEntry { id: string; status: ProgramStatus; icon?: string }
 export interface ProgramList { entries: ListedProgram[]; incomplete: boolean }
 export interface Validation {
   valid: boolean; arguments: string; errors: Partial<Record<keyof SetupOptions, MessageKey>>; detail?: string; nativeError?: number

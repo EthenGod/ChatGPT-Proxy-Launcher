@@ -2,8 +2,8 @@ import { useLayoutEffect, useRef, type ReactElement, type ReactNode } from 'reac
 import { ScrollArea } from '@base-ui/react/scroll-area'
 
 /** The browser keeps wheel, touch and keyboard scrolling; Base UI owns the thumb. */
-export function ScrollBox({ children, className = '', contentClassName = '', label, render, tabIndex }: {
-  children: ReactNode; className?: string; contentClassName?: string; label?: string; render?: ReactElement; tabIndex?: number
+export function ScrollBox({ children, className = '', contentClassName = '', label, render, tabIndex, persistent = false }: {
+  children: ReactNode; className?: string; contentClassName?: string; label?: string; render?: ReactElement; tabIndex?: number; persistent?: boolean
 }) {
   const track = useRef<HTMLDivElement | null>(null)
   const thumb = useRef<HTMLDivElement | null>(null)
@@ -25,7 +25,23 @@ export function ScrollBox({ children, className = '', contentClassName = '', lab
     observer.observe(handle, { attributes: true, attributeFilter: ['style'] })
     return () => observer.disconnect()
   }, [])
-  return <ScrollArea.Root className={`scroll-area ${className}`} render={render}>
+  useLayoutEffect(() => {
+    const rail = track.current
+    if (persistent || !rail) return
+    // The reserved gutter stays reachable even when its thumb is transparent.
+    let timeout: number | undefined
+    const end = () => { window.clearTimeout(timeout); rail.removeAttribute('data-pointer-moving') }
+    const move = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return
+      rail.setAttribute('data-pointer-moving', '')
+      window.clearTimeout(timeout)
+      timeout = window.setTimeout(end, 500)
+    }
+    rail.addEventListener('pointermove', move)
+    rail.addEventListener('pointerleave', end)
+    return () => { end(); rail.removeEventListener('pointermove', move); rail.removeEventListener('pointerleave', end) }
+  }, [persistent])
+  return <ScrollArea.Root className={`scroll-area ${className}`} render={render} data-auto-hide={persistent ? undefined : ''}>
     <ScrollArea.Viewport className="scroll-viewport" aria-label={label} tabIndex={tabIndex} style={{ overflowX: 'hidden' }}>
       <ScrollArea.Content className={`scroll-content ${contentClassName}`} style={{ minWidth: 0 }}>{children}</ScrollArea.Content>
     </ScrollArea.Viewport>

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { AppWindow, BadgeCheck, ChevronRight, CircleAlert, FileCode2, FileSymlink, Folder, FolderOpen, Plus, Puzzle, RefreshCw } from 'lucide-react'
+import { AppWindow, BadgeCheck, ChevronRight, CircleAlert, FileCode2, FileJson2, FileSymlink, FileTerminal, Folder, FolderOpen, Plus, RefreshCw } from 'lucide-react'
 import { Button, Hint } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
 import type { translator } from '../../i18n'
@@ -7,30 +7,34 @@ import type { ListedProgram, ProgramList, SetupService } from './contract'
 import { nativeIssue, type ErrorInfo } from './errors'
 
 type Translate = ReturnType<typeof translator>
+const fileIcons = new Map([['exe', AppWindow], ['lnk', FileSymlink], ['ps1', FileTerminal], ['cmd', FileTerminal], ['bat', FileTerminal], ['json', FileJson2]])
 
 function ProgramIcon({ program }: { program: ListedProgram }) {
-  let Icon = Puzzle
-  if (program.status === 'ordinary' || program.status === 'unavailable') {
-    Icon = /\.lnk$/i.test(program.path) ? FileSymlink : /\.exe$/i.test(program.path) ? AppWindow : FileCode2
-  }
-  return <span className="program-icon" aria-hidden="true"><Icon size={15} /></span>
+  const [failed, setFailed] = useState<string>()
+  const image = program.icon && program.icon !== failed ? program.icon : undefined
+  const extension = program.path.slice(program.path.lastIndexOf('.') + 1).toLowerCase()
+  const Icon = fileIcons.get(extension) ?? FileCode2
+  return <span className="program-icon" data-image={image ? '' : undefined} aria-hidden="true">
+    {image ? <img src={image} alt="" draggable={false} onError={() => setFailed(image)} /> : <Icon size={16} />}
+  </span>
 }
 
-function ProgramTags({ status, t }: { status: ListedProgram['status']; t: Translate }) {
-  if (status === 'ordinary') return null
-  return <span className="program-tags">
-    {(status === 'adapted' || status === 'adapted-disabled') && <span className="program-badge">
-      <BadgeCheck size={13} aria-hidden="true" /><span data-motion-text>{t('ui.programs.adapted')}</span></span>}
-    {(status === 'disabled' || status === 'adapted-disabled') && <span className="program-state" data-motion-text>{t('ui.programs.disabled')}</span>}
-    {(status === 'invalid' || status === 'unavailable') && <span className="program-state" data-warning>
-      <CircleAlert size={13} aria-hidden="true" /><span data-motion-text>{t(status === 'invalid' ? 'ui.programs.invalid' : 'ui.programs.unavailable')}</span></span>}
-  </span>
+type StatusProps = { status: ListedProgram['status']; t: Translate }
+function AdaptedBadge({ status, t }: StatusProps) {
+  if (status !== 'adapted' && status !== 'adapted-disabled') return null
+  return <span className="program-badge"><BadgeCheck size={13} aria-hidden="true" /><span data-motion-text>{t('ui.programs.adapted')}</span></span>
+}
+function ProgramState({ status, t }: StatusProps) {
+  if (status === 'disabled' || status === 'adapted-disabled') return <span className="program-state" data-motion-text>{t('ui.programs.disabled')}</span>
+  if (status === 'invalid' || status === 'unavailable') return <span className="program-state" data-warning>
+    <CircleAlert size={13} aria-hidden="true" /><span data-motion-text>{t(status === 'invalid' ? 'ui.programs.invalid' : 'ui.programs.unavailable')}</span></span>
+  return null
 }
 
 export function ProgramDetails({ program, t }: { program: ListedProgram; t: Translate }) {
   return <div className="program-details">
-    <div className="program-identity"><ProgramIcon program={program} /><strong dir="auto">{program.name}</strong></div>
-    <ProgramTags status={program.status} t={t} />
+    <div className="program-identity"><ProgramIcon program={program} /><strong dir="auto">{program.name}</strong><AdaptedBadge status={program.status} t={t} /></div>
+    <ProgramState status={program.status} t={t} />
     <dl className="program-properties">
       <div><dt>{t('ui.programs.path')}</dt><dd dir="auto">{program.path}</dd></div>
       {program.arguments && <div><dt>{t('ui.arguments')}</dt><dd dir="auto">{program.arguments}</dd></div>}
@@ -88,8 +92,9 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
         <ul className="program-list">{entries.map(program => <li key={program.id}>
           <Hint label={[program.path, program.arguments].filter(Boolean).join('\n')}>
             <Button className="program-row" disabled={locked} aria-haspopup="dialog" onClick={() => onDetails(program)}>
-              <ProgramIcon program={program} /><span className="program-name" dir="auto">{program.name}</span>
-              <ProgramTags status={program.status} t={t} /><ChevronRight className="program-chevron" size={14} aria-hidden="true" />
+              <ProgramIcon program={program} /><span className="program-title"><span className="program-name" dir="auto">{program.name}</span>
+                <AdaptedBadge status={program.status} t={t} /></span>
+              <ProgramState status={program.status} t={t} /><ChevronRight className="program-chevron" size={14} aria-hidden="true" />
             </Button>
           </Hint>
         </li>)}</ul>

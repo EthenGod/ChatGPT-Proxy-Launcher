@@ -55,5 +55,11 @@ describe('desktop command boundary', () => {
     expect(() => parseProgramList({ ...value, entries: [row, row] })).toThrow()
     expect(() => parseProgramList({ ...value, entries: [{ ...row, status: 'unknown' }] })).toThrow()
     expect(() => parseProgramList({ ...value, incomplete: 'false' })).toThrow()
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFlgAAAAASUVORK5CYII='
+    const withIcon = (icons: string[], icon: unknown) => parseProgramList({ ...value, icons, entries: [{ ...row, icon }] }).entries[0]
+    expect(withIcon([png], 0)?.icon).toBe('data:image/png;base64,' + png)
+    expect(withIcon([png], 9)).toEqual(row)
+    expect(withIcon(['file:///example.ico'], 0)).toEqual(row)
+    expect(withIcon([png], '0')).toEqual(row)
   })
 })

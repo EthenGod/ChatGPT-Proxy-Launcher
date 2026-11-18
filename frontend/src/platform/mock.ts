@@ -2,6 +2,8 @@ import type { SetupOptions, SetupSnapshot } from './types'
 import type { SetupService, SaveResult, ProgramEntry, ListedProgram, Detection } from '../features/setup/contract'
 import { translator, resolveLanguage, type MessageKey } from '../i18n'
 import { previewOptions } from '../features/setup/preview'
+import audioIcon from '../assets/sample-audio.png'
+import archiveIcon from '../assets/sample-archive.png'
 
 export const programScenarios = ['programs', 'first', 'programs-partial', 'programs-error'] as const
 export const scenarios = ['normal', ...programScenarios, 'missing', 'unknown', 'silent', 'long', 'load-error', 'saving', 'save-error', 'rollback', 'incomplete', 'warnings'] as const
@@ -40,8 +42,8 @@ export class MockSetupService implements SetupService {
     if (scenario.startsWith('programs')) {
       const startup = defaultDirectory + '\\StartupApps\\'
       this.programs = [
-        { id: 'org.example.audio', name: 'Audio Monitor', path: 'C:\\Apps\\Audio Monitor\\monitor.exe', arguments: '--profile "Studio A"', status: 'adapted' },
-        { id: 'org.example.archive', name: 'Meeting Notes and Transcription Archive', path: 'C:\\Apps\\Meeting Notes\\Archive\\archive.exe', arguments: '--folder "会议记录" --mode archive', status: 'adapted-disabled' },
+        { id: 'org.example.audio', name: 'Audio Monitor', path: 'C:\\Apps\\Audio Monitor\\monitor.exe', arguments: '--profile "Studio A"', status: 'adapted', icon: audioIcon },
+        { id: 'org.example.archive', name: 'Meeting Notes and Transcription Archive', path: 'C:\\Apps\\Meeting Notes\\Archive\\archive.exe', arguments: '--folder "会议记录" --mode archive', status: 'adapted-disabled', icon: archiveIcon },
         { id: startup + 'Quick Notes.lnk', name: 'Quick Notes.lnk', path: startup + 'Quick Notes.lnk', arguments: '--notebook "Work notes"', status: 'ordinary' },
         { id: startup + '旧版笔记.lnk', name: '旧版笔记.lnk', path: startup + '旧版笔记.lnk', arguments: '', status: 'unavailable' },
         { id: 'org.example.calendar', name: 'org.example.calendar', path: defaultDirectory + '\\CompanionRegistry\\org.example.calendar.json', arguments: '', status: 'invalid' },

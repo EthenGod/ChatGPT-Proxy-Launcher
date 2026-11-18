@@ -410,6 +410,17 @@ describe('settings prototype behavior', () => {
     await waitFor(() => expect(row).toHaveFocus())
     expect(service.calls.save).toBe(0)
   })
+  it('keeps a program and its badge usable if its image cannot be decoded', async () => {
+    const { user } = mount(new MockSetupService('programs', 0), true)
+    const row = await screen.findByRole('button', { name: /Audio Monitor/ })
+    const image = row.querySelector('.program-icon img')!
+    expect(image).toBeInTheDocument()
+    fireEvent.error(image)
+    expect(row.querySelector('.program-icon svg')).toBeInTheDocument()
+    expect(within(row).getByText('已适配')).toBeVisible()
+    await user.click(row)
+    expect(await screen.findByRole('dialog', { name: '程序详情' })).toBeVisible()
+  })
   it.each(['programs-error', 'programs-partial'] as const)('can recover the sample list in %s', async scenario => {
     const { service, user } = mount(new MockSetupService(scenario, 0), true)
     await screen.findByText(scenario === 'programs-error' ? '未能刷新程序列表' : '部分程序未能列出')

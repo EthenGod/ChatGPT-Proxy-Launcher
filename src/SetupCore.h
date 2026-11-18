@@ -28,6 +28,7 @@ struct Paths {
     std::wstring legacyStartupLink{}, legacyDesktopLink{};
 };
 struct Link { std::wstring target, arguments, directory, description; };
+struct LinkIcon { std::wstring path; int index = 0; };
 enum class CommitState { NotStarted, Committed, RolledBack, Incomplete };
 struct Result {
     DWORD code = 0;
@@ -58,7 +59,7 @@ Result BuildArguments(const Options& options, std::wstring& arguments);
 Result ParseArguments(const std::wstring& arguments, Options& options);
 
 // Deployment owns file validation, commit and rollback (SetupCore.cpp).
-Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = false);
+Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = false, LinkIcon* icon = nullptr);
 Result Load(const Paths& paths, Loaded& loaded);
 Result Apply(const Paths& paths, const Options& options, Payload payload,
     std::wstring& deployedTarget);

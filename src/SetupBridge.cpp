@@ -6,6 +6,7 @@
 #include "Localization.h"
 #include "AppVersion.h"
 #include "SetupUiServices.h"
+#include "SetupProgramIcons.h"
 #include "ProxyDetection.h"
 #include "StartupApps.h"
 #include "CompanionManifest.h"
@@ -75,10 +76,11 @@ Json Program(const std::wstring& path) {
 }
 struct ProgramList {
     Json entries = Json::Array();
+    std::vector<setup::ui::ProgramIconSource> icons;
     size_t bytes = 64; // Reserve the JSON envelope and separators within the IPC limit.
     bool incomplete = false;
     void Add(const std::wstring& id, const std::wstring& name, const std::wstring& path,
-        const std::wstring& arguments, PCWSTR status) {
+        const std::wstring& arguments, PCWSTR status, setup::ui::ProgramIconSource icon = {}) {
         auto row = Json::Object();
         row[L"id"] = Json(id); row[L"name"] = Json(name); row[L"path"] = Json(path);
         row[L"arguments"] = Json(arguments); row[L"status"] = Json(status);
@@ -86,6 +88,7 @@ struct ProgramList {
         if (size > MaxResponseBytes - bytes) { incomplete = true; return; }
         bytes += size;
         entries.array.push_back(std::move(row));
+        icons.push_back(std::move(icon));
     }
 };
 void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std::wstring>& activeTargets) {
@@ -132,8 +135,9 @@ void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& act
         if (++count > 256) { list.incomplete = true; return; }
         const auto path = setup::Join(folder, data.cFileName);
         setup::Link link;
+        setup::LinkIcon icon;
         const bool shortcut = kind == companions::Kind::Link;
-        if (shortcut) setup::ReadLink(path, link, true);
+        if (shortcut) setup::ReadLink(path, link, true, &icon);
         const auto& target = shortcut ? link.target : path;
         const bool valid = companions::ValidTarget(target.c_str(), link.arguments.c_str(), link.directory.c_str());
         if (!valid && !shortcut) continue;
@@ -145,11 +149,12 @@ void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& act
             const auto attrs = GetFileAttributesW(target.c_str());
             available = attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
         }
-        list.Add(path, data.cFileName, path, link.arguments, available ? L"ordinary" : L"unavailable");
+        list.Add(path, data.cFileName, path, link.arguments, available ? L"ordinary" : L"unavailable",
+            {available && shortcut ? link.target : L"", std::move(icon)});
     } while (FindNextFileW(search, &data));
     if (GetLastError() != ERROR_NO_MORE_FILES) list.incomplete = true;
 }
-Json Programs(const setup::Paths& paths) {
+Json Programs(const setup::Paths& paths, bool isolated) {
     ProgramList list;
     std::vector<std::wstring> activeTargets;
     try { ListRegistered(paths.defaultDirectory, list, activeTargets); }
@@ -158,11 +163,13 @@ Json Programs(const setup::Paths& paths) {
     try { ListFolder(setup::Join(paths.defaultDirectory, companions::Folder), activeTargets, list); }
     catch (const automation::Invalid&) { list.incomplete = true; }
     catch (const automation::IoError&) { list.incomplete = true; }
+    auto response = Json::Object();
+    response[L"icons"] = setup::ui::ProgramIcons(list.entries, list.icons, MaxResponseBytes - list.bytes,
+        isolated ? automation::ParentPath(paths.defaultDirectory) : L"");
     std::sort(list.entries.array.begin(), list.entries.array.end(), [](const Json& a, const Json& b) {
         const auto order = CompareStringOrdinal(a.At(L"name").text.c_str(), -1, b.At(L"name").text.c_str(), -1, TRUE);
         return order == CSTR_EQUAL ? a.At(L"id").text < b.At(L"id").text : order == CSTR_LESS_THAN;
     });
-    auto response = Json::Object();
     response[L"entries"] = std::move(list.entries);
     response[L"incomplete"] = Json(list.incomplete);
     return response;
@@ -355,7 +362,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             response[L"options"] = Options(options);
         } else if (action == SETUP_LIST_PROGRAMS) {
             request.Fields({});
-            response = Programs(paths);
+            response = Programs(paths, isolated);
         } else if (action == SETUP_DIRECTORY || action == SETUP_ADD_PROGRAM) {
             const bool program = action == SETUP_ADD_PROGRAM;
             request.Fields({L"initial", L"testSelection"});
