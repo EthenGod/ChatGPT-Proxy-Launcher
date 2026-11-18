@@ -38,7 +38,6 @@ pub struct Snapshot {
     pub preferences: Preferences,
     pub payload_bytes: u32,
     pub default_directory: String,
-    pub programs: Vec<ProgramEntry>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -65,6 +64,32 @@ pub struct ProgramEntry {
     pub name: String,
     pub path: String,
     pub arguments: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProgramStatus {
+    Ordinary,
+    Adapted,
+    AdaptedDisabled,
+    Disabled,
+    Invalid,
+    Unavailable,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListedProgram {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub arguments: String,
+    pub status: ProgramStatus,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramList {
+    pub entries: Vec<ListedProgram>,
+    pub incomplete: bool,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

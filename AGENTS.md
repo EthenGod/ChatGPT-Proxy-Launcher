@@ -9,6 +9,7 @@
 - `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。
 - `features/setup/SetupSkeleton.tsx` 提供首次读取、重试和参数预览的骨架。端口检测的操作状态及反馈在 `SetupPage.tsx`。
 - `features/setup/SetupStatus.tsx` 显示底部的操作结果、退出提醒、输入问题入口和偏好警告。
+- `features/setup/CompanionPrograms.tsx` 显示附加程序。只读命令 `list_setup_programs` 合并普通启动目录和注册扩展。清单由现有 C++ 协议解析器校验。
 - 新 UI 构建入口为 `frontend/desktop.ps1`。测试源码统一放在 `tests/frontend/`、`tests/rust/` 和 `tests/setup-bridge-*`；测试包及缓存放在 `work/`。`test-harness` 只编入隔离测试包，不进入普通 Tauri 构建或发布产物。
 - `frontend/desktop.ps1 -Command prototype` 构建内存模拟原型，`-Command harness` 构建真实接口的隔离测试包。`frontend/preview.ps1` 默认打开原型，加 `-Functional` 打开隔离功能界面。`tests/ui-prototype-tests.ps1` 同样支持 `-Functional`，检查内嵌页面、调用计数、关闭保护和所属进程清理。两种测试包均强制使用隔离路径；系统操作用替身。
 - 延长生命周期检查使用 `ui-prototype-tests.ps1 -Cycles <次数> -IdleSeconds <首轮秒数>`。`tests/ui-interaction-checks.js` 由 Playwright CLI 附加隔离功能窗口执行，覆盖三语、主题、渲染缩放和反复操作后的样式、DOM 清理；不能附加正式配置器。`-Action Resize` 只调整指定隔离测试窗口的物理尺寸。

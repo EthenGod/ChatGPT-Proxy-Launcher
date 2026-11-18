@@ -31,7 +31,7 @@ button { touch-action: manipulation; user-select: none; }
 body { user-select: none; }
 input, textarea, .argument-preview, .dialog-description, .error-detail, .error-guide, .notice-detail, .status-line > span { user-select: text; }
 .error-guide summary { user-select: none; }
-button:focus-visible, .button:focus-visible, [role=radio]:focus-visible, [role=switch]:focus-visible, .program-list li:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button:focus-visible, .button:focus-visible, [role=radio]:focus-visible, [role=switch]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 button:disabled, [data-disabled] { cursor: default; }
 button svg { flex-shrink: 0; }
 .setup-shell { height: 100dvh; min-height: 280px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
@@ -164,10 +164,21 @@ button svg { flex-shrink: 0; }
 .advanced-card { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .field-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .programs-group { display: flex; flex-direction: column; gap: 8px; }
-.program-list { padding: 0; margin: 0; list-style: none; }
-.program-list li { padding: 6px 0; display: flex; align-items: center; gap: 8px; }
-.program-list li span { flex: 1; overflow-wrap: anywhere; }
-.program-list li > svg:last-child { color: var(--green-11); }
+.program-refresh { width: 28px; height: 28px; margin-inline-start: auto; border-radius: var(--radius-help); }
+.program-scroll { max-height: 184px; border: 1px solid var(--gray-6); border-radius: var(--radius-control); }
+.program-scroll > .scroll-viewport { overscroll-behavior-y: auto; }
+.program-list { padding: 3px; margin: 0; list-style: none; }
+.program-row { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 7px; border-radius: var(--radius-small); transition: background-color var(--motion-fast) ease-out; }
+.program-row:hover, .program-row:focus-visible { background: var(--gray-3); }
+.program-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.program-row > svg { flex: none; color: var(--gray-11); }
+.program-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 20px; }
+.program-badge, .program-state { display: inline-flex; flex: none; align-items: center; gap: 4px; font-size: 12px; line-height: 18px; }
+.program-badge { padding: 1px 6px; border-radius: var(--radius-small); background: var(--green-3); color: var(--green-11); }
+.program-state, .program-message { color: var(--gray-11); }
+.program-state[data-warning] { color: var(--amber-11); }
+.program-placeholder, .program-message { display: flex; align-items: center; gap: 8px; margin: 0; min-height: 32px; font-size: 12px; }
+.program-scroll + .program-message { margin-top: 4px; }
 .settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
 .status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); }
 .status-scroll:not(:has(.status-line, .status-input-link)) { flex-basis: 0; }

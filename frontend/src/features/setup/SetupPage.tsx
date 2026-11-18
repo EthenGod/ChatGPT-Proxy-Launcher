@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Collapsible } from '@base-ui/react/collapsible'
 import { Radio } from '@base-ui/react/radio'
 import { RadioGroup } from '@base-ui/react/radio-group'
-import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, File, FlaskConical,
-  ChevronRight, FolderOpen, Globe2, LoaderCircle, Moon, Plus, Search, Sun } from 'lucide-react'
+import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, FlaskConical,
+  ChevronRight, FolderOpen, Globe2, LoaderCircle, Moon, Search, Sun } from 'lucide-react'
 import { Button, ChoiceMenu, Hint, Modal, SwitchControl, TextField, Toggle } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
 import { ErrorDetails } from '../../components/ErrorDetails'
@@ -16,7 +16,8 @@ import { nativeIssue, type ErrorInfo } from './errors'
 import { portErrorKey, previewOptions, sameOptions } from './preview'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
-import type { ProgramEntry, SaveResult, SetupService, WindowHost, Validation } from './contract'
+import type { SaveResult, SetupService, WindowHost, Validation } from './contract'
+import { CompanionPrograms } from './CompanionPrograms'
 
 type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | 'notice' | null
 type DetectionPhase = 'idle' | 'pending' | 'scanning' | 'found'
@@ -54,7 +55,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const [advanced, setAdvanced] = useState(false)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [notice, setNotice] = useState<OperationIssue | null>(null)
-  const [programs, setPrograms] = useState<ProgramEntry[]>([])
+  const [programRevision, setProgramRevision] = useState(0)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [help, setHelp] = useState<keyof typeof helpTitles>('ui.help.proxy')
@@ -118,7 +119,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
       setNativeValidation(null)
       setSnapshot(data); setOptions({ ...data.options }); setLanguage(data.preferences.language)
       requestedLanguage.current = data.preferences.language
-      setPrograms(data.programs); setError(null); setPreferenceWarnings([])
+      setError(null); setPreferenceWarnings([])
       setDark(data.preferences.dark); setResult(null); setNotice(null)
     } catch (cause) { if (alive.current && revision === loadRevision.current) { setLoadError(true); setError(nativeIssue(cause)) } }
     finally { if (alive.current && revision === loadRevision.current) setLoading(false) }
@@ -215,7 +216,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     try {
       const entry = await service.selectProgram()
       if (alive.current && entry) {
-        setPrograms(current => current.some(p => p.name === entry.name) ? current : [...current, entry])
+        setProgramRevision(previous => previous + 1)
         notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success', undefined, entry.path); setError(null); setNotice(null)
       }
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
@@ -295,7 +296,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     try {
       await service.addProgram(entry)
       if (!alive.current) return
-      setPrograms(current => current.some(p => p.path === entry.path) ? current : [...current, { ...entry }])
+      setProgramRevision(previous => previous + 1)
       notify('setup.status.added', {}, '', 'success', undefined, entry.path); setDialogOpen(false)
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setAdding(false) } }
@@ -401,10 +402,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
                   suffix={<Hint label={t('setup.action.browse')}><Button className="input-action" aria-label={t('setup.action.browse')} disabled={locked} onClick={() => void chooseDirectory()}><FolderOpen size={16} /></Button></Hint>} />
                 <TextField label={t('ui.bypass')} value={options.bypass} onChange={event => update('bypass', event.target.value)} disabled={locked} error={fieldError('bypass')} placeholder="localhost;*.example.com" spellCheck={false} />
                 <TextField label={t('ui.extra')} value={options.extra} onChange={event => update('extra', event.target.value)} disabled={locked} error={fieldError('extra')} spellCheck={false} />
-                <div className="programs-group"><div className="programs-heading"><h2>{t('ui.programs')}</h2>{helpButton('ui.help.programs')}</div>
-                {programs.length > 0 && <ul className="program-list">{programs.map(program => <Hint key={program.path} label={`${program.path}\n${program.arguments}`}><li tabIndex={0}><File size={16} /><span>{program.name}</span><CheckCircle2 size={14} /></li></Hint>)}</ul>}
-                <div className="field-actions"><Button className="control-button" disabled={locked} onClick={() => void chooseProgram()}><Plus size={16} />{t('setup.action.add')}</Button>
-                  <Hint label={t('setup.action.openstartup')}><Button className="icon-button" disabled={locked} aria-label={t('setup.action.openstartup')} onClick={() => void openLocation('startup')}><FolderOpen size={16} /></Button></Hint></div></div>
+                <CompanionPrograms service={service} active={advanced} revision={programRevision} locked={locked}
+                  help={helpButton('ui.help.programs')} t={t} onAdd={() => void chooseProgram()} onOpen={() => void openLocation('startup')} onError={showError} />
               </div>
             </Collapsible.Panel>
           </Collapsible.Root>

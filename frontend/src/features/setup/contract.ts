@@ -13,6 +13,9 @@ export interface SaveResult {
   conflictDirectory?: string
 }
 export interface ProgramEntry { name: string; path: string; arguments: string }
+export type ProgramStatus = 'ordinary' | 'adapted' | 'adapted-disabled' | 'disabled' | 'invalid' | 'unavailable'
+export interface ListedProgram extends ProgramEntry { id: string; status: ProgramStatus }
+export interface ProgramList { entries: ListedProgram[]; incomplete: boolean }
 export interface Validation {
   valid: boolean; arguments: string; errors: Partial<Record<keyof SetupOptions, MessageKey>>; detail?: string; nativeError?: number
 }
@@ -29,6 +32,7 @@ export interface SetupService {
   detectPort(protocol: string, host: string): Promise<Detection>
   save(options: SetupOptions): Promise<SaveResult>
   addProgram(entry: ProgramEntry): Promise<void>
+  listPrograms(): Promise<ProgramList>
   openLocation(location: 'startup' | 'deployment' | 'windows'): Promise<void>
 }
 export interface WindowHost {

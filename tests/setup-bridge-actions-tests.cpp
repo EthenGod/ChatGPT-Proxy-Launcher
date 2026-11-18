@@ -26,6 +26,11 @@ Result BridgeTestApply(const Paths& paths, const Options& options, Payload paylo
 #undef Apply
 
 #define REQUIRE(x) do { if (!(x)) { printf("FAIL actions line %d: %s\n", __LINE__, #x); return 20; } } while (0)
+static void Put(const std::wstring& path, const std::string& bytes) {
+    automation::Handle file(CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+    if (!file) throw automation::IoError(GetLastError());
+    automation::WriteBytes(file.value, bytes);
+}
 int wmain(int argc, wchar_t** argv) {
     if (argc != 3) return 2;
     try {
@@ -44,13 +49,17 @@ int wmain(int argc, wchar_t** argv) {
             const auto code = setup_bridge_action(action, reinterpret_cast<const uint8_t*>(input.data()), input.size(),
                 reinterpret_cast<const uint8_t*>(pathJson.data()), pathJson.size(), 0, &buffer, &commit);
             memory_fault::armed = false;
-            reply = buffer.data ? automation::ParseJson(std::string(reinterpret_cast<char*>(buffer.data), buffer.length)) : Json{};
+            reply = buffer.data ? automation::ParseJson(std::string(reinterpret_cast<char*>(buffer.data), buffer.length), MaxResponseBytes) : Json{};
             memory_fault::watchedAllocation = buffer.data; memory_fault::watchedReleased = false;
             const bool hadBuffer = buffer.data != nullptr;
             setup_bridge_free(&buffer);
             if (hadBuffer && !memory_fault::watchedReleased) throw automation::Invalid("response-leak");
             return code;
         };
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && commit == 0);
+        REQUIRE(reply.At(L"entries").array.empty() && !reply.At(L"incomplete").Bool());
+        auto arbitrary = Json::Object(); arbitrary[L"path"] = Json(root);
+        REQUIRE(call(SETUP_LIST_PROGRAMS, arbitrary) != 0);
         REQUIRE(call(SETUP_VALIDATE, Options(options)) == 0 && reply.At(L"valid").Bool());
         REQUIRE(reply.At(L"arguments").String().find(options.extra) != std::wstring::npos);
         for (const auto& bad : {L"\"unclosed", L"bad\nline"}) {
@@ -114,6 +123,40 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(reply.At(L"entry").At(L"arguments").String() == options.extra);
         REQUIRE(automation::ReadBytes(shortcut) == automation::ReadBytes(setup::Join(setup::Join(paths.defaultDirectory, companions::Folder), L"工具.lnk")));
         REQUIRE(call(SETUP_ADD_PROGRAM, pick) == 0); // Idempotent import.
+        const auto folder = setup::Join(paths.defaultDirectory, companions::Folder);
+        const auto registry = setup::Join(paths.defaultDirectory, automation::contract::RegistryFolder);
+        REQUIRE(CreateDirectoryW(registry.c_str(), nullptr));
+        const auto manifest = setup::Join(root, L"tool.json");
+        auto spec = automation::ParseJson(R"({"schemaVersion":1,"id":"org.example.tool","name":"Example Tool","version":"1.0.0","requires":[],"entry":{"runtime":"exe","path":"tool.exe"},"readiness":{"mode":"exit-code"}})");
+        Put(manifest, automation::WriteJson(spec));
+        auto record = automation::ParseJson(R"({"schemaVersion":1,"managedBy":"ChatGPTProxyLauncher","id":"org.example.tool","overrides":{}})");
+        record[L"manifestPath"] = Json(manifest);
+        const auto registration = setup::Join(registry, L"org.example.tool.json");
+        Put(registration, automation::WriteJson(record));
+        Put(setup::Join(folder, L"ordinary.ps1"), "# never executed");
+        Put(setup::Join(folder, L"unregistered.json"), automation::WriteJson(spec));
+        const auto nested = setup::Join(folder, L"nested");
+        REQUIRE(CreateDirectoryW(nested.c_str(), nullptr));
+        Put(setup::Join(nested, L"nested.ps1"), "# never executed");
+        Put(setup::Join(registry, L"org.example.broken.json"), "not JSON");
+        auto listed = [&](PCWSTR name, PCWSTR status) {
+            const auto& rows = reply.At(L"entries").array;
+            return std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
+                return row.At(L"name").text == name && row.At(L"status").text == status;
+            });
+        };
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && commit == 0 && !reply.At(L"incomplete").Bool());
+        REQUIRE(reply.At(L"entries").array.size() == 3 && listed(L"Example Tool", L"adapted")
+            && listed(L"ordinary.ps1", L"ordinary") && listed(L"org.example.broken", L"invalid"));
+        record[L"overrides"][L"enabled"] = Json(false); Put(registration, automation::WriteJson(record));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"entries").array.size() == 4);
+        REQUIRE(listed(L"Example Tool", L"adapted-disabled") && listed(L"工具.lnk", L"ordinary"));
+        spec[L"id"] = Json(L"org.example.different"); Put(manifest, automation::WriteJson(spec));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled"));
+        record[L"overrides"][L"enabled"] = Json(true); Put(registration, automation::WriteJson(record));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"invalid") && listed(L"工具.lnk", L"ordinary"));
+        for (unsigned i = 0; i < 256; ++i) Put(setup::Join(folder, L"item-" + std::to_wstring(i) + L".ps1"), "");
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool() && listed(L"org.example.broken", L"invalid"));
         pick[L"testSelection"] = Json(argv[2]);
         REQUIRE(call(SETUP_ADD_PROGRAM, pick) != 0 && commit == 0); // Outside harness root.
         pick[L"testSelection"] = Json(L"");

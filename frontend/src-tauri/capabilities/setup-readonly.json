@@ -17,6 +17,7 @@
     "allow-save-setup",
     "allow-choose-setup-directory",
     "allow-add-setup-program",
+    "allow-list-setup-programs",
     "allow-open-setup-location",
     "allow-set-setup-preferences"
   ]

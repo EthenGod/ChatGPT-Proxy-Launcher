@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { parseSnapshot } from './types'
-import type { SetupService, SaveResult, Validation, ProgramEntry, Detection } from '../features/setup/contract'
+import type { SetupService, SaveResult, Validation, ProgramEntry, ProgramList, Detection } from '../features/setup/contract'
 import type { MessageKey } from '../i18n'
 import catalog from '../../../locales/zh-CN.json'
 
@@ -9,6 +9,19 @@ const record = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>
 }
 const messageKey = (value: unknown): value is MessageKey => typeof value === 'string' && Object.hasOwn(catalog.strings, value)
+export function parseProgramList(value: unknown): ProgramList {
+  const list = record(value)
+  if (typeof list.incomplete !== 'boolean' || !Array.isArray(list.entries)) throw new Error('Invalid program list')
+  const ids = new Set<string>()
+  for (const item of list.entries) {
+    const row = record(item)
+    if (typeof row.id !== 'string' || !row.id || ids.has(row.id) || typeof row.name !== 'string' || !row.name
+      || typeof row.path !== 'string' || typeof row.arguments !== 'string'
+      || typeof row.status !== 'string' || !['ordinary', 'adapted', 'adapted-disabled', 'disabled', 'invalid', 'unavailable'].includes(row.status)) throw new Error('Invalid program entry')
+    ids.add(row.id)
+  }
+  return value as ProgramList
+}
 export function parseSaveResult(value: unknown): SaveResult {
   const result = record(value)
   if (!['not-started', 'saved', 'rolled-back', 'rollback-incomplete'].includes(String(result.commit))
@@ -47,6 +60,7 @@ export function createSetupService(): SetupService {
     save: async options => parseSaveResult(await call('save_setup', { options })),
     chooseDirectory: async initial => (await call<{ path: string }>('choose_setup_directory', { initial })).path || null,
     selectProgram: async () => (await call<{ entry: ProgramEntry | null }>('add_setup_program')).entry,
+    listPrograms: async () => parseProgramList(await call('list_setup_programs')),
     // Production imports only the path selected by the native dialog.
     addProgram: async () => { throw new Error('Native selection required') },
     openLocation: location => call<void>('open_setup_location', { location }),

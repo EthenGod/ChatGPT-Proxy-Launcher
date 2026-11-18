@@ -1,5 +1,5 @@
 import type { SetupOptions, SetupSnapshot } from './types'
-import type { SetupService, SaveResult, ProgramEntry, Detection } from '../features/setup/contract'
+import type { SetupService, SaveResult, ProgramEntry, ListedProgram, Detection } from '../features/setup/contract'
 import { translator, resolveLanguage, type MessageKey } from '../i18n'
 import { previewOptions } from '../features/setup/preview'
 
@@ -22,17 +22,24 @@ const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms
 /** No invoke, filesystem, registry, fetch, storage or system actions. Reset on reload. */
 export class MockSetupService implements SetupService {
   picker = { directories: [defaultDirectory, 'D:\\Tools\\ChatGPT Launcher', 'C:\\Apps\\工作工具\\ChatGPT Launcher'], programs: samplePrograms }
-  programs: ProgramEntry[] = []
-  calls = { load: 0, detect: 0, save: 0, add: 0, open: 0 }
+  programs: ListedProgram[] = []
+  calls = { load: 0, detect: 0, save: 0, add: 0, open: 0, list: 0 }
   private snapshot: SetupSnapshot
   constructor(readonly scenario: Scenario = 'normal', private delay = 1) {
     this.snapshot = {
-      schemaVersion: 1, defaultDirectory, programs: [], setupVersion: '1.1.3', deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
+      schemaVersion: 1, defaultDirectory, setupVersion: '1.1.3', deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
       deployed: !['first', 'missing'].includes(scenario), hasSettings: scenario !== 'first', validArguments: true, notice: '', payloadBytes: 1,
       preferences: { dark: true, language: 'auto', resolvedLanguage: 'zh-CN' },
       options: { startup: false, silent: scenario === 'silent', desktop: true, proxy: true, codexEnv: true,
         protocol: 'http', host: '127.0.0.1', port: '7890', bypass: '', extra: '',
         directory: scenario === 'long' ? 'C:\\Apps\\' + '较长的目录名称\\'.repeat(12) + 'ChatGPT Launcher' : defaultDirectory },
+    }
+    if (scenario !== 'first') {
+      const path = defaultDirectory + '\\StartupApps\\Quick Notes.lnk'
+      this.programs = [
+        { id: path, name: 'Quick Notes.lnk', path, arguments: '', status: 'ordinary' },
+        { id: 'example.session-tools', name: 'Session Tools', path: 'C:\\Apps\\Session Tools\\SessionTools.exe', arguments: '', status: 'adapted' },
+      ]
     }
   }
   async load() {
@@ -68,7 +75,14 @@ export class MockSetupService implements SetupService {
   async addProgram(entry: ProgramEntry) {
     this.calls.add++
     await wait(160 * this.delay)
-    if (!this.programs.some(p => p.path === entry.path)) this.programs.push({ ...entry })
+    const name = entry.name.replace(/\.[^.]+$/, '.lnk')
+    const path = defaultDirectory + '\\StartupApps\\' + name
+    if (!this.programs.some(p => p.path === path)) this.programs.push({ ...entry, id: path, name, path, status: 'ordinary' })
+  }
+  async listPrograms() {
+    this.calls.list++
+    await wait(100 * this.delay)
+    return { entries: structuredClone(this.programs).sort((a, b) => a.name.localeCompare(b.name)), incomplete: false }
   }
   async openLocation() { this.calls.open++; await wait(0) }
 }

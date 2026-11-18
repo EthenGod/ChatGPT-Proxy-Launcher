@@ -8,8 +8,10 @@
 #include "SetupUiServices.h"
 #include "ProxyDetection.h"
 #include "StartupApps.h"
+#include "CompanionManifest.h"
 #include <shellapi.h>
 #include <objbase.h>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -71,21 +73,99 @@ Json Program(const std::wstring& path) {
     result[L"arguments"] = Json(link.arguments);
     return result;
 }
-Json Programs(const setup::Paths& paths) {
-    auto result = Json::Array();
-    const auto folder = setup::Join(paths.defaultDirectory, companions::Folder);
-    WIN32_FIND_DATAW data{};
-    const auto search = FindFirstFileW(setup::Join(folder, L"*").c_str(), &data);
-    if (search == INVALID_HANDLE_VALUE) return result;
-    struct Search { HANDLE value; ~Search() { FindClose(value); } } guard{search};
-    do {
-        if (!(data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
-            && companions::FileKind(data.cFileName) != companions::Kind::Unknown) {
-            if (result.array.size() >= 256) break;
-            result.array.push_back(Program(setup::Join(folder, data.cFileName)));
+struct ProgramList {
+    Json entries = Json::Array();
+    size_t bytes = 64; // Reserve the JSON envelope and separators within the IPC limit.
+    bool incomplete = false;
+    void Add(const std::wstring& id, const std::wstring& name, const std::wstring& path,
+        const std::wstring& arguments, PCWSTR status) {
+        auto row = Json::Object();
+        row[L"id"] = Json(id); row[L"name"] = Json(name); row[L"path"] = Json(path);
+        row[L"arguments"] = Json(arguments); row[L"status"] = Json(status);
+        const auto size = automation::WriteJson(row).size() + 1;
+        if (size > MaxResponseBytes - bytes) { incomplete = true; return; }
+        bytes += size;
+        entries.array.push_back(std::move(row));
+    }
+};
+void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std::wstring>& activeTargets) {
+    for (auto& record : chain::ReadRegistry(root)) {
+        if (!record.error.empty()) {
+            list.Add(record.path, record.id.empty() ? L".json" : record.id, record.path, L"", L"invalid");
+            continue;
         }
+        auto& entry = record.entry;
+        if (!entry.enabled) {
+            // The dispatcher's disabled record deliberately does not open its package.
+            // Only a matching, still valid manifest earns the protocol badge in the UI.
+            try { entry = chain::ReadManifest(entry.manifestPath, record.json.At(L"overrides")); }
+            catch (const automation::Invalid&) {}
+            catch (const automation::IoError&) {}
+            if (entry.id != record.id || entry.name.empty()) {
+                list.Add(record.id, record.id, record.entry.manifestPath, L"", L"disabled");
+                continue;
+            }
+        }
+        if (entry.enabled) activeTargets.push_back(entry.target);
+        std::wstring arguments;
+        for (const auto& argument : entry.arguments) {
+            if (!arguments.empty()) arguments += L' ';
+            arguments += automation::Quote(argument);
+        }
+        list.Add(record.id, entry.name, entry.target, arguments, entry.enabled ? L"adapted" : L"adapted-disabled");
+    }
+}
+void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& activeTargets, ProgramList& list) {
+    automation::CheckPlainPath(folder);
+    WIN32_FIND_DATAW data{};
+    const auto search = FindFirstFileExW(setup::Join(folder, L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (search == INVALID_HANDLE_VALUE) {
+        const auto error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) list.incomplete = true;
+        return;
+    }
+    struct Search { HANDLE value; ~Search() { FindClose(value); } } guard{search};
+    size_t count = 0;
+    do {
+        const auto kind = companions::FileKind(data.cFileName);
+        if (kind == companions::Kind::Unknown || (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) continue;
+        if (++count > 256) { list.incomplete = true; return; }
+        const auto path = setup::Join(folder, data.cFileName);
+        setup::Link link;
+        const bool shortcut = kind == companions::Kind::Link;
+        if (shortcut) setup::ReadLink(path, link, true);
+        const auto& target = shortcut ? link.target : path;
+        const bool valid = companions::ValidTarget(target.c_str(), link.arguments.c_str(), link.directory.c_str());
+        if (!valid && !shortcut) continue;
+        if (valid && std::any_of(activeTargets.begin(), activeTargets.end(), [&](const auto& active) {
+            return automation::SamePath(active, target);
+        })) continue;
+        bool available = valid;
+        if (valid && shortcut) {
+            const auto attrs = GetFileAttributesW(target.c_str());
+            available = attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+        }
+        list.Add(path, data.cFileName, path, link.arguments, available ? L"ordinary" : L"unavailable");
     } while (FindNextFileW(search, &data));
-    return result;
+    if (GetLastError() != ERROR_NO_MORE_FILES) list.incomplete = true;
+}
+Json Programs(const setup::Paths& paths) {
+    ProgramList list;
+    std::vector<std::wstring> activeTargets;
+    try { ListRegistered(paths.defaultDirectory, list, activeTargets); }
+    catch (const automation::Invalid&) { list.incomplete = true; }
+    catch (const automation::IoError&) { list.incomplete = true; }
+    try { ListFolder(setup::Join(paths.defaultDirectory, companions::Folder), activeTargets, list); }
+    catch (const automation::Invalid&) { list.incomplete = true; }
+    catch (const automation::IoError&) { list.incomplete = true; }
+    std::sort(list.entries.array.begin(), list.entries.array.end(), [](const Json& a, const Json& b) {
+        const auto order = CompareStringOrdinal(a.At(L"name").text.c_str(), -1, b.At(L"name").text.c_str(), -1, TRUE);
+        return order == CSTR_EQUAL ? a.At(L"id").text < b.At(L"id").text : order == CSTR_LESS_THAN;
+    });
+    auto response = Json::Object();
+    response[L"entries"] = std::move(list.entries);
+    response[L"incomplete"] = Json(list.incomplete);
+    return response;
 }
 setup::Options ParseOptions(const Json& value) {
     value.Fields({L"startup", L"silent", L"desktop", L"proxy", L"codexEnv", L"protocol", L"host", L"port", L"bypass", L"extra", L"directory"});
@@ -174,7 +254,6 @@ extern "C" uint32_t setup_bridge_read_state(const uint8_t* pathBytes, size_t siz
         state[L"notice"] = Json(loaded.notice);
         state[L"options"] = Options(loaded.options);
         state[L"defaultDirectory"] = Json(paths.defaultDirectory);
-        state[L"programs"] = Programs(paths);
         state[L"preferences"] = Preferences(isolated);
         const HMODULE module = GetModuleHandleW(nullptr);
         const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(IDR_LAUNCHER), RT_RCDATA);
@@ -274,6 +353,9 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             response[L"conflictDirectory"] = Json(result.conflictDirectory);
             response[L"nativeError"] = Json::Number(result.code);
             response[L"options"] = Options(options);
+        } else if (action == SETUP_LIST_PROGRAMS) {
+            request.Fields({});
+            response = Programs(paths);
         } else if (action == SETUP_DIRECTORY || action == SETUP_ADD_PROGRAM) {
             const bool program = action == SETUP_ADD_PROGRAM;
             request.Fields({L"initial", L"testSelection"});

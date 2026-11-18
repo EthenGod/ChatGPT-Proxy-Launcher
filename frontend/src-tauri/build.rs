@@ -138,6 +138,7 @@ fn main() {
                 "save_setup",
                 "choose_setup_directory",
                 "add_setup_program",
+                "list_setup_programs",
                 "open_setup_location",
                 "set_setup_preferences",
             ])),

@@ -10,7 +10,8 @@ mod harness;
 mod model;
 
 use model::{
-    BridgeError, Detection, Options, PreferenceResult, SaveResult, Selection, Snapshot, Validation,
+    BridgeError, Detection, Options, PreferenceResult, ProgramList, SaveResult, Selection,
+    Snapshot, Validation,
 };
 use serde::de::DeserializeOwned;
 use std::sync::{
@@ -159,6 +160,12 @@ async fn add_setup_program(
     action(&state, 5, serde_json::json!({}), owner(&window)?).await
 }
 #[tauri::command]
+async fn list_setup_programs(
+    state: tauri::State<'_, NativeState>,
+) -> Result<ProgramList, BridgeError> {
+    action(&state, 8, serde_json::json!({}), 0).await
+}
+#[tauri::command]
 async fn open_setup_location(
     state: tauri::State<'_, NativeState>,
     window: tauri::WebviewWindow,
@@ -284,6 +291,7 @@ fn main() {
             save_setup,
             choose_setup_directory,
             add_setup_program,
+            list_setup_programs,
             open_setup_location,
             set_setup_preferences
         ])

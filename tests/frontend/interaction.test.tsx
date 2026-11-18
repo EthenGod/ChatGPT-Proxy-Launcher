@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
 import { SetupPage } from '../../frontend/src/features/setup/SetupPage'
 import { MockSetupService } from '../../frontend/src/platform/mock'
-import type { WindowHost } from '../../frontend/src/features/setup/contract'
+import type { ProgramList, WindowHost } from '../../frontend/src/features/setup/contract'
 import { translator } from '../../frontend/src/i18n'
 import { NoticeToasts, createNoticeManager } from '../../frontend/src/components/NoticeToasts'
 
@@ -338,15 +338,62 @@ describe('settings prototype behavior', () => {
     expect(screen.queryByText('放弃并关闭')).not.toBeInTheDocument()
   })
   it('adds the original shortcut with arguments immediately without dirtying settings', async () => {
-    const { user, service, host } = mount(); await loaded()
+    const { user, service, host } = mount(new MockSetupService('first', 0)); await loaded()
+    expect(service.calls.list).toBe(0)
     await user.click(screen.getByRole('button', { name: '高级设置' }))
+    expect(await screen.findByText('暂无附加程序')).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: '添加程序…' }))
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '选择' }))
     await waitFor(() => expect(service.programs).toHaveLength(1))
-    expect(service.programs[0]).toEqual({ name: 'Notes.lnk', path: 'C:\\Apps\\Notes\\Notes.lnk', arguments: '--profile "Work notes"' })
+    expect(service.programs[0]).toMatchObject({ name: 'Notes.lnk', path: 'C:\\Apps\\ChatGPT Launcher\\StartupApps\\Notes.lnk', arguments: '--profile "Work notes"', status: 'ordinary' })
+    expect(await within(screen.getByRole('region', { name: '附加程序' })).findByText('Notes.lnk')).toBeInTheDocument()
     expect(service.calls.save).toBe(0)
     await user.click(screen.getByRole('button', { name: '关闭' }))
     expect(host.close).toHaveBeenCalledOnce()
+  })
+  it('refreshes only the companion list and badges validated registrations', async () => {
+    const { user, service } = mount(); await loaded()
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    const area = within(screen.getByRole('region', { name: '附加程序' }))
+    expect((await area.findByText('Session Tools')).closest('li')).toHaveTextContent('已适配')
+    expect(area.getByText('Quick Notes.lnk').closest('li')).not.toHaveTextContent('已适配')
+    const hostInput = screen.getByRole('textbox', { name: '地址' })
+    fireEvent.change(hostInput, { target: { value: 'localhost' } })
+    const adapted = service.programs[1]!
+    service.programs = [{ ...adapted, status: 'adapted-disabled' }, { ...adapted, id: 'broken', name: 'Missing', status: 'invalid' }]
+    fireEvent.focus(window)
+    await area.findByText('已停用')
+    expect(area.getByText('Session Tools').closest('li')).toHaveTextContent('已适配')
+    expect(area.getByText('Missing').closest('li')).toHaveTextContent('注册异常')
+    expect(area.getByText('Missing').closest('li')).not.toHaveTextContent('已适配')
+    expect(area.queryByText('Quick Notes.lnk')).toBeNull()
+    const read = vi.spyOn(service, 'listPrograms').mockRejectedValueOnce({ nativeError: 5 })
+    await user.click(area.getByRole('button', { name: '刷新附加程序列表' }))
+    await area.findByText('未能刷新程序列表')
+    expect(area.getByText('Session Tools')).toBeInTheDocument()
+    await user.click(area.getByRole('button', { name: '查看详情' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('错误码 5')
+    await user.keyboard('{Escape}')
+    read.mockResolvedValueOnce({ entries: [], incomplete: true })
+    await user.click(area.getByRole('button', { name: '刷新附加程序列表' }))
+    await area.findByText('部分程序未能列出')
+    expect(area.queryByText('暂无附加程序')).toBeNull()
+    expect(hostInput).toHaveValue('localhost')
+    expect(service.calls.load).toBe(1)
+    expect(service.calls.save).toBe(0)
+  })
+  it('does not let an old directory read replace the list after an import', async () => {
+    const service = new MockSetupService('first', 0)
+    let finish!: (result: ProgramList) => void
+    vi.spyOn(service, 'listPrograms').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const { user } = mount(service); await loaded()
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    await user.click(screen.getByRole('button', { name: '添加程序…' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '选择' }))
+    const area = within(screen.getByRole('region', { name: '附加程序' }))
+    await area.findByText('Notes.lnk')
+    await act(async () => finish({ entries: [], incomplete: false }))
+    expect(area.getByText('Notes.lnk')).toBeInTheDocument()
   })
   it('describes port errors in the preview without inserting a row into the proxy card', async () => {
     const { service } = mount(); await loaded()

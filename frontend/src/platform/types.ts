@@ -24,7 +24,6 @@ export interface SetupSnapshot {
   preferences: { dark: boolean; language: string; resolvedLanguage: string }
   payloadBytes: number
   defaultDirectory: string
-  programs: Array<{name: string; path: string; arguments: string}>
 }
 
 export interface BridgeError {
@@ -59,7 +58,5 @@ export function parseSnapshot(value: unknown): SetupSnapshot {
   }
   if (typeof preferences.dark !== 'boolean' || typeof preferences.language !== 'string'
     || typeof preferences.resolvedLanguage !== 'string') throw new Error('Invalid native preferences')
-  if (!Array.isArray(state.programs) || state.programs.some(p => !p || typeof p !== 'object'
-    || ['name', 'path', 'arguments'].some(k => typeof p[k] !== 'string'))) throw new Error('Invalid program list')
   return value as SetupSnapshot
 }
