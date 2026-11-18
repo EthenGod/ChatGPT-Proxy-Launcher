@@ -79,6 +79,9 @@ async fn action<T: DeserializeOwned + Send + 'static>(
 }
 #[tauri::command]
 async fn read_setup_state(state: tauri::State<'_, NativeState>) -> Result<Snapshot, BridgeError> {
+    if cfg!(feature = "program-sample") {
+        return Err(BridgeError::native(5));
+    }
     run(&state, |paths| {
         let snapshot = bridge::read_state(paths)?;
         #[cfg(feature = "test-harness")]
@@ -229,12 +232,18 @@ async fn close_setup_window(
 }
 
 fn main() {
-    bridge::initialize();
+    let tail = bootstrap::current_command_tail();
+    if cfg!(feature = "program-sample") {
+        if !tail.is_empty() {
+            std::process::exit(2);
+        }
+    } else {
+        bridge::initialize();
+    }
     #[cfg(not(feature = "test-harness"))]
     let paths: Option<Vec<u8>> = None;
     #[cfg(feature = "test-harness")]
     let paths = Some(harness::paths());
-    let tail = bootstrap::current_command_tail();
     if bootstrap::is_compatibility(&tail) {
         run_compatibility(paths.as_deref());
     }
@@ -245,6 +254,11 @@ fn main() {
     }
 
     if tauri::webview_version().is_err() {
+        if cfg!(feature = "program-sample") {
+            bridge::initialize();
+            bridge::bootstrap_error(false);
+            std::process::exit(1);
+        }
         run_compatibility(paths.as_deref());
     }
     #[cfg(feature = "test-harness")]
@@ -262,7 +276,12 @@ fn main() {
             #[cfg(feature = "ui-prototype")]
             let config = &{
                 let mut config = config.clone();
-                config.url = tauri::WebviewUrl::App("prototype.html".into());
+                let page = if cfg!(feature = "program-sample") {
+                    "prototype.html?scenario=programs"
+                } else {
+                    "prototype.html"
+                };
+                config.url = tauri::WebviewUrl::App(page.into());
                 config.height = 760.0;
                 config
             };

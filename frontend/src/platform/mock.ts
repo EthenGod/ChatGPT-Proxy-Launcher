@@ -3,12 +3,14 @@ import type { SetupService, SaveResult, ProgramEntry, ListedProgram, Detection }
 import { translator, resolveLanguage, type MessageKey } from '../i18n'
 import { previewOptions } from '../features/setup/preview'
 
-export const scenarios = ['normal', 'first', 'missing', 'unknown', 'silent', 'long', 'load-error', 'saving', 'save-error', 'rollback', 'incomplete', 'warnings'] as const
+export const programScenarios = ['programs', 'first', 'programs-partial', 'programs-error'] as const
+export const scenarios = ['normal', ...programScenarios, 'missing', 'unknown', 'silent', 'long', 'load-error', 'saving', 'save-error', 'rollback', 'incomplete', 'warnings'] as const
 export type Scenario = typeof scenarios[number]
 export const scenarioLabels: Record<Scenario, MessageKey> = {
   normal: 'ui.scenario.normal', first: 'ui.scenario.first', missing: 'ui.scenario.missing', unknown: 'ui.scenario.unknown',
   silent: 'ui.scenario.silent', long: 'ui.scenario.long', 'load-error': 'ui.scenario.loaderror',
   saving: 'ui.scenario.saving',
+  programs: 'ui.scenario.programs', 'programs-partial': 'ui.scenario.programspartial', 'programs-error': 'ui.scenario.programserror',
   'save-error': 'ui.scenario.saveerror', rollback: 'ui.scenario.rollback', incomplete: 'ui.scenario.incomplete', warnings: 'ui.scenario.warnings',
 }
 export const defaultDirectory = 'C:\\Apps\\ChatGPT Launcher'
@@ -18,6 +20,7 @@ export const samplePrograms: ProgramEntry[] = [
   { name: '工具.lnk', path: 'C:\\Apps\\工具\\工具.lnk', arguments: '"中文 参数"' },
 ]
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+const ordinal = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0
 
 /** No invoke, filesystem, registry, fetch, storage or system actions. Reset on reload. */
 export class MockSetupService implements SetupService {
@@ -34,7 +37,18 @@ export class MockSetupService implements SetupService {
         protocol: 'http', host: '127.0.0.1', port: '7890', bypass: '', extra: '',
         directory: scenario === 'long' ? 'C:\\Apps\\' + '较长的目录名称\\'.repeat(12) + 'ChatGPT Launcher' : defaultDirectory },
     }
-    if (scenario !== 'first') {
+    if (scenario.startsWith('programs')) {
+      const startup = defaultDirectory + '\\StartupApps\\'
+      this.programs = [
+        { id: 'org.example.audio', name: 'Audio Monitor', path: 'C:\\Apps\\Audio Monitor\\monitor.exe', arguments: '--profile "Studio A"', status: 'adapted' },
+        { id: 'org.example.archive', name: 'Meeting Notes and Transcription Archive', path: 'C:\\Apps\\Meeting Notes\\Archive\\archive.exe', arguments: '--folder "会议记录" --mode archive', status: 'adapted-disabled' },
+        { id: startup + 'Quick Notes.lnk', name: 'Quick Notes.lnk', path: startup + 'Quick Notes.lnk', arguments: '--notebook "Work notes"', status: 'ordinary' },
+        { id: startup + '旧版笔记.lnk', name: '旧版笔记.lnk', path: startup + '旧版笔记.lnk', arguments: '', status: 'unavailable' },
+        { id: 'org.example.calendar', name: 'org.example.calendar', path: defaultDirectory + '\\CompanionRegistry\\org.example.calendar.json', arguments: '', status: 'invalid' },
+        { id: 'org.example.timer', name: 'org.example.timer', path: 'C:\\Apps\\Focus Timer\\manifest.json', arguments: '', status: 'disabled' },
+        { id: startup + '整理笔记.ps1', name: '整理笔记.ps1', path: startup + '整理笔记.ps1', arguments: '', status: 'ordinary' },
+      ]
+    } else if (scenario !== 'first') {
       const path = defaultDirectory + '\\StartupApps\\Quick Notes.lnk'
       this.programs = [
         { id: path, name: 'Quick Notes.lnk', path, arguments: '', status: 'ordinary' },
@@ -80,9 +94,14 @@ export class MockSetupService implements SetupService {
     if (!this.programs.some(p => p.path === path)) this.programs.push({ ...entry, id: path, name, path, status: 'ordinary' })
   }
   async listPrograms() {
-    this.calls.list++
+    const firstRead = ++this.calls.list === 1
     await wait(100 * this.delay)
-    return { entries: structuredClone(this.programs).sort((a, b) => a.name.localeCompare(b.name)), incomplete: false }
+    if (firstRead && this.scenario === 'programs-error') throw { nativeError: 5, message: defaultDirectory + '\\StartupApps' }
+    const incomplete = firstRead && this.scenario === 'programs-partial'
+    const rows = incomplete ? this.programs.filter(p => p.status === 'ordinary' || p.status === 'unavailable') : this.programs
+    // Match the native case-insensitive ordering for the sample names across system locales.
+    const entries = structuredClone(rows).sort((a, b) => ordinal(a.name.toUpperCase(), b.name.toUpperCase()) || ordinal(a.id, b.id))
+    return { entries, incomplete }
   }
   async openLocation() { this.calls.open++; await wait(0) }
 }

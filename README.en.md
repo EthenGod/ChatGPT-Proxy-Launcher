@@ -67,7 +67,7 @@ To add or improve a translation, see the [community translation guide](docs/tran
 
 ### Open plugins or other programs after ChatGPT
 
-1. Open the setup tool and expand **Advanced settings**. **Companion programs** lists entries in the startup folder and registered extensions. **Protocol v1** means the extension has a valid manifest. Click Refresh after adding or removing files in the folder.
+1. Open the setup tool and expand **Advanced settings**. **Companion programs** lists entries in the startup folder and registered extensions. **Protocol v1** means the extension has a valid manifest. Click an entry to view its full name, path and launch arguments. Click Refresh after adding or removing files in the folder.
 2. Click **Add program…**, select the file you normally use to start the plugin, and click **Open**. Supported types are listed below. The tool creates a shortcut, or copies the file if it is already a shortcut. It does not move the original or overwrite an existing file of the same name.
 3. Adding a program takes effect immediately. For first use or an upgrade, also click **Deploy and save** at the bottom, or **Save changes** if already deployed. Programs then open when ChatGPT starts through this tool's desktop shortcut or sign-in startup. Opening ChatGPT from its official icon does not trigger them.
 4. To remove an ordinary program, click the **Open startup folder** icon beside the add button and move the entry out of the folder. You may also put supported files there directly. If a plugin needs other files, add a shortcut so its original folder stays intact. Use the extension’s installer to manage a registered extension.

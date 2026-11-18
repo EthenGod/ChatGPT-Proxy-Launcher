@@ -18,10 +18,10 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {}; unobserve() {}; disconnect() {} })
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
-function mount(service = new MockSetupService('normal', 0)) {
+function mount(service = new MockSetupService('normal', 0), showPrograms = false) {
   let requestClose = () => {}
   const host: WindowHost = { connect: vi.fn(async callback => { requestClose = callback; return () => {} }), ready: vi.fn(async () => {}), close: vi.fn(async () => {}), setTheme: vi.fn(async () => {}) }
-  render(<SetupPage service={service} host={host} />)
+  render(<SetupPage service={service} host={host} showPrograms={showPrograms} />)
   return { service, host, requestClose: () => act(() => requestClose()), user: userEvent.setup() }
 }
 async function loaded() { await screen.findByRole('textbox', { name: '端口' }) }
@@ -394,6 +394,30 @@ describe('settings prototype behavior', () => {
     await area.findByText('Notes.lnk')
     await act(async () => finish({ entries: [], incomplete: false }))
     expect(area.getByText('Notes.lnk')).toBeInTheDocument()
+  })
+  it('opens the full program path and arguments from the keyboard and returns to the same row', async () => {
+    const { user, service } = mount(new MockSetupService('programs', 0), true)
+    const row = await screen.findByRole('button', { name: /Meeting Notes and Transcription Archive/ })
+    row.focus()
+    await user.keyboard('{Enter}')
+    const detail = await screen.findByRole('dialog', { name: '程序详情' })
+    expect(detail).toHaveTextContent('Meeting Notes and Transcription Archive')
+    expect(detail).toHaveTextContent('已适配')
+    expect(detail).toHaveTextContent('已停用')
+    expect(within(detail).getByText('--folder "会议记录" --mode archive')).toBeInTheDocument()
+    expect(within(detail).getByText(/archive\.exe$/)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(row).toHaveFocus())
+    expect(service.calls.save).toBe(0)
+  })
+  it.each(['programs-error', 'programs-partial'] as const)('can recover the sample list in %s', async scenario => {
+    const { service, user } = mount(new MockSetupService(scenario, 0), true)
+    await screen.findByText(scenario === 'programs-error' ? '未能刷新程序列表' : '部分程序未能列出')
+    await user.click(screen.getByRole('button', { name: '刷新附加程序列表' }))
+    await screen.findByText('Audio Monitor')
+    expect(screen.getAllByRole('listitem')).toHaveLength(7)
+    expect(service.calls.list).toBe(2)
+    expect(service.calls.save).toBe(0)
   })
   it('describes port errors in the preview without inserting a row into the proxy card', async () => {
     const { service } = mount(); await loaded()

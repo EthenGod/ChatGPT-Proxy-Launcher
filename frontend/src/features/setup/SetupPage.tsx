@@ -16,10 +16,10 @@ import { nativeIssue, type ErrorInfo } from './errors'
 import { portErrorKey, previewOptions, sameOptions } from './preview'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
-import type { SaveResult, SetupService, WindowHost, Validation } from './contract'
-import { CompanionPrograms } from './CompanionPrograms'
+import type { ListedProgram, SaveResult, SetupService, WindowHost, Validation } from './contract'
+import { CompanionPrograms, ProgramDetails } from './CompanionPrograms'
 
-type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | 'notice' | null
+type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'program-details' | 'result' | 'preview' | 'error' | 'notice' | null
 type DetectionPhase = 'idle' | 'pending' | 'scanning' | 'found'
 const helpTitles = {
   'setup.hint.startup': 'ui.help.startup',
@@ -29,8 +29,8 @@ const helpTitles = {
   'ui.help.programs': 'ui.help.programs.title',
 } as const satisfies Partial<Record<MessageKey, MessageKey>>
 
-export function SetupPage({ service, host, scenarioControls, onLanguageChange }: {
-  service: SetupService; host: WindowHost; scenarioControls?: React.ReactNode; onLanguageChange?: (language: string) => void
+export function SetupPage({ service, host, scenarioControls, onLanguageChange, showPrograms = false }: {
+  service: SetupService; host: WindowHost; scenarioControls?: React.ReactNode; onLanguageChange?: (language: string) => void; showPrograms?: boolean
 }) {
   const [snapshot, setSnapshot] = useState<SetupSnapshot | null>(null)
   const [options, setOptions] = useState<SetupOptions | null>(null)
@@ -52,7 +52,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const [adding, setAdding] = useState(false)
   const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>('idle')
   const detecting = detectionPhase === 'pending' || detectionPhase === 'scanning'
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useState(showPrograms)
+  const revealPrograms = useRef(showPrograms)
+  const [inspectedProgram, setInspectedProgram] = useState<ListedProgram | null>(null)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [notice, setNotice] = useState<OperationIssue | null>(null)
   const [programRevision, setProgramRevision] = useState(0)
@@ -329,7 +331,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     : t(snapshot?.hasSettings ? 'setup.state.missing' : 'setup.state.absent')
   const discard = dialog === 'discard'
   const dialogTitle = t(discard ? 'setup.dialog.close' : dialog === 'help' ? helpTitles[help] : dialog === 'directory' ? 'setup.dialog.directory'
-    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title'
+    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'program-details' ? 'ui.programs.details' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title'
       : dialog === 'notice' ? 'ui.notice.label' : saved ? 'ui.save.followup' : 'setup.error.saving')
   const noticeDetail = selectedNotice?.fullDetail || selectedNotice?.detail
 
@@ -403,7 +405,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
                 <TextField label={t('ui.bypass')} value={options.bypass} onChange={event => update('bypass', event.target.value)} disabled={locked} error={fieldError('bypass')} placeholder="localhost;*.example.com" spellCheck={false} />
                 <TextField label={t('ui.extra')} value={options.extra} onChange={event => update('extra', event.target.value)} disabled={locked} error={fieldError('extra')} spellCheck={false} />
                 <CompanionPrograms service={service} active={advanced} revision={programRevision} locked={locked}
-                  help={helpButton('ui.help.programs')} t={t} onAdd={() => void chooseProgram()} onOpen={() => void openLocation('startup')} onError={showError} />
+                  help={helpButton('ui.help.programs')} t={t} reveal={revealPrograms} onAdd={() => void chooseProgram()} onOpen={() => void openLocation('startup')}
+                  onDetails={program => { setInspectedProgram(program); openDialog('program-details') }} onError={showError} />
               </div>
             </Collapsible.Panel>
           </Collapsible.Root>
@@ -431,6 +434,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
         {(dialog === 'program' ? samplePrograms.map(program => ({ path: program.path, name: program.name })) : (service.picker?.directories ?? []).map(path => ({ path, name: path })))
           .map(item => <Radio.Root className="picker-item" key={item.path} value={item.path}><Radio.Indicator keepMounted className="picker-indicator"><CheckCircle2 size={16} /></Radio.Indicator><span>{item.name}</span></Radio.Root>)}
       </RadioGroup>}
+      {dialog === 'program-details' && inspectedProgram && <ProgramDetails program={inspectedProgram} t={t} />}
       {dialog === 'result' && result && <>
         {result.warnings?.map(key => <p key={key}>{t(key)}</p>)}
         {!saved || !!result.nativeError ? <ErrorDetails error={result} t={t} /> : result.detail && <p className="error-detail">{result.detail}</p>}

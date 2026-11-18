@@ -1,7 +1,15 @@
 // Compiled only into isolated test executables, never the normal configuration EXE.
 use std::path::PathBuf;
 
+fn standalone_sample() -> bool {
+    cfg!(feature = "program-sample") && std::env::var_os("CHATGPT_SETUP_TEST_ROOT").is_none()
+}
+
 pub fn root() -> PathBuf {
+    if standalone_sample() {
+        // Only the WebView profile uses this directory. Sample settings live in memory.
+        return std::env::temp_dir().join("ChatGPTLauncherSetup-CompanionSample");
+    }
     let path = PathBuf::from(
         std::env::var_os("CHATGPT_SETUP_TEST_ROOT")
             .expect("test harness requires an explicit root"),
@@ -26,6 +34,9 @@ pub fn paths() -> Vec<u8> {
     .expect("serialize isolated paths")
 }
 pub fn mark(name: &str) {
+    if standalone_sample() {
+        return;
+    }
     use std::io::Write;
     let file = root().join(format!("{name}.json"));
     let mut output = std::fs::OpenOptions::new()
@@ -53,6 +64,9 @@ pub fn record_read(state: &crate::model::Snapshot) {
 }
 
 pub fn record_close(approved: bool) {
+    if standalone_sample() {
+        return;
+    }
     use std::sync::Mutex;
     static COUNTS: Mutex<(usize, usize)> = Mutex::new((0, 0));
     let mut counts = COUNTS.lock().expect("test close counts");

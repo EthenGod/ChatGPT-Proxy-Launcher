@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 param(
-    [ValidateSet('build', 'dev', 'check', 'test', 'harness', 'prototype')][string]$Command = 'build',
+    [ValidateSet('build', 'dev', 'check', 'test', 'harness', 'prototype', 'sample')][string]$Command = 'build',
     [string]$RustBin = $env:CHATGPT_RUST_BIN,
     # Used by the full test pipeline after its native build has succeeded.
     [switch]$ReuseNativeBuild
@@ -20,7 +20,8 @@ try {
     $env:CARGO_HOME = Join-Path $projectRoot 'work\ui-toolchain\cargo'
     $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'work\ui-target'
     $env:npm_config_cache = Join-Path $projectRoot 'work\npm-cache'
-    $env:CHATGPT_UI_PROTOTYPE = $(if ($Command -eq 'prototype') { '1' } else { '0' })
+    $visualPreview = $Command -in @('prototype', 'sample')
+    $env:CHATGPT_UI_PROTOTYPE = $(if ($visualPreview) { '1' } else { '0' })
     # A fresh asset directory avoids embedding stale bundles, without deleting files.
     $buildId = [guid]::NewGuid().ToString('N')
     $env:CHATGPT_UI_DIST = Join-Path $projectRoot ('work\ui-assets\' + $buildId)
@@ -56,23 +57,31 @@ try {
             $arguments = @('exec', '--', 'tauri', 'build', '--no-bundle', '--config', $configFile)
             if ($Command -eq 'harness') { $arguments += @('--features', 'test-harness') }
             if ($Command -eq 'prototype') { $arguments += @('--features', 'ui-prototype') }
+            if ($Command -eq 'sample') { $arguments += @('--features', 'program-sample') }
             $arguments += @('--', '--locked')
             & npm.cmd @arguments; Check-Exit 'Tauri build'
-            $directory = Join-Path $projectRoot $(if ($Command -eq 'prototype') { 'work\ui-prototype' } elseif ($Command -eq 'harness') { 'work\ui-stage1-test' } else { 'outputs' })
+            $directory = Join-Path $projectRoot $(switch ($Command) {
+                'prototype' { 'work\ui-prototype' }
+                'harness' { 'work\ui-stage1-test' }
+                'sample' { 'work\ui-sample' }
+                default { 'outputs' }
+            })
             [IO.Directory]::CreateDirectory($directory) | Out-Null
-            Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release\ChatGPTLauncherSetup.exe') -Destination $directory
+            $outputName = if ($Command -eq 'sample') { 'ChatGPTLauncherSetup-Sample.exe' } else { 'ChatGPTLauncherSetup.exe' }
+            $outputPath = Join-Path $directory $outputName
+            Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release\ChatGPTLauncherSetup.exe') -Destination $outputPath
             $metadata = @{
                 kind=$Command
-                prototype=($Command -eq 'prototype')
-                testHarness=($Command -eq 'prototype' -or $Command -eq 'harness')
+                prototype=$visualPreview
+                testHarness=($visualPreview -or $Command -eq 'harness')
                 assetsDirectory=('work/ui-assets/' + $buildId)
-                setupSha256=(Get-FileHash -LiteralPath (Join-Path $directory 'ChatGPTLauncherSetup.exe') -Algorithm SHA256).Hash
+                setupSha256=(Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash
                 launcherSha256=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe') -Algorithm SHA256).Hash
                 payloadBytes=(Get-Item -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length
             }
             $metadataPath = if ($Command -eq 'build') { Join-Path $projectRoot 'work\ui-build.json' } else { $directory + '-build.json' }
             [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json))
-            Write-Host ('Built: ' + (Join-Path $directory 'ChatGPTLauncherSetup.exe'))
+            Write-Host ('Built: ' + $outputPath)
         }
     } finally { Pop-Location }
 } finally {

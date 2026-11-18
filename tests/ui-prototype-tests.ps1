@@ -4,6 +4,7 @@ param(
     [string]$Session,
     [switch]$RemoteDebugging,
     [switch]$Functional,
+    [switch]$Sample,
     [ValidateRange(0,5000)][int]$SaveDelayMilliseconds=0,
     [ValidateRange(1,600)][int]$IdleSeconds=60,
     [ValidateRange(1,30)][int]$Cycles=3,
@@ -12,8 +13,9 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot
-$exe=Join-Path $projectRoot $(if($Functional) {'work\ui-stage1-test\ChatGPTLauncherSetup.exe'} else {'work\ui-prototype\ChatGPTLauncherSetup.exe'})
-$parent=Join-Path $projectRoot $(if($Functional) {'work\ui-functional-tests'} else {'work\ui-prototype-tests'})
+if($Sample -and $Functional) { throw 'Select either the sample or the functional build' }
+$exe=Join-Path $projectRoot $(if($Sample) {'work\ui-sample\ChatGPTLauncherSetup-Sample.exe'} elseif($Functional) {'work\ui-stage1-test\ChatGPTLauncherSetup.exe'} else {'work\ui-prototype\ChatGPTLauncherSetup.exe'})
+$parent=Join-Path $projectRoot $(if($Sample) {'work\ui-sample-tests'} elseif($Functional) {'work\ui-functional-tests'} else {'work\ui-prototype-tests'})
 function Require([bool]$Value, [string]$Message) { if (!$Value) { throw $Message } }
 if (!('PrototypeCloseMessage' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -185,18 +187,18 @@ switch($Action) {
             Write-Host "Prototype cycle $cycle ready; observing $seconds seconds"
             $actionsBefore=if($Functional) { [IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) } else { '' }
             for($second=0;$second -lt $seconds;$second++) { Start-Sleep -Seconds 1 }
-            $sample=Inspect-Preview $metadata
-            $sample.initialPrivateMiB=$initial.privateMiB
-            $sample.idleSeconds=$seconds
+            $metrics=Inspect-Preview $metadata
+            $metrics.initialPrivateMiB=$initial.privateMiB
+            $metrics.idleSeconds=$seconds
             $finalIdentities=(@(Get-Content -LiteralPath (Join-Path $metadata.root 'tree.json') -Raw | ConvertFrom-Json) |
                 Sort-Object id | ForEach-Object { "$($_.id):$($_.started)" }) -join ','
-            $sample.processTreeChanged=$initialIdentities -cne $finalIdentities
+            $metrics.processTreeChanged=$initialIdentities -cne $finalIdentities
             # Lifetime CPU sums are comparable only while the exact process set stays the same.
-            $sample.idleCpuMs=if ($sample.processTreeChanged) { $null } else { [Math]::Round($sample.cpuMs-$initial.cpuMs,2) }
-            $sample.cycle=$cycle
+            $metrics.idleCpuMs=if ($metrics.processTreeChanged) { $null } else { [Math]::Round($metrics.cpuMs-$initial.cpuMs,2) }
+            $metrics.cycle=$cycle
             if($Functional) { Require ([IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) -eq $actionsBefore) 'Idle page repeated a native command' }
-            [IO.File]::WriteAllText((Join-Path $metadata.root 'metrics.json'),($sample | ConvertTo-Json))
-            Write-Output ($sample | ConvertTo-Json -Compress)
+            [IO.File]::WriteAllText((Join-Path $metadata.root 'metrics.json'),($metrics | ConvertTo-Json))
+            Write-Output ($metrics | ConvertTo-Json -Compress)
             $process=Owned-Process $metadata
             try {
                 [PrototypeCloseMessage]::Request($process.MainWindowHandle,$process.Id)
@@ -206,7 +208,7 @@ switch($Action) {
             Verify-Closed $metadata
             $closeEvents=Get-Content -LiteralPath (Join-Path $metadata.root 'close-events.json') -Raw | ConvertFrom-Json
             Require ($closeEvents.requested -eq 1 -and $closeEvents.approved -eq 1) 'Native close did not pass through the page exactly once'
-            $measurements+=$sample
+            $measurements+=$metrics
         }
         $report=Join-Path $parent ('lifecycle-'+[guid]::NewGuid().ToString('N')+'.json')
         [IO.File]::WriteAllText($report, (ConvertTo-Json -InputObject $measurements))

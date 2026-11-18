@@ -13,6 +13,7 @@ custom-protocol = ["tauri/custom-protocol"]
 # Only the separate test executable accepts isolated paths / writes test reports.
 test-harness = []
 ui-prototype = ["test-harness"]
+program-sample = ["ui-prototype"]
 
 [build-dependencies]
 tauri-build = { version = "=2.7.5", features = [] }
