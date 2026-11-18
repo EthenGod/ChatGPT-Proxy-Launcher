@@ -3,6 +3,12 @@
 @import '@radix-ui/colors/amber.css';
 @import '@radix-ui/colors/amber-dark.css';
 
+@property --scroll-gutter {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 :root {
   --focus: var(--gray-10);
   --control-height: 36px;
@@ -50,10 +56,11 @@ button svg { flex-shrink: 0; }
 .scroll-track[data-has-overflow-y] { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity var(--motion-enter) ease-out, visibility 0s; }
 .scroll-area[data-auto-hide] > .scroll-track[data-has-overflow-y] { opacity: 0; transition: opacity var(--motion-exit) ease-in; }
 .scroll-area[data-auto-hide] > .scroll-track[data-has-overflow-y]:is([data-scrolling], [data-pointer-moving], :active) { opacity: 1; transition: opacity var(--motion-fast) ease-out; }
-.scroll-thumb { width: 100%; min-height: 24px; border-radius: var(--radius-pill); background: var(--gray-8); transition: background-color var(--motion-fast) ease-out; }
+.scroll-thumb { position: relative; width: 100%; min-height: 24px; border-radius: var(--radius-pill); }
+.scroll-thumb::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--gray-8); pointer-events: none; transition: background-color var(--motion-fast) ease-out; }
 /* Exit uses the last visible geometry, never the reset minimum-size thumb. */
 .scroll-track:not([data-has-overflow-y]) .scroll-thumb { height: var(--scroll-thumb-last-height, 0px) !important; transform: var(--scroll-thumb-last-transform, none) !important; }
-.scroll-track:hover .scroll-thumb, .scroll-thumb:active { background: var(--gray-10); }
+.scroll-track:hover .scroll-thumb::before, .scroll-thumb:active::before { background: var(--gray-10); }
 .settings-scroll { padding: 0; }
 .settings-content { padding: 20px var(--page-inset) 16px; }
 .settings-content > * { max-inline-size: var(--settings-width); margin-inline: auto; }
@@ -179,8 +186,12 @@ button svg { flex-shrink: 0; }
 .program-refresh svg { transition: transform var(--motion-enter) ease-out; }
 .program-refresh[aria-busy=true] { opacity: 1; }
 .program-results { min-width: 0; overflow: clip; border: 1px solid var(--gray-6); border-radius: var(--radius-control); background: var(--gray-1); }
-.program-scroll { max-height: 228px; border-radius: inherit; }
+.program-scroll { max-height: 228px; border-radius: inherit; transition: --scroll-gutter var(--motion-exit) cubic-bezier(.22,.61,.36,1); }
 .program-scroll > .scroll-viewport { overscroll-behavior-y: auto; }
+/* One animated inset moves the row ends and the painted thumb. The drag target stays in place. */
+.program-scroll > .scroll-viewport > .scroll-content { transition: none; }
+.program-scroll > .scroll-track { overflow: clip; }
+.program-scroll > .scroll-track > .scroll-thumb::before { translate: calc(var(--scrollbar-space) - var(--scroll-gutter)) 0; }
 .program-list { position: relative; padding: 3px; margin: 0; list-style: none; }
 .program-scroll::after { content: ''; position: absolute; inset: auto 1px 0; height: 8px; border-radius: 0 0 var(--radius-control) var(--radius-control); background: linear-gradient(transparent, var(--gray-1)); pointer-events: none; opacity: 0; transition: opacity var(--motion-fast) ease-out; }
 .program-scroll[data-overflow-y-end]::after { opacity: 1; }
@@ -360,11 +371,12 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 ::view-transition-new(*) { animation-name: appearance-in; }
 /* Geometry moves once, at full opacity. Only the extracted text layers crossfade. */
 :root[data-appearance-transition=language] .scroll-content,
+:root[data-appearance-transition=language] .program-scroll,
 :root[data-appearance-transition=language] .disclosure-panel,
 :root[data-appearance-transition=language] [style*="view-transition-name"] { transition: none !important; }
 :root[data-appearance-transition=language] .disclosure-panel { height: auto; }
 :root[data-appearance-transition=language] :is(.scroll-viewport, .disclosure-panel) { view-transition-group: contain; }
-:root[data-window-resizing] :is(.scroll-content, .scroll-track, .disclosure-panel) { transition: none !important; }
+:root[data-window-resizing] :is(.scroll-content, .scroll-track, .program-scroll, .disclosure-panel) { transition: none !important; }
 :root[data-window-resizing] .disclosure-panel[data-open]:not([data-ending-style]) { height: auto; }
 :root[data-appearance-transition=language]::view-transition-group(*) { animation-duration: var(--motion-enter); animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
 :root[data-appearance-transition=language]::view-transition-old(*) { animation: none; opacity: 0; }
@@ -417,8 +429,8 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
   .segment:hover:not([data-disabled]), .input-action:hover:enabled, .status-input-link:hover:not(:focus-visible) { outline: 1px solid Highlight; outline-offset: -1px; }
   .notice-toast, .notice-toast:hover, .notice-toast:has(.notice-open:focus-visible), .notice-toast:has(.notice-open:active) { background: Canvas; color: CanvasText; box-shadow: none; }
   .notice-toast:hover { outline: 1px solid Highlight; }
-  .scroll-thumb { background: CanvasText; forced-color-adjust: none; }
-  .scroll-track:hover .scroll-thumb { background: Highlight; }
+  .scroll-thumb::before { background: CanvasText; forced-color-adjust: none; }
+  .scroll-track:hover .scroll-thumb::before { background: Highlight; }
 }
 
 /* The operational page has no prototype status toolbar. */

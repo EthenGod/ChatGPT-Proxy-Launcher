@@ -94,11 +94,39 @@ async page => {
   if (peek < 16 || peek > 30) throw Error('Sixth program must be partially visible: ' + peek);
   const rightBefore = (await rows.first().locator('.program-chevron').boundingBox()).x;
   await viewport.hover();
-  await page.mouse.wheel(0, 95);
-  await thumbOpacity(true);
-  const activeRight = (await rows.first().locator('.program-chevron').boundingBox()).x;
+  const recording = await rail.evaluateHandle(track => {
+    const thumb = track.querySelector('.scroll-thumb');
+    const row = track.parentElement.querySelector('.program-row:has(.program-state)');
+    const state = row.querySelector('.program-state'), arrow = row.querySelector('.program-chevron');
+    const frames = [];
+    let frame;
+    function sample() {
+      const hit = thumb.getBoundingClientRect().left;
+      const offset = parseFloat(getComputedStyle(thumb, '::before').translate) || 0;
+      frames.push({ hit, ink: hit + offset, state: state.getBoundingClientRect().right, arrow: arrow.getBoundingClientRect().right });
+      frame = requestAnimationFrame(sample);
+    }
+    sample();
+    return { finish() { cancelAnimationFrame(frame); return frames; } };
+  });
+  let frames, activeRight;
+  try {
+    await page.mouse.wheel(0, 95);
+    await thumbOpacity(true);
+    activeRight = (await rows.first().locator('.program-chevron').boundingBox()).x;
+    await thumbOpacity(false); // A parked pointer inside the list also lets the thumb slide out.
+  } finally {
+    frames = await recording.evaluate(capture => capture.finish());
+    await recording.dispose();
+  }
   if (Math.abs(rightBefore - activeRight - 12) > 1) throw Error('Active rail did not receive space from the row');
-  await thumbOpacity(false); // Remain inside the list even after the pointer comes to rest.
+  const idle = frames[0], travel = frame => idle.ink - frame.ink;
+  const openFrame = frames.findIndex(frame => travel(frame) >= 11.9);
+  const moving = frame => travel(frame) > .5 && travel(frame) < 11.5;
+  const drift = Math.max(...frames.map(frame => Math.max(Math.abs(frame.hit - idle.hit),
+    Math.abs(idle.state - frame.state - travel(frame)), Math.abs(idle.arrow - frame.arrow - travel(frame)))));
+  if (openFrame < 1 || !frames.slice(0, openFrame).some(moving) || !frames.slice(openFrame + 1).some(moving) ||
+      Math.abs(travel(frames.at(-1))) > .2 || drift > .15) throw Error('Scrollbar and row ends moved out of sync: ' + JSON.stringify({ openFrame, drift, frames }));
   const target = await rail.boundingBox();
   const thumb = await rail.locator('.scroll-thumb').boundingBox();
   const grabY = thumb.y + thumb.height / 2;
@@ -168,7 +196,7 @@ async page => {
   await thumbOpacity(false);
   await group.screenshot({ path: 'output/playwright/companion-sample-narrow.png' });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  if (await rail.evaluate(el => getComputedStyle(el).transitionDuration !== '0s')) throw Error('Scrollbar ignored reduced motion');
+  if (await rail.evaluate(el => [el, el.parentElement].some(node => getComputedStyle(node).transitionDuration !== '0s'))) throw Error('Scrollbar ignored reduced motion');
   await page.emulateMedia({ reducedMotion: null });
   await archive.click();
   await dialog.waitFor();
@@ -221,5 +249,5 @@ async page => {
     if (await rows.count() !== 7) throw Error('Refresh failed to restore the examples');
   }
   if (errors.length) throw Error(errors.join('\n'));
-  return { programs:7, scenarios:4, languages:3, themes:2, keyboardAndFocus:true, gutterRecovered:rightBefore - activeRight, peek, entryAndReorder:true, icons:true, layouts, errors };
+  return { programs:7, scenarios:4, languages:3, themes:2, keyboardAndFocus:true, gutterRecovered:rightBefore - activeRight, scrollMotionFrames:frames.length, scrollMotionDrift:drift, peek, entryAndReorder:true, icons:true, layouts, errors };
 }
