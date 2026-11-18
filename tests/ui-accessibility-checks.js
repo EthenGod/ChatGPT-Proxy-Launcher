@@ -79,6 +79,25 @@ async page => {
       else await directoryInput.fill(directory + '\\' + Array(12).fill('长路径abcdefghijklmnopqrstuvwxyz').join('\\'));
       await details.waitFor({ state: 'visible' });
       if (Math.abs(await previewOffset() - restingOffset) > 1) throw Error('Opening details moved the argument preview');
+      if (scenario === 'port') {
+        const review = page.getByRole('button', { name: '查看输入问题' });
+        await review.hover(); await tabTo(review); await settle();
+        const fullyVisible = await review.evaluate(button => {
+          const rect = button.getBoundingClientRect(), viewport = button.closest('.scroll-viewport').getBoundingClientRect();
+          const style = getComputedStyle(button);
+          const ring = Math.max(0, parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset));
+          return rect.left - ring >= viewport.left && rect.right + ring <= viewport.right
+            && rect.top - ring >= viewport.top && rect.bottom + ring <= viewport.bottom;
+        });
+        if (!fullyVisible) throw Error('The input warning or its focus ring is clipped');
+        const centered = await page.locator('.save-button[data-edited]').evaluate(button => {
+          const label = button.querySelector('[data-motion-text]').getBoundingClientRect();
+          const startInset = button.clientLeft + parseFloat(getComputedStyle(button, '::before').insetInlineStart);
+          const endInset = button.getBoundingClientRect().right - label.right;
+          return Math.abs(startInset - endInset) < 1;
+        });
+        if (!centered) throw Error('The unsaved marker and save label are off-center');
+      }
       await tabTo(details); await key('Enter');
       const layout = await modalKeyboard();
       const code = await page.locator('.error-heading code').innerText();
