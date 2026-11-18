@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Collapsible } from '@base-ui/react/collapsible'
 import { Radio } from '@base-ui/react/radio'
 import { RadioGroup } from '@base-ui/react/radio-group'
-import { AlertCircle, ArrowUpRight, CheckCircle2, ChevronDown, CircleHelp, File, FlaskConical,
+import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, File, FlaskConical,
   FolderOpen, Globe2, Info, LoaderCircle, Moon, Plus, Search, Sun } from 'lucide-react'
 import { Button, ChoiceMenu, Hint, Modal, SwitchControl, TextField, Toggle } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
@@ -14,9 +14,11 @@ import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeMessage } from '../../platform/setup-service'
 import { nativeIssue, type ErrorInfo } from './errors'
 import { portErrorKey, previewOptions, sameOptions } from './preview'
+import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
 import type { ProgramEntry, SaveResult, SetupService, WindowHost, Validation } from './contract'
 
 type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | 'notice' | null
+type DetectionPhase = 'idle' | 'pending' | 'scanning' | 'found'
 const helpTitles = {
   'setup.hint.startup': 'ui.help.startup',
   'ui.help.proxy': 'setup.dialog.proxy',
@@ -46,7 +48,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const requestedLanguage = useRef('auto')
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
-  const [detecting, setDetecting] = useState(false)
+  const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>('idle')
+  const detecting = detectionPhase === 'pending' || detectionPhase === 'scanning'
   const [advanced, setAdvanced] = useState(false)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [notice, setNotice] = useState<MessageKey | null>(null)
@@ -102,6 +105,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   }
   const load = useCallback(async () => {
     const revision = ++loadRevision.current
+    ++detectRevision.current; setDetectionPhase('idle')
     setLoading(true); setLoadError(false)
     try {
       const data = await service.load()
@@ -141,6 +145,17 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [dirty])
+
+  // These timers affect the glyph only. The request, result and retry have no minimum duration.
+  useEffect(() => {
+    if (detectionPhase !== 'pending' && detectionPhase !== 'found') return
+    const revision = detectRevision.current
+    const next = detectionPhase === 'pending' ? 'scanning' : 'idle'
+    const timer = window.setTimeout(() => {
+      if (revision === detectRevision.current) setDetectionPhase(current => current === detectionPhase ? next : current)
+    }, detectionPhase === 'pending' ? 180 : 800)
+    return () => window.clearTimeout(timer)
+  }, [detectionPhase])
 
   // Validate through C++ after typing settles. A result belongs only to its exact input object.
   useEffect(() => {
@@ -207,7 +222,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
 
   function update<K extends keyof SetupOptions>(key: K, value: SetupOptions[K]) {
     if (locked || !options) return
-    if (['host', 'port', 'protocol', 'proxy'].includes(key)) { ++detectRevision.current; setDetecting(false); noticeManager.close('activity') }
+    if (['host', 'port', 'protocol', 'proxy'].includes(key)) { ++detectRevision.current; setDetectionPhase('idle'); noticeManager.close('activity') }
     setOptions({ ...options, [key]: value }); setResult(null); setNotice(null); setError(null)
   }
   function changeProxy(enabled: boolean) {
@@ -218,21 +233,26 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   async function detect(input = options) {
     if (!input || detecting || locked || !input.proxy) return
     const revision = ++detectRevision.current
-    setDetecting(true); setNotice(null); setResult(null)
+    setDetectionPhase('pending'); setNotice(null); setResult(null)
+    let found = false
     try {
       const detection = await service.detectPort(input.protocol, input.host)
       if (!alive.current || revision !== detectRevision.current || inFlight.current) return
-      if (detection.port) setOptions(current => current ? { ...current, port: detection.port! } : current)
+      const port = detection.port
+      if (port) {
+        found = true
+        setOptions(current => current && current.port !== port ? { ...current, port } : current)
+      }
       setError(null)
       notify(detection.port ? 'ui.detect.port' : 'ui.detect.empty', { port: detection.port ?? '' },
         detection.port && detection.source ? { message: 'ui.detect.source', values: { source: detection.source } } : detection.message,
         detection.port ? 'success' : 'info', undefined, detection.message)
     } catch (cause) { if (alive.current && revision === detectRevision.current) reportFailure('ui.detect.failed', cause) }
-    finally { if (alive.current && revision === detectRevision.current) setDetecting(false) }
+    finally { if (alive.current && revision === detectRevision.current) setDetectionPhase(found ? 'found' : 'idle') }
   }
   async function save() {
     if (!options || !snapshot || !validation?.valid || locked || inFlight.current || (snapshot.deployed && !dirty && result?.commit === 'saved')) return
-    inFlight.current = true; focusAfterSave.current = true; ++detectRevision.current; setDetecting(false); setBusy(true); setNotice(null); setResult(null)
+    inFlight.current = true; focusAfterSave.current = true; ++detectRevision.current; setDetectionPhase('idle'); setBusy(true); setNotice(null); setResult(null)
     noticeManager.close('activity')
     const submitted = { ...options }
     try {
@@ -316,10 +336,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
 
   return <div className={`setup-shell ${service.native ? 'native-shell' : ''}`}>
     {!service.native && <div className="prototype-bar"><Button className="prototype-label" onClick={() => openDialog('preview')} disabled={busy}><FlaskConical size={13} />{t('ui.prototype.title')}</Button><fieldset disabled={busy}>{scenarioControls}</fieldset></div>}
-    <ScrollBox className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main aria-busy={loading} />}>
+    <ScrollBox className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main role="main" aria-busy={loading} />}>
       <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
-        <span className="version-badge" aria-label={t('setup.version', { version: snapshot?.setupVersion ?? '1.1.3' })}>v{snapshot?.setupVersion ?? '1.1.3'}</span></div>
-        <div className="appearance-controls"><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={busy || loading || detecting}
+        {snapshot ? <span className="version-badge" aria-label={t('setup.version', { version: snapshot.setupVersion })}>v{snapshot.setupVersion}</span>
+          : loading && <span className="skeleton-bar skeleton-version" aria-hidden="true" />}</div>
+        <div className="appearance-controls" data-detect-pending={detectionPhase === 'pending' || undefined}><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={busy || loading || detecting}
           items={[{ value: 'auto', label: t('setup.language.system') }, { value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }, { value: 'ja-JP', label: '日本語' }]} icon={<Globe2 size={16} />} variant="icon" />
           <Hint label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}><Button className="icon-button" onClick={() => {
             const next = !requestedDark.current; requestedDark.current = next
@@ -327,7 +348,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
           }} disabled={busy || loading || detecting} aria-label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}>{dark ? <Sun size={16} /> : <Moon size={16} />}</Button></Hint>
         </div>
       </header>
-      {loading ? <div className="load-state" role="status"><LoaderCircle className="spinner" size={20} />{t('setup.preview.loading')}</div>
+      {loading ? <SetupSkeleton />
         : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t('ui.load.failed')}</p>{error && <ErrorDetails error={error} t={t} />}<Button className="button secondary-button" onClick={() => void load()}>{t('ui.retry')}</Button></div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
@@ -348,7 +369,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
                   </RadioGroup></div>
                   <TextField id="proxy-host" label={t('setup.label.host')} value={options.host} onChange={event => update('host', event.target.value)} disabled={locked} error={fieldError('host')} autoComplete="off" spellCheck={false} />
                   <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} errorDescriptionId="validation-message" inputMode="numeric" maxLength={5} autoComplete="off"
-                    suffix={<Hint label={t('ui.detect')}><Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} disabled={locked || detecting} onClick={() => void detect()}>{detecting ? <LoaderCircle className="spinner" size={16} /> : <Search size={16} />}</Button></Hint>} />
+                    suffix={<Hint label={t(detecting ? 'ui.detect.running' : 'ui.detect')}>
+                      <Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} aria-busy={detecting}
+                        disabled={locked || detecting} focusableWhenDisabled={detecting && !locked} onClick={() => void detect()}>
+                        <span className="detect-glyph" data-phase={detectionPhase} aria-hidden="true">
+                          <Search className="detect-search" size={16} /><LoaderCircle className="detect-progress" size={16} /><Check className="detect-check" size={16} />
+                        </span>
+                      </Button></Hint>} />
                 </div>
                 <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex')} />
               </div>
@@ -357,7 +384,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
               {checking && <span className="preview-checking" data-motion-text>{t('ui.arguments.checking')}</span>}
               {!validation?.valid && !!validation?.nativeError && <Button className="text-button" onClick={() => { setError(validation); openDialog('error') }}>{t('ui.details')}</Button>}
             </div>
-            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre id="validation-message" className={`argument-preview ${invalidInput ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{previewText}</pre></ScrollBox>
+            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre id="validation-message" className={`argument-preview ${invalidInput ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{checking && !previewValue ? <ArgumentSkeleton /> : previewText}</pre></ScrollBox>
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
             <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>
@@ -382,14 +409,16 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
         {failed ? <AlertCircle size={16} aria-hidden /> : saved ? <CheckCircle2 size={16} aria-hidden />
           : statusKey === 'setup.status.quitwarning' ? <Info size={14} aria-hidden /> : null}
         <span>{status}</span>
+        {loading && <span className="sr-only">{t('setup.preview.loading')}</span>}
         {error && !loadError && <Button className="text-button" onClick={() => openDialog('error')}>{t('ui.details')}</Button>}
         {result && (failed || result.tasks.length > 0 || !!result.warnings?.length) && <Button className="text-button" onClick={() => openDialog('result')}>{t('ui.details')}</Button>}
       </div></ScrollBox>
       <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
-        {!saved && <Button ref={saveButton} className="button primary-button" disabled={locked || !validation?.valid || loadError} onClick={() => void save()}>{busy && !adding && !selecting && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding && !selecting ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
+        {loading ? <span className="skeleton-bar skeleton-save" aria-hidden="true" /> : !saved && !loadError &&
+          <Button ref={saveButton} className="button primary-button" disabled={locked || !validation?.valid} onClick={() => void save()}>{busy && !adding && !selecting && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding && !selecting ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
       <NoticeToasts manager={noticeManager} t={t} onOpen={item => { setSelectedNotice(item); openDialog('notice'); focusReturn.current = doneButton.current }} />
     </footer>
-    <Modal open={dialogOpen} title={dialogTitle} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!inFlight.current) setDialogOpen(false) }}
+    <Modal open={dialogOpen} title={dialogTitle} variant={dialog === 'help' ? 'help' : undefined} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!inFlight.current) setDialogOpen(false) }}
       description={discard ? t('setup.dialog.discard') : dialog === 'help' ? t(help) : dialog === 'preview' ? t('ui.prototype.description')
         : dialog === 'directory' || dialog === 'program' ? t('ui.picker.preview') : dialog === 'result' && result && !saved ? t(result.message) : undefined}
       actions={discard ? <><Button ref={cancelButton} className="button secondary-button" onClick={() => setDialogOpen(false)}>{t('ui.keepediting')}</Button><Button className="button danger-button" onClick={() => void close()}>{t('ui.discard')}</Button></>

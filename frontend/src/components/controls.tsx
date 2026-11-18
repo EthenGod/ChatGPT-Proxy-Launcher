@@ -84,14 +84,14 @@ export function ChoiceMenu({ label, value, items, onChange, disabled, icon, vari
     </Menu.Positioner></Menu.Portal>
   </Menu.Root>
 }
-export function Modal({ open, title, description, children, actions, onClose, focusReturn, initialFocus }: {
-  open: boolean; title: string; description?: string; children?: ReactNode; actions: ReactNode;
+export function Modal({ open, title, description, children, actions, variant, onClose, focusReturn, initialFocus }: {
+  open: boolean; title: string; description?: string; children?: ReactNode; actions: ReactNode; variant?: 'help';
   onClose: () => void; focusReturn: RefObject<HTMLElement | null>; initialFocus?: RefObject<HTMLElement | null>
 }) {
   const popup = useRef<HTMLDivElement | null>(null)
   return <Dialog.Root open={open} onOpenChange={open => { if (!open) onClose() }}>
     <Dialog.Portal><Dialog.Backdrop className="dialog-backdrop" />
-      <Dialog.Popup ref={popup} className="dialog" finalFocus={focusReturn} initialFocus={initialFocus ?? (() =>
+      <Dialog.Popup ref={popup} className="dialog" data-variant={variant} finalFocus={focusReturn} initialFocus={initialFocus ?? (() =>
         popup.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], .dialog-actions button:not([disabled])') ?? false)}>
         <Dialog.Title className="dialog-title">{title}</Dialog.Title>
         <ScrollBox className="dialog-scroll" contentClassName="dialog-content" label={title}>

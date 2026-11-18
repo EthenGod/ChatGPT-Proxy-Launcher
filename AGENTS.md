@@ -7,6 +7,7 @@
 - 新 UI 位于 `frontend/src/`，Tauri/Rust 位于 `frontend/src-tauri/`，C ABI 连接层为 `src/SetupBridge.*`。设置交互在 `features/setup/`，共用控件在 `components/`，真实接口在 `platform/setup-service.ts`，模拟接口在 `platform/mock.ts`。`src/SetupUiServices.*` 供新旧界面共用偏好、原生选择器和保存后处理。默认构建使用 Tauri；阶段约定与验证见 `docs/ui-refactor.md`。
 - `components/ScrollBox.tsx` 统一正文和弹层滚动；`useAppearanceTransition.ts` 处理语言和主题过渡。窗口外观经 `platform/prototype-window.ts` 同步到原生标题栏，权限仅授予主窗口。
 - `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。
+- `features/setup/SetupSkeleton.tsx` 提供首次读取、重试和参数预览的骨架。端口检测的操作状态及反馈在 `SetupPage.tsx`。
 - 新 UI 构建入口为 `frontend/desktop.ps1`。测试源码统一放在 `tests/frontend/`、`tests/rust/` 和 `tests/setup-bridge-*`；测试包及缓存放在 `work/`。`test-harness` 只编入隔离测试包，不进入普通 Tauri 构建或发布产物。
 - `frontend/desktop.ps1 -Command prototype` 构建内存模拟原型，`-Command harness` 构建真实接口的隔离测试包。`frontend/preview.ps1` 默认打开原型，加 `-Functional` 打开隔离功能界面。`tests/ui-prototype-tests.ps1` 同样支持 `-Functional`，检查内嵌页面、调用计数、关闭保护和所属进程清理。两种测试包均强制使用隔离路径；系统操作用替身。
 - 延长生命周期检查使用 `ui-prototype-tests.ps1 -Cycles <次数> -IdleSeconds <首轮秒数>`。`tests/ui-interaction-checks.js` 由 Playwright CLI 附加隔离功能窗口执行，覆盖三语、主题、渲染缩放和反复操作后的样式、DOM 清理；不能附加正式配置器。`-Action Resize` 只调整指定隔离测试窗口的物理尺寸。

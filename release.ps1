@@ -83,7 +83,7 @@ $sourceNames = @(
     'frontend/package.json', 'frontend/package-lock.json', 'frontend/tsconfig.json', 'frontend/vite.config.ts',
     'frontend/src/main.tsx', 'frontend/src/prototype.tsx', 'frontend/src/app/App.tsx', 'frontend/src/i18n/index.ts',
     'frontend/src/components/controls.tsx', 'frontend/src/components/ScrollBox.tsx', 'frontend/src/components/useAppearanceTransition.ts', 'frontend/src/components/NoticeToasts.tsx', 'frontend/src/components/ErrorDetails.tsx', 'frontend/src/features/setup/SetupPage.tsx',
-    'frontend/src/features/setup/contract.ts', 'frontend/src/features/setup/preview.ts', 'frontend/src/features/setup/errors.ts',
+    'frontend/src/features/setup/contract.ts', 'frontend/src/features/setup/preview.ts', 'frontend/src/features/setup/errors.ts', 'frontend/src/features/setup/SetupSkeleton.tsx',
     'frontend/src/platform/desktop.ts', 'frontend/src/platform/setup-service.ts', 'frontend/src/platform/types.ts', 'frontend/src/styles/theme.css',
     'frontend/src/platform/mock.ts', 'frontend/src/platform/prototype-window.ts', 'frontend/src/styles/prototype.css',
     'frontend/src-tauri/Cargo.toml', 'frontend/src-tauri/Cargo.lock', 'frontend/src-tauri/build.rs',
