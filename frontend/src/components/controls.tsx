@@ -93,8 +93,8 @@ export function Modal({ open, title, description, children, actions, onClose, fo
     <Dialog.Portal><Dialog.Backdrop className="dialog-backdrop" />
       <Dialog.Popup ref={popup} className="dialog" finalFocus={focusReturn} initialFocus={initialFocus ?? (() =>
         popup.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], .dialog-actions button:not([disabled])') ?? false)}>
+        <Dialog.Title className="dialog-title">{title}</Dialog.Title>
         <ScrollBox className="dialog-scroll" contentClassName="dialog-content" label={title}>
-          <Dialog.Title className="dialog-title">{title}</Dialog.Title>
           {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
           {children && <div className="dialog-body">{children}</div>}
         </ScrollBox>

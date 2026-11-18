@@ -35,6 +35,7 @@
     "ui.unavailable": "Unavailable",
     "ui.proxy": "Proxy",
     "ui.arguments": "Launch arguments",
+    "ui.arguments.checking": "Checking…",
     "ui.bypass": "Bypass addresses",
     "ui.extra": "Additional arguments",
     "ui.programs": "Companion programs",

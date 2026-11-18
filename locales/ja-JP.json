@@ -35,6 +35,7 @@
     "ui.unavailable": "利用不可",
     "ui.proxy": "プロキシ",
     "ui.arguments": "起動引数",
+    "ui.arguments.checking": "確認中…",
     "ui.bypass": "プロキシを使わないアドレス",
     "ui.extra": "追加の引数",
     "ui.programs": "追加プログラム",

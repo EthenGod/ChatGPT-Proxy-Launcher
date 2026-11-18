@@ -3,7 +3,7 @@ import { Collapsible } from '@base-ui/react/collapsible'
 import { Radio } from '@base-ui/react/radio'
 import { RadioGroup } from '@base-ui/react/radio-group'
 import { AlertCircle, ArrowUpRight, CheckCircle2, ChevronDown, CircleHelp, File, FlaskConical,
-  FolderOpen, Globe2, LoaderCircle, Moon, Plus, Search, Sun } from 'lucide-react'
+  FolderOpen, Globe2, Info, LoaderCircle, Moon, Plus, Search, Sun } from 'lucide-react'
 import { Button, ChoiceMenu, Hint, Modal, SwitchControl, TextField, Toggle } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
 import { ErrorDetails } from '../../components/ErrorDetails'
@@ -17,6 +17,14 @@ import { portErrorKey, previewOptions, sameOptions } from './preview'
 import type { ProgramEntry, SaveResult, SetupService, WindowHost, Validation } from './contract'
 
 type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'result' | 'preview' | 'error' | 'notice' | null
+const helpTitles = {
+  'setup.hint.startup': 'ui.help.startup',
+  'ui.help.proxy': 'setup.dialog.proxy',
+  'help.codex': 'setup.help.codex',
+  'setup.hint.directory': 'ui.help.directory',
+  'ui.help.programs': 'ui.help.programs.title',
+} as const satisfies Partial<Record<MessageKey, MessageKey>>
+
 export function SetupPage({ service, host, scenarioControls, onLanguageChange }: {
   service: SetupService; host: WindowHost; scenarioControls?: React.ReactNode; onLanguageChange?: (language: string) => void
 }) {
@@ -45,7 +53,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
   const [programs, setPrograms] = useState<ProgramEntry[]>([])
   const [dialog, setDialog] = useState<DialogState>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [help, setHelp] = useState<MessageKey>('ui.help.proxy')
+  const [help, setHelp] = useState<keyof typeof helpTitles>('ui.help.proxy')
   const [selection, setSelection] = useState('')
   const [closed, setClosed] = useState(false)
   const alive = useRef(true)
@@ -98,6 +106,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     try {
       const data = await service.load()
       if (!alive.current || revision !== loadRevision.current) return
+      setNativeValidation(null)
       setSnapshot(data); setOptions({ ...data.options }); setLanguage(data.preferences.language)
       requestedLanguage.current = data.preferences.language
       setPrograms(data.programs); setError(null); setPreferenceWarnings([])
@@ -273,20 +282,31 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     catch (cause) { if (alive.current) reportFailure('setup.error.openfolder', cause) }
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setSelecting(false) } }
   }
-  const helpButton = (key: MessageKey, label: string) => <Hint label={label}><Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button></Hint>
+  const helpButton = (key: keyof typeof helpTitles) => {
+    const label = t(helpTitles[key])
+    return <Hint label={label}><Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button></Hint>
+  }
   const portError = options?.proxy ? portErrorKey(options.port) : undefined
+  const invalidInput = !!portError || validation?.valid === false
+  const checking = !!options && !validation && !portError
+  // While a new check is pending, only the preview may retain the last confirmed arguments.
+  const previewValue = validation ?? (nativeValidation?.value.valid ? nativeValidation.value : null)
+  let previewText = ''
+  if (portError) previewText = t(portError)
+  else if (previewValue?.valid) previewText = previewValue.arguments || t('ui.arguments.empty')
+  else if (validation) previewText = validation.detail || t('setup.preview.invalid')
   const fieldError = (key: keyof SetupOptions) => key === 'port' && portError ? t(portError)
     : validation?.errors[key] ? t(validation.errors[key]) : undefined
-  const primaryStatus = busy || loading || loadError ? '' : result ? t(result.message)
-    : notice ? t(notice) : !validation?.valid && options ? t('ui.save.invalid')
-      : options?.proxy && options.codexEnv ? t('setup.status.quitwarning') : dirty ? t('setup.status.unsaved') : ''
+  const statusKey = busy || loading || loadError ? null : result?.message ?? notice
+    ?? (invalidInput ? 'ui.save.invalid' : options?.proxy && options.codexEnv ? 'setup.status.quitwarning' : dirty ? 'setup.status.unsaved' : null)
+  const primaryStatus = statusKey ? t(statusKey) : ''
   const status = [primaryStatus, result && notice ? t(notice) : '', ...preferenceWarnings.map(key => t(key))].filter(Boolean).join('\n')
   const saved = result?.commit === 'saved' && !dirty
   const failed = !!result && result.commit !== 'saved'
   const deployment = snapshot?.deployed ? snapshot.deployedVersion ? t('setup.state.version', { version: snapshot.deployedVersion }) : t('setup.state.unknownversion')
     : t(snapshot?.hasSettings ? 'setup.state.missing' : 'setup.state.absent')
   const discard = dialog === 'discard'
-  const dialogTitle = t(discard ? 'setup.dialog.close' : dialog === 'help' ? 'ui.help.title' : dialog === 'directory' ? 'setup.dialog.directory'
+  const dialogTitle = t(discard ? 'setup.dialog.close' : dialog === 'help' ? helpTitles[help] : dialog === 'directory' ? 'setup.dialog.directory'
     : dialog === 'program' ? 'setup.dialog.program' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title'
       : dialog === 'notice' ? 'ui.notice.label' : saved ? 'ui.save.followup' : 'setup.error.saving')
   const noticeDetail = selectedNotice?.fullDetail || selectedNotice?.detail
@@ -313,12 +333,12 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}
           <section className="settings-section" aria-labelledby="startup-title"><h2 id="startup-title">{t('setup.section.startup')}</h2><div className="settings-card">
-            <Toggle label={t('ui.startup')} checked={options.startup} disabled={locked} onChange={value => update('startup', value)} help={helpButton('setup.hint.startup', t('ui.help.startup'))} />
+            <Toggle label={t('ui.startup')} checked={options.startup} disabled={locked} onChange={value => update('startup', value)} help={helpButton('setup.hint.startup')} />
             <Toggle label={t('ui.desktop')} checked={options.desktop} disabled={locked} onChange={value => update('desktop', value)} />
             <Toggle label={t('ui.silent')} badge={t('ui.unavailable')} checked={options.silent} disabled onChange={() => {}} />
           </div></section>
           <section className="settings-section" aria-labelledby="proxy-title"><Collapsible.Root open={options.proxy}>
-            <div className="section-heading"><h2 id="proxy-title">{t('ui.proxy')}</h2>{helpButton('ui.help.proxy', t('setup.dialog.proxy'))}
+            <div className="section-heading"><h2 id="proxy-title">{t('ui.proxy')}</h2>{helpButton('ui.help.proxy')}
               <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls={options.proxy ? 'proxy-details' : undefined} checked={options.proxy} disabled={locked} onChange={changeProxy} /></div>
             <Collapsible.Panel id="proxy-details" className="disclosure-panel">
               <div className="settings-card proxy-card">
@@ -330,24 +350,25 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
                   <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} errorDescriptionId="validation-message" inputMode="numeric" maxLength={5} autoComplete="off"
                     suffix={<Hint label={t('ui.detect')}><Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} disabled={locked || detecting} onClick={() => void detect()}>{detecting ? <LoaderCircle className="spinner" size={16} /> : <Search size={16} />}</Button></Hint>} />
                 </div>
-                <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex', t('setup.help.codex'))} />
+                <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex')} />
               </div>
             </Collapsible.Panel></Collapsible.Root></section>
-          <section className="settings-section" aria-labelledby="preview-title"><div className="preview-heading"><h2 id="preview-title">{t('ui.arguments')}</h2>
+          <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 id="preview-title">{t('ui.arguments')}</h2>
+              {checking && <span className="preview-checking" data-motion-text>{t('ui.arguments.checking')}</span>}
               {!validation?.valid && !!validation?.nativeError && <Button className="text-button" onClick={() => { setError(validation); openDialog('error') }}>{t('ui.details')}</Button>}
             </div>
-            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre id="validation-message" className={`argument-preview ${portError || validation && !validation.valid ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{portError ? t(portError) : validation?.valid ? validation.arguments || t('ui.arguments.empty') : validation?.detail || t(validation ? 'setup.preview.invalid' : 'setup.preview.loading')}</pre></ScrollBox>
+            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre id="validation-message" className={`argument-preview ${invalidInput ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{previewText}</pre></ScrollBox>
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
             <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>
             <Collapsible.Panel className="disclosure-panel advanced-panel">
               <div className="settings-card advanced-card">
                 <TextField label={t('setup.label.directory')} value={options.directory} onChange={event => update('directory', event.target.value)} disabled={locked} error={fieldError('directory')} spellCheck={false}
-                  labelActions={<>{helpButton('setup.hint.directory', t('ui.help.directory'))}<Button className="text-button field-reset" disabled={locked || options.directory === defaultDirectory} onClick={() => update('directory', defaultDirectory)}>{t('setup.action.reset')}</Button></>}
+                  labelActions={<>{helpButton('setup.hint.directory')}<Button className="text-button field-reset" disabled={locked || options.directory === defaultDirectory} onClick={() => update('directory', defaultDirectory)}>{t('setup.action.reset')}</Button></>}
                   suffix={<Hint label={t('setup.action.browse')}><Button className="input-action" aria-label={t('setup.action.browse')} disabled={locked} onClick={() => void chooseDirectory()}><FolderOpen size={16} /></Button></Hint>} />
                 <TextField label={t('ui.bypass')} value={options.bypass} onChange={event => update('bypass', event.target.value)} disabled={locked} error={fieldError('bypass')} placeholder="localhost;*.example.com" spellCheck={false} />
                 <TextField label={t('ui.extra')} value={options.extra} onChange={event => update('extra', event.target.value)} disabled={locked} error={fieldError('extra')} spellCheck={false} />
-                <div className="programs-group"><div className="programs-heading"><h2>{t('ui.programs')}</h2>{helpButton('ui.help.programs', t('ui.help.programs.title'))}</div>
+                <div className="programs-group"><div className="programs-heading"><h2>{t('ui.programs')}</h2>{helpButton('ui.help.programs')}</div>
                 {programs.length > 0 && <ul className="program-list">{programs.map(program => <Hint key={program.path} label={`${program.path}\n${program.arguments}`}><li tabIndex={0}><File size={16} /><span>{program.name}</span><CheckCircle2 size={14} /></li></Hint>)}</ul>}
                 <div className="field-actions"><Button className="control-button" disabled={locked} onClick={() => void chooseProgram()}><Plus size={16} />{t('setup.action.add')}</Button>
                   <Hint label={t('setup.action.openstartup')}><Button className="icon-button" disabled={locked} aria-label={t('setup.action.openstartup')} onClick={() => void openLocation('startup')}><FolderOpen size={16} /></Button></Hint></div></div>
@@ -358,7 +379,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange }:
     </ScrollBox>
     <footer className="settings-footer">
       <ScrollBox className="status-scroll" label={t('ui.status')}><div className={`footer-status ${failed ? 'error-text' : saved ? 'success-text' : ''}`} role={failed ? 'alert' : 'status'}>
-        {failed ? <AlertCircle size={16} /> : saved ? <CheckCircle2 size={16} /> : null}
+        {failed ? <AlertCircle size={16} aria-hidden /> : saved ? <CheckCircle2 size={16} aria-hidden />
+          : statusKey === 'setup.status.quitwarning' ? <Info size={14} aria-hidden /> : null}
         <span>{status}</span>
         {error && !loadError && <Button className="text-button" onClick={() => openDialog('error')}>{t('ui.details')}</Button>}
         {result && (failed || result.tasks.length > 0 || !!result.warnings?.length) && <Button className="text-button" onClick={() => openDialog('result')}>{t('ui.details')}</Button>}

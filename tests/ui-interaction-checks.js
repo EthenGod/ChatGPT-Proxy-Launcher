@@ -41,7 +41,8 @@ async page => {
       sheets: document.styleSheets.length};
   });
   const retained = async () => {
-    // Sample the same hover state; delayed help tooltips otherwise change DOM counts.
+    await page.waitForFunction(() => !document.querySelector('.footer-actions .primary-button')?.disabled);
+    // Sample the settled form; tooltips and pending validation have their own nodes.
     await page.mouse.move(2, 2);
     await page.locator('.tooltip-popup').waitFor({state: 'detached'});
     await settle();
@@ -98,17 +99,24 @@ async page => {
     }
     await cdp.send('Emulation.clearDeviceMetricsOverride');
     await language('简体中文', 'zh-CN'); await theme(true);
+    const cycleAdvanced = async () => {
+      await advanced.click(); await advanced.click();
+      await settle();
+    };
+    // Match the last round's protocol, expanded panel, focus and scroll position.
+    const http = page.getByRole('radio', {name: 'HTTP', exact: true});
+    await http.click();
+    await cycleAdvanced();
     const before = await retained();
     for (let round = 0; round < 30; round++) {
       const [label, tag] = languages[(round + 1) % languages.length];
       await language(label, tag); await theme(round % 2 === 1);
       await page.getByRole('radio', {name: ['HTTPS', 'SOCKS5', 'HTTP'][round % 3], exact: true}).click();
-      await advanced.click(); await advanced.click();
-      await settle();
+      await cycleAdvanced();
       if (await extra.inputValue() !== literal) throw Error('Repeated operations lost input');
     }
-    await language('简体中文', 'zh-CN'); await theme(true);
-    await page.getByRole('radio', {name: 'HTTP', exact: true}).click();
+    const after = await retained();
+    await http.click();
     await page.keyboard.press('ArrowRight');
     if (await page.getByRole('radio', {name: 'HTTPS', exact: true}).getAttribute('aria-checked') !== 'true') throw Error('Protocol arrow key failed');
     await page.keyboard.press('ArrowLeft');
@@ -119,7 +127,6 @@ async page => {
     await startup.click(); await page.keyboard.press('Space');
     if (await startup.getAttribute('aria-checked') !== checked) throw Error('Switch keyboard behavior changed');
     await page.waitForFunction(() => !document.querySelector('.footer-actions .primary-button')?.disabled);
-    const after = await retained();
     if (after.layout.sheets !== before.layout.sheets || after.layout.leakedStyles) throw Error('Temporary appearance styles accumulated');
     if (after.nodes > before.nodes + 20 || after.jsEventListeners > before.jsEventListeners + 20) {
       throw Error(JSON.stringify({message: 'Retained DOM resources increased', before, after}));

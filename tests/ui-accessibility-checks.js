@@ -103,8 +103,12 @@ async page => {
         const body = page.locator('.dialog-scroll > .scroll-viewport');
         const overflow = await body.evaluate(element => element.scrollHeight > element.clientHeight);
         if (overflow) {
+          const title = page.getByRole('heading', { name: 'Codex .env 配置说明' });
+          const top = await title.evaluate(element => element.getBoundingClientRect().top);
           await tabTo(body); await key('End');
           if (!await body.evaluate(element => element.scrollTop > 0)) throw Error('Keyboard cannot scroll help');
+          const after = await title.evaluate(element => element.getBoundingClientRect().top);
+          if (Math.abs(after - top) > 1 || after < 0) throw Error('Help title moved out of view');
         }
         await closeModal(help); await key('Tab'); await page.mouse.move(2, 2);
         await page.locator('.tooltip-popup').waitFor({ state: 'detached' }); await settle();

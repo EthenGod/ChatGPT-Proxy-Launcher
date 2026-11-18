@@ -35,6 +35,7 @@
     "ui.unavailable": "暂不可用",
     "ui.proxy": "代理",
     "ui.arguments": "启动参数",
+    "ui.arguments.checking": "正在校验…",
     "ui.bypass": "绕过代理的地址",
     "ui.extra": "额外参数",
     "ui.programs": "附加程序",
