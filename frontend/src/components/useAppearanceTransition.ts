@@ -4,15 +4,18 @@ import { flushSync } from 'react-dom'
 // Paint flat surfaces on the animated bounds, not inside a stretched bitmap.
 // This keeps one-pixel borders and rounded corners stable as labels change width.
 function separateLanguageLayers() {
+  const clips = '.scroll-viewport, .disclosure-panel'
   const text = '[data-motion-text], h1, h2, label, .dialog-title, .dialog-description:not(.help-paragraphs), .help-paragraphs > p, .dialog-body > p, .followup p, .field-error, .deployment-status > span:last-child, .menu-item > span, .argument-preview, .notice-title, .notice-description, .notice-detail > p, .error-heading code, .error-guide p, .error-guide summary'
   const boxes = '.appearance-controls, .settings-card, .argument-scroll, .advanced-trigger, .settings-footer, .prototype-bar, .button, .control-button, .icon-button, .text-button, .input-action, .input-wrap input, .segmented, .segment, .switch, .version-badge, .setting-badge, .dialog, .menu-popup, .notice-toast, .error-guide, .program-results, .program-badge'
-  const elements = [...document.querySelectorAll<HTMLElement>(`${boxes}, ${text}`)].filter(element => !element.matches('.appearance-controls .icon-button') && !element.closest('[inert]'))
+  const elements = [...document.querySelectorAll<HTMLElement>(`${clips}, ${boxes}, ${text}`)].filter(element => !element.matches('.appearance-controls .icon-button') && !element.closest('[inert], [hidden]'))
   const properties = ['view-transition-name', 'view-transition-class', 'background-color', 'border-color', 'box-shadow']
   const previous = elements.map(element => ({ element, text: element.textContent, values: properties.map(property => [property, element.style.getPropertyValue(property), element.style.getPropertyPriority(property)] as const), transition: [element.style.getPropertyValue('transition'), element.style.getPropertyPriority('transition')] as const, paint: getComputedStyle(element) }))
   const decorations = document.createElement('style')
+  // Named descendants move into the snapshot tree. Reapply each viewport's clip there.
+  decorations.textContent = '::view-transition-group-children(.language-clip) { overflow: clip; border-radius: inherit; }'
   document.head.append(decorations)
   const surfaces: HTMLElement[] = []
-  const gutters = [...document.querySelectorAll<HTMLElement>('.scroll-content')].map(element => ({
+  const gutters = [...document.querySelectorAll<HTMLElement>('.scroll-area:not([data-auto-hide]) > .scroll-viewport > .scroll-content')].map(element => ({
     element, value: element.style.getPropertyValue('margin-inline-end'), priority: element.style.getPropertyPriority('margin-inline-end'),
   }))
   previous.forEach(({ element, paint }, index) => {
@@ -20,7 +23,7 @@ function separateLanguageLayers() {
     // Keep the guard independent of the snapshot name, including during cleanup.
     element.style.setProperty('transition', 'none', 'important')
     element.style.setProperty('view-transition-name', `language-${index}`)
-    element.style.setProperty('view-transition-class', isText ? 'language-text' : element.matches('input') ? 'language-input' : 'language-frame')
+    element.style.setProperty('view-transition-class', element.matches(clips) ? 'language-clip' : isText ? 'language-text' : element.matches('input') ? 'language-input' : 'language-frame')
     if (isText || paint.opacity !== '1') return
     const background = paint.backgroundColor, radius = paint.borderRadius, shadow = paint.boxShadow
     const edges = ['top', 'right', 'bottom', 'left'].map(side => ({
@@ -87,13 +90,30 @@ export function useAppearanceTransition() {
   const revision = useRef(0)
   const pending = useRef(new Map<'language' | 'theme', () => void>())
   const layers = useRef<ReturnType<typeof separateLanguageLayers> | null>(null)
-  useEffect(() => () => {
-    ++revision.current
-    active.current?.skipTransition()
-    active.current = null
-    pending.current.clear()
-    layers.current?.restore(); layers.current = null
-    delete document.documentElement.dataset.appearanceTransition
+  useEffect(() => {
+    const root = document.documentElement
+    let settled: number | undefined
+    const finishSnapshot = () => {
+      active.current?.skipTransition()
+      active.current = null
+      layers.current?.restore(); layers.current = null
+      delete root.dataset.appearanceTransition
+    }
+    const resize = () => {
+      root.dataset.windowResizing = ''
+      if (active.current) finishSnapshot()
+      window.clearTimeout(settled)
+      settled = window.setTimeout(() => { delete root.dataset.windowResizing }, 120)
+    }
+    window.addEventListener('resize', resize)
+    return () => {
+      window.removeEventListener('resize', resize)
+      window.clearTimeout(settled)
+      delete root.dataset.windowResizing
+      ++revision.current
+      pending.current.clear()
+      finishSnapshot()
+    }
   }, [])
 
   return (kind: 'language' | 'theme', update: () => void) => {
@@ -112,7 +132,8 @@ export function useAppearanceTransition() {
       layers.current?.settle()
     }
     const root = document.documentElement
-    if (!document.startViewTransition || (mode === 'language' && typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('view-transition-class', 'language-text'))
+    if (!document.startViewTransition || root.hasAttribute('data-window-resizing')
+      || (mode === 'language' && typeof CSS !== 'undefined' && CSS.supports && (!CSS.supports('view-transition-group', 'contain') || !CSS.supports('selector(::view-transition-group-children(root))')))
       || window.matchMedia('(prefers-reduced-motion: reduce), (forced-colors: active)').matches) {
       delete root.dataset.appearanceTransition
       commit()

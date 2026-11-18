@@ -31,6 +31,48 @@ function ProgramState({ status, t }: StatusProps) {
   return null
 }
 
+type ListLayout = { tops: Map<string, number>; height: number; added: string | undefined }
+const listMotion = { duration: 230, easing: 'cubic-bezier(.22,.61,.36,1)' }
+
+function captureListChange(container: HTMLElement, entries: ListedProgram[], afterAdd: boolean): ListLayout | null {
+  // A focus refresh often returns identical entries. Read geometry only for an actual list change.
+  const rows = [...container.querySelectorAll<HTMLLIElement>('.program-list > li')]
+  if (container.querySelector('.program-placeholder') ||
+    (rows.length === entries.length && rows.every((row, i) => row.dataset.programId === entries[i]?.id))) return null
+  const origin = rows[0]?.parentElement?.getBoundingClientRect().top ?? 0
+  const tops = new Map(rows.map(row => [row.dataset.programId!, row.getBoundingClientRect().top - origin]))
+  const additions = afterAdd ? entries.filter(entry => !tops.has(entry.id)) : []
+  return { tops, height: container.getBoundingClientRect().height, added: additions.length === 1 ? additions[0]?.id : undefined }
+}
+
+function animateListChange(container: HTMLElement, before: ListLayout) {
+  const viewport = container.querySelector<HTMLElement>('.scroll-viewport')
+  const rows = [...container.querySelectorAll<HTMLLIElement>('.program-list > li')]
+  // An immediate second change starts from the currently painted position.
+  container.getAnimations?.({ subtree: true }).filter(animation => animation.id === 'program-layout').forEach(animation => animation.cancel())
+  const motion = !!container.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    !document.documentElement.matches('[data-window-resizing], [data-appearance-transition]')
+  const height = container.getBoundingClientRect().height
+  const positions = rows.map(row => ({ row, top: row.offsetTop }))
+  if (motion && Math.abs(before.height - height) > 1) {
+    container.animate([{ height: before.height + 'px' }, { height: height + 'px' }], { ...listMotion, id: 'program-layout' })
+  }
+  for (const { row, top } of positions) {
+    const id = row.dataset.programId!
+    const delta = (before.tops.get(id) ?? top) - top
+    if (motion && Math.abs(delta) > 1) {
+      row.animate([{ transform: `translateY(${delta}px)` }, { transform: 'none' }], { ...listMotion, id: 'program-layout' })
+    }
+    if (viewport && id === before.added) {
+      const bottom = top + row.offsetHeight
+      const target = top < viewport.scrollTop ? top : bottom - viewport.clientHeight
+      if (top < viewport.scrollTop || bottom > viewport.scrollTop + viewport.clientHeight) {
+        viewport.scrollTo?.({ top: target, behavior: motion ? 'smooth' : 'instant' })
+      }
+    }
+  }
+}
+
 export function ProgramDetails({ program, t }: { program: ListedProgram; t: Translate }) {
   return <div className="program-details">
     <div className="program-identity"><ProgramIcon program={program} /><strong dir="auto">{program.name}</strong><AdaptedBadge status={program.status} t={t} /></div>
@@ -52,12 +94,19 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
   const [issue, setIssue] = useState<ErrorInfo | null>(null)
   const [pending, setPending] = useState(false)
   const [request, refresh] = useReducer(n => n + 1, 0)
+  const results = useRef<HTMLDivElement>(null)
+  const previousLayout = useRef<ListLayout | null>(null)
+  const lastRevision = useRef(revision)
   useEffect(() => {
     if (!active) return
     let current = true
     setPending(true)
     void service.listPrograms().then(result => {
-      if (current) { setList(result); setIssue(null) }
+      if (!current) return
+      if (results.current) previousLayout.current = captureListChange(results.current, result.entries, lastRevision.current !== revision)
+      lastRevision.current = revision
+      setList(result)
+      setIssue(null)
     }).catch(cause => { if (current) setIssue(nativeIssue(cause)) })
       .finally(() => { if (current) setPending(false) })
     return () => { current = false }
@@ -70,6 +119,8 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
 
   const section = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
+    if (previousLayout.current && results.current) animateListChange(results.current, previousLayout.current)
+    previousLayout.current = null
     if (!reveal.current || (!list && !issue)) return
     reveal.current = false
     section.current?.scrollIntoView?.({ block: 'nearest' })
@@ -87,9 +138,9 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
         <Button className="control-button program-add" disabled={locked} onClick={onAdd}><Plus size={15} />{t('setup.action.add')}</Button>
       </div>
     </div>
-    <div className="program-results" aria-busy={pending}>
+    <div ref={results} className="program-results" aria-busy={pending}>
       {entries.length > 0 && <ScrollBox className="program-scroll" label={t('ui.programs')}>
-        <ul className="program-list">{entries.map(program => <li key={program.id}>
+        <ul className="program-list">{entries.map(program => <li key={program.id} data-program-id={program.id}>
           <Hint label={[program.path, program.arguments].filter(Boolean).join('\n')}>
             <Button className="program-row" disabled={locked} aria-haspopup="dialog" onClick={() => onDetails(program)}>
               <ProgramIcon program={program} /><span className="program-title"><span className="program-name" dir="auto">{program.name}</span>

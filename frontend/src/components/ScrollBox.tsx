@@ -28,7 +28,7 @@ export function ScrollBox({ children, className = '', contentClassName = '', lab
   useLayoutEffect(() => {
     const rail = track.current
     if (persistent || !rail) return
-    // The reserved gutter stays reachable even when its thumb is transparent.
+    // The rail remains a drag target while its thumb and the content gutter fade away.
     let timeout: number | undefined
     const end = () => { window.clearTimeout(timeout); rail.removeAttribute('data-pointer-moving') }
     const move = (event: PointerEvent) => {

@@ -12,6 +12,8 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-set-theme",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color",
     "allow-validate-setup",
     "allow-detect-setup-port",
     "allow-save-setup",

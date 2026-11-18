@@ -58,6 +58,22 @@ describe('appearance changes', () => {
     expect(skip).toHaveBeenCalledOnce()
     expect(document.documentElement.dataset.appearanceTransition).toBeUndefined()
   })
+  it('releases a snapshot on resize and keeps the latest language', () => {
+    const { commits, skip, start } = transitions()
+    const { result, unmount } = renderHook(useAppearanceTransition)
+    const oldLanguage = vi.fn(), newLanguage = vi.fn()
+    act(() => result.current('language', oldLanguage))
+    act(() => { window.dispatchEvent(new Event('resize')) })
+    expect(skip).toHaveBeenCalledOnce()
+    expect(document.documentElement.dataset.appearanceTransition).toBeUndefined()
+    act(() => result.current('language', newLanguage))
+    act(() => commits.forEach(commit => commit()))
+    expect(start).toHaveBeenCalledOnce()
+    expect(oldLanguage).not.toHaveBeenCalled()
+    expect(newLanguage).toHaveBeenCalledOnce()
+    unmount()
+    expect(document.documentElement.dataset.windowResizing).toBeUndefined()
+  })
   it.each(['finish', 'unmount', 'throw'])('restores surface styling and temporary rules after %s', async outcome => {
     const { container } = render(<div className="settings-card" style={{ opacity: 1, backgroundColor: 'rgb(20, 20, 20)', border: '1px solid rgb(60, 60, 60)', borderRadius: 12, transition: 'background-color 150ms ease-out' }}>
       <span data-motion-text>Before</span>

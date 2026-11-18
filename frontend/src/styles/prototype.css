@@ -34,17 +34,18 @@ input, textarea, .argument-preview, .dialog-description, .error-detail, .error-g
 button:focus-visible, .button:focus-visible, [role=radio]:focus-visible, [role=switch]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 button:disabled, [data-disabled] { cursor: default; }
 button svg { flex-shrink: 0; }
-.setup-shell { height: 100dvh; min-height: 280px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.setup-shell { height: 100dvh; min-height: 280px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--gray-1); }
 .prototype-bar { min-height: 32px; padding: 2px 24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--gray-2); border-bottom: 1px solid var(--gray-6); font-size: 12px; color: var(--gray-11); }
 .prototype-bar fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .prototype-label { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 2px 0; background: none; border: 0; border-radius: var(--radius-small); color: inherit; cursor: pointer; white-space: nowrap; }
 .prototype-label { transition: color var(--motion-fast) ease-out; }
 .prototype-label:hover { color: var(--gray-12); }
-.scroll-area { position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.scroll-area { --scroll-gutter: 0px; position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .scroll-viewport { min-height: 0; min-width: 0; flex: 1; scroll-padding: 16px; overscroll-behavior: contain; outline: none; }
 .scroll-viewport:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; border-radius: inherit; }
-.scroll-content { margin-inline-end: 0; transition: margin-inline-end var(--motion-enter) ease-out; }
-.scroll-area[data-has-overflow-y] > .scroll-viewport > .scroll-content { margin-inline-end: var(--scrollbar-space); }
+.scroll-content { margin-inline-end: var(--scroll-gutter); transition: margin-inline-end var(--motion-exit) cubic-bezier(.22,.61,.36,1); }
+.scroll-area:not([data-auto-hide])[data-has-overflow-y],
+.scroll-area[data-auto-hide]:has(> .scroll-track[data-has-overflow-y]:is([data-scrolling], [data-pointer-moving], :active)) { --scroll-gutter: var(--scrollbar-space); }
 .scroll-track { width: var(--scrollbar-space); padding: 8px 3px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-exit) ease-in, visibility 0s var(--motion-exit); }
 .scroll-track[data-has-overflow-y] { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity var(--motion-enter) ease-out, visibility 0s; }
 .scroll-area[data-auto-hide] > .scroll-track[data-has-overflow-y] { opacity: 0; transition: opacity var(--motion-exit) ease-in; }
@@ -56,6 +57,10 @@ button svg { flex-shrink: 0; }
 .settings-scroll { padding: 0; }
 .settings-content { padding: 20px var(--page-inset) 16px; }
 .settings-content > * { max-inline-size: var(--settings-width); margin-inline: auto; }
+.settings-content > :is(.deployment-status, .settings-section), .settings-content > .advanced-section > .advanced-trigger {
+  animation: settings-arrive var(--motion-enter) ease-out;
+}
+@keyframes settings-arrive { from { opacity: .65; translate: 0 3px; } }
 .settings-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0; gap: 16px; }
 .heading-block { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .heading-block h1 { font-size: 24px; font-weight: 600; line-height: 1.3; letter-spacing: -.025em; word-break: keep-all; }
@@ -173,11 +178,15 @@ button svg { flex-shrink: 0; }
 .program-add { min-height: 32px; padding: 4px 9px; gap: 4px; margin-inline-start: 4px; }
 .program-refresh svg { transition: transform var(--motion-enter) ease-out; }
 .program-refresh[aria-busy=true] { opacity: 1; }
-.program-results { min-width: 0; border: 1px solid var(--gray-6); border-radius: var(--radius-control); background: var(--gray-1); }
-.program-scroll { max-height: 210px; border-radius: inherit; }
+.program-results { min-width: 0; overflow: clip; border: 1px solid var(--gray-6); border-radius: var(--radius-control); background: var(--gray-1); }
+.program-scroll { max-height: 228px; border-radius: inherit; }
 .program-scroll > .scroll-viewport { overscroll-behavior-y: auto; }
-.program-list { padding: 3px; margin: 0; list-style: none; }
+.program-list { position: relative; padding: 3px; margin: 0; list-style: none; }
+.program-scroll::after { content: ''; position: absolute; inset: auto 1px 0; height: 8px; border-radius: 0 0 var(--radius-control) var(--radius-control); background: linear-gradient(transparent, var(--gray-1)); pointer-events: none; opacity: 0; transition: opacity var(--motion-fast) ease-out; }
+.program-scroll[data-overflow-y-end]::after { opacity: 1; }
 .program-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 5px 8px; border: 0; border-radius: var(--radius-small); background: transparent; color: var(--gray-12); cursor: pointer; text-align: start; transition: background-color var(--motion-fast) ease-out; }
+.program-row, .program-empty, .program-message { animation: program-arrive var(--motion-enter) ease-out; }
+@keyframes program-arrive { from { opacity: 0; translate: 0 4px; } }
 .program-row:hover:enabled, .program-row:focus-visible { background: var(--gray-3); }
 .program-row:active:enabled { background: var(--gray-4); }
 .program-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
@@ -287,7 +296,7 @@ button svg { flex-shrink: 0; }
 .dialog-scroll { flex: 0 1 auto; border-block: 1px solid transparent; transition: border-color var(--motion-fast) ease-out; }
 .dialog-scroll[data-overflow-y-start] { border-block-start-color: var(--gray-6); }
 .dialog-scroll[data-overflow-y-end] { border-block-end-color: var(--gray-6); }
-.dialog-scroll::before, .dialog-scroll::after { content: ''; position: absolute; z-index: 1; inset-inline: 0 var(--scrollbar-space); height: 6px; pointer-events: none; opacity: 0; transition: opacity var(--motion-fast) ease-out; }
+.dialog-scroll::before, .dialog-scroll::after { content: ''; position: absolute; z-index: 1; inset-inline: 0; height: 6px; pointer-events: none; opacity: 0; transition: opacity var(--motion-fast) ease-out; }
 .dialog-scroll::before { top: 0; background: linear-gradient(to bottom, var(--gray-2), transparent); }
 .dialog-scroll::after { bottom: 0; background: linear-gradient(to top, var(--gray-2), transparent); }
 .dialog-scroll[data-overflow-y-start]::before, .dialog-scroll[data-overflow-y-end]::after { opacity: 1; }
@@ -354,6 +363,9 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 :root[data-appearance-transition=language] .disclosure-panel,
 :root[data-appearance-transition=language] [style*="view-transition-name"] { transition: none !important; }
 :root[data-appearance-transition=language] .disclosure-panel { height: auto; }
+:root[data-appearance-transition=language] :is(.scroll-viewport, .disclosure-panel) { view-transition-group: contain; }
+:root[data-window-resizing] :is(.scroll-content, .scroll-track, .disclosure-panel) { transition: none !important; }
+:root[data-window-resizing] .disclosure-panel[data-open]:not([data-ending-style]) { height: auto; }
 :root[data-appearance-transition=language]::view-transition-group(*) { animation-duration: var(--motion-enter); animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
 :root[data-appearance-transition=language]::view-transition-old(*) { animation: none; opacity: 0; }
 :root[data-appearance-transition=language]::view-transition-new(*) { animation: none; opacity: 1; mix-blend-mode: normal; height: 100%; }
@@ -401,7 +413,7 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
   .status-dot { background: CanvasText; }
   .dialog-backdrop { background: Canvas; opacity: .8; }
   .dialog, .menu-popup { background: Canvas; color: CanvasText; }
-  .dialog-scroll::before, .dialog-scroll::after { display: none; }
+  .dialog-scroll::before, .dialog-scroll::after, .program-scroll::after { display: none; }
   .segment:hover:not([data-disabled]), .input-action:hover:enabled, .status-input-link:hover:not(:focus-visible) { outline: 1px solid Highlight; outline-offset: -1px; }
   .notice-toast, .notice-toast:hover, .notice-toast:has(.notice-open:focus-visible), .notice-toast:has(.notice-open:active) { background: Canvas; color: CanvasText; box-shadow: none; }
   .notice-toast:hover { outline: 1px solid Highlight; }

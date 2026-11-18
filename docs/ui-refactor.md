@@ -35,9 +35,11 @@
 
 附加程序的操作集中在标题行。“已适配”紧跟名称。空间不足时名称显示省略号，停用状态和箭头仍在右侧。点击程序或按回车可查看完整名称、路径和启动参数。Esc 返回原程序行。
 
-快捷方式优先显示指定图标，其次使用目标程序自带的图标。找不到时使用 Windows 文件类型图标。系统也未提供图标时，界面按扩展名绘制。滚轮、键盘和拖动都可以操作内层滚动条，停下后滚动条淡出，列表保持原位。
+快捷方式优先显示指定图标，其次使用目标程序自带的图标。找不到时使用 Windows 文件类型图标。系统也未提供图标时，界面按扩展名绘制。列表最高 228px，能看到第六行的一部分。滚轮、键盘和拖动都能操作内层滚动条。停下后，滑块淡出，右侧 12px 平滑交还给列表。
 
-需要体验示例数据时，运行 `frontend/desktop.ps1 -Command sample`，然后双击 `work/ui-sample/ChatGPTLauncherSetup-Sample.exe`。示例版内嵌页面和数据，直接打开附加程序。右上方可切换常规、空列表、部分不可读及读取失败四种场景。后两种场景点刷新可恢复。此版本需要系统 WebView2。自动化验证从 `tests/ui-prototype-tests.ps1 -Sample -Action Start -RemoteDebugging` 启动，用 Playwright CLI 附加该窗口后运行 `tests/ui-program-sample-checks.js`。
+首次读取完成后，设置和程序行淡入。插入程序时，新行淡入，受影响的行平移。相同内容再次刷新时保持静止。主动添加的程序超出可视区时，只滚动内层列表。切换语言时，文字和边框的过渡都受所在视口裁剪。调整窗口大小时，布局直接跟随窗口。深浅主题同步设置原生窗口和 WebView 底色。
+
+需要体验示例数据时，运行 `frontend/desktop.ps1 -Command sample`，然后双击 `work/ui-sample/ChatGPTLauncherSetup-Sample.exe`。示例版内嵌页面和数据，直接打开附加程序。右上方可切换常规、空列表、部分不可读及读取失败四种场景。后两种场景点刷新可恢复。此版本需要系统 WebView2。用 `tests/ui-prototype-tests.ps1 -Sample -Action Start -RemoteDebugging` 启动隔离窗口，再用 Playwright CLI 运行 `tests/ui-program-sample-checks.js` 检查交互。另开示例窗口运行 `tests/ui-program-clip-checks.js`，逐帧检查列表上、下边缘是否出现隐藏文字。
 
 隔离桌面窗口已核对普通程序、已适配、已停用及注册异常四种显示。外部添加文件并停用扩展后，点刷新即可看到两项变化。整个过程只读两次列表，未触发保存。三语、深浅主题及用 Tab 查看程序路径均已通过。
 
@@ -57,7 +59,7 @@
 
 - `frontend/src/features/setup/` 包含设置页面、服务接口和原型参数预览。`components/` 提供 Base UI 控件，`styles/` 提供 Radix 语义颜色与动效，`i18n/` 继续读取根目录的三语词条。
 - `frontend/src/platform/setup-service.ts` 提供串行真实接口，`platform/mock.ts` 提供内存模拟接口。`main.tsx` 是真实设置入口，`prototype.tsx` 是独立原型入口。两者共用 `platform/prototype-window.ts` 的窗口就绪、主题和关闭事件。原型不调用真实配置加载或保存接口。
-- `frontend/src-tauri/` 包含窗口、原生命令、Rust 数据类型和 C ABI 包装。主窗口只授权加载、校验、检测、保存、目录选择、添加程序、打开指定位置、偏好、显示与关闭命令，以及必要的事件和自身主题权限。不开放文件系统、Shell 或通用窗口操作权限。
+- `frontend/src-tauri/` 包含窗口、原生命令、Rust 数据类型和 C ABI 包装。主窗口可加载、校验、检测、保存、选择目录、列出和添加附加程序、打开指定位置及更改偏好。窗口权限限于显示、关闭、必要事件，以及设置自身主题和窗口、WebView 底色。
 - `src/SetupBridge.*` 把现有核心接入有界 UTF-8 JSON。C++ 分配结果，Rust 作用域对象调用 C++ 释放。异常不跨越 ABI。保存另传独立提交状态，响应构造失败仍保留已提交结果。`src/SetupUiServices.*` 共用原生偏好、选择器和保存后处理。
 - 现有部署核心与启动器不迁移。后台命令在 WebView2 检查和 Tauri 初始化之前分流。原始 UTF-16 参数不重新编码或拼接。
 - 新 EXE 静态链接 C++ 核心、原生兼容界面和 Visual C++ 运行库。Tauri 生成图标和版本资源；额外资源放同次构建的启动器和界面能力信息，避免重复 manifest 或版本资源。

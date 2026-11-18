@@ -7,6 +7,23 @@ async page => {
   }
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.programArrivals = [];
+    window.settingsArrivals = 0;
+    window.layoutChanges = [];
+    document.addEventListener('animationstart', event => {
+      if (event.animationName === 'settings-arrive') window.settingsArrivals++;
+      if (event.animationName === 'program-arrive' && event.target.matches('.program-row')) {
+        window.programArrivals.push(event.target.querySelector('.program-name').textContent);
+      }
+    });
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (keyframes, options) {
+      if (options?.id === 'program-layout') window.layoutChanges.push(this.className || this.tagName);
+      return animate.call(this, keyframes, options);
+    };
+  });
+  await page.reload();
   const group = page.locator('.programs-group'), rows = group.locator('.program-row');
   const advanced = page.locator('.advanced-trigger');
   const settle = () => page.waitForFunction(() => !document.documentElement.dataset.appearanceTransition
@@ -52,6 +69,7 @@ async page => {
   if (denied.some(code => code !== 5)) throw Error('Sample accessed a native configuration command');
   if (await advanced.getAttribute('aria-expanded') !== 'true' || await rows.count() !== 7) throw Error('Sample did not open on all examples');
   if (await rows.first().locator('.program-name').innerText() !== 'Audio Monitor') throw Error('Unexpected sample order');
+  if (!await page.evaluate(() => window.programArrivals.length === 7 && window.settingsArrivals > 0)) throw Error('Missing first-load motion');
   if (!await group.evaluate(el => {
     const r = el.getBoundingClientRect(), v = el.closest('.settings-scroll > .scroll-viewport').getBoundingClientRect();
     return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
@@ -64,13 +82,22 @@ async page => {
   const viewport = group.locator('.program-scroll > .scroll-viewport'), rail = group.locator('.program-scroll > .scroll-track');
   const thumbOpacity = async visible => page.waitForFunction(want => {
     const rail = document.querySelector('.program-scroll > .scroll-track');
-    return !!rail && Number(getComputedStyle(rail).opacity) === (want ? 1 : 0);
+    const content = document.querySelector('.program-scroll .scroll-content');
+    return !!rail && Number(getComputedStyle(rail).opacity) === (want ? 1 : 0)
+      && parseFloat(getComputedStyle(content).marginInlineEnd) === (want ? 12 : 0);
   }, visible);
   await thumbOpacity(false);
+  const peek = await viewport.evaluate(el => {
+    const sixth = el.querySelectorAll('li')[5].getBoundingClientRect();
+    return el.getBoundingClientRect().bottom - sixth.top;
+  });
+  if (peek < 16 || peek > 30) throw Error('Sixth program must be partially visible: ' + peek);
   const rightBefore = (await rows.first().locator('.program-chevron').boundingBox()).x;
   await viewport.hover();
   await page.mouse.wheel(0, 95);
   await thumbOpacity(true);
+  const activeRight = (await rows.first().locator('.program-chevron').boundingBox()).x;
+  if (Math.abs(rightBefore - activeRight - 12) > 1) throw Error('Active rail did not receive space from the row');
   await thumbOpacity(false); // Remain inside the list even after the pointer comes to rest.
   const target = await rail.boundingBox();
   const thumb = await rail.locator('.scroll-thumb').boundingBox();
@@ -91,6 +118,8 @@ async page => {
   await page.keyboard.press('End');
   await thumbOpacity(true);
   await thumbOpacity(false);
+  if (!await viewport.evaluate(el => !el.parentElement.hasAttribute('data-overflow-y-end') &&
+    Number(getComputedStyle(el.parentElement, '::after').opacity) === 0)) throw Error('End cue remained at the bottom');
   await page.keyboard.press('Home');
   await thumbOpacity(false);
   if (Math.abs((await rows.first().locator('.program-chevron').boundingBox()).x - rightBefore) > 1) throw Error('Idle scrollbar shifted the row');
@@ -120,6 +149,7 @@ async page => {
       await page.waitForFunction(want => document.documentElement.classList.contains('dark') === want, dark);
       await settle();
     }
+    if (await page.getByText('窗口外观更新失败。', { exact: true }).count()) throw Error('Native window colors were rejected');
     await group.scrollIntoViewIfNeeded();
     await group.locator('.program-scroll > .scroll-viewport').evaluate(el => { el.scrollTop = 0; });
     await page.mouse.move(2, 2);
@@ -146,11 +176,35 @@ async page => {
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'detached' });
 
+  const addDefault = async () => {
+    await group.getByRole('button', { name: '添加程序…' }).click();
+    const picker = page.getByRole('dialog', { name: '选择要随 ChatGPT 启动的程序', exact: true });
+    await picker.getByRole('button', { name: '选择' }).click();
+    await picker.waitFor({ state: 'detached' });
+    await settle();
+  };
+  await page.evaluate(() => { window.programArrivals = []; window.layoutChanges = []; });
+  await viewport.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await addDefault();
+  await page.waitForFunction(() => window.programArrivals.includes('Notes.lnk'));
+  if (!await page.evaluate(() => window.programArrivals.join() === 'Notes.lnk' && window.layoutChanges.includes('LI'))) throw Error('Adding a program did not move only the affected rows');
+  const inserted = page.locator('.program-row').filter({ has: page.getByText('Notes.lnk', { exact: true }) });
+  if (!await inserted.evaluate(el => {
+    const r = el.getBoundingClientRect(), v = el.closest('.scroll-viewport').getBoundingClientRect();
+    return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
+  })) throw Error('Newly added program was hidden');
+  await addDefault();
+  await group.getByRole('button', { name: '刷新附加程序列表' }).click();
+  await page.waitForFunction(() => document.querySelector('.program-results').getAttribute('aria-busy') === 'false');
+  if (await rows.count() !== 8 || !await page.evaluate(() => window.programArrivals.length === 1)) throw Error('A duplicate or refresh replayed row motion');
   await choose('暂无附加程序');
   await group.getByText('暂无附加程序', { exact: true }).waitFor();
-  await group.getByRole('button', { name: '添加程序…' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: '选择' }).click();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => { window.programArrivals = []; window.layoutChanges = []; });
+  await addDefault();
   await rows.filter({ hasText: 'Notes.lnk' }).waitFor();
+  if (!await page.evaluate(() => !window.programArrivals.length && !window.layoutChanges.length)) throw Error('Added row ignored reduced motion');
+  await page.emulateMedia({ reducedMotion: null });
   await page.locator('.save-button').click();
   await page.locator('.save-button').waitFor({ state: 'detached' });
   for (const [label, message] of [['部分程序不可读','部分程序未能列出'], ['读取失败后重试','未能刷新程序列表']]) {
@@ -167,5 +221,5 @@ async page => {
     if (await rows.count() !== 7) throw Error('Refresh failed to restore the examples');
   }
   if (errors.length) throw Error(errors.join('\n'));
-  return { programs:7, scenarios:4, languages:3, themes:2, keyboardAndFocus:true, idleScrollbar:true, icons:true, layouts, errors };
+  return { programs:7, scenarios:4, languages:3, themes:2, keyboardAndFocus:true, gutterRecovered:rightBefore - activeRight, peek, entryAndReorder:true, icons:true, layouts, errors };
 }
