@@ -1,3 +1,4 @@
+import { version as setupVersion } from '../../package.json'
 import type { SetupOptions, SetupSnapshot } from './types'
 import type { SetupService, SaveResult, ProgramEntry, ListedProgram, Detection } from '../features/setup/contract'
 import { translator, resolveLanguage, type MessageKey } from '../i18n'
@@ -32,7 +33,7 @@ export class MockSetupService implements SetupService {
   private snapshot: SetupSnapshot
   constructor(readonly scenario: Scenario = 'normal', private delay = 1) {
     this.snapshot = {
-      schemaVersion: 1, defaultDirectory, setupVersion: '1.1.3', deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
+      schemaVersion: 1, defaultDirectory, setupVersion, deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
       deployed: !['first', 'missing'].includes(scenario), hasSettings: scenario !== 'first', validArguments: true, notice: '', payloadBytes: 1,
       preferences: { dark: true, language: 'auto', resolvedLanguage: 'zh-CN' },
       options: { startup: false, silent: scenario === 'silent', desktop: true, proxy: true, codexEnv: true,

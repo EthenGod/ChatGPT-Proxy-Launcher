@@ -303,7 +303,7 @@ void App::CreateControls() {
     const DWORD label = SS_LEFT | SS_NOPREFIX;
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
     add(Title, L"STATIC", l10n::Text("common.launcher"), label, 2);
-    add(SetupVersion, L"STATIC", l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_VERSION_TEXT}}).c_str(), label, 3);
+    add(SetupVersion, L"STATIC", l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_RELEASE_VERSION}}).c_str(), label, 3);
     add(LanguageButton, L"BUTTON", l10n::Current().name, WS_TABSTOP | BS_OWNERDRAW);
     add(ThemeToggle, L"BUTTON", l10n::Text("setup.theme.light"), WS_TABSTOP | BS_OWNERDRAW);
     add(State, L"STATIC", l10n::Text("setup.state.initial"), label, 3);
@@ -608,7 +608,7 @@ void App::TranslateControls() {
     for (const auto& label : labels) Set(label.id, l10n::Text(label.key));
     Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
     Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced"));
-    Set(SetupVersion, l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_VERSION_TEXT}}));
+    Set(SetupVersion, l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_RELEASE_VERSION}}));
     Set(LanguageButton, l10n::Current().name);
     SetWindowTextW(window, l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window")); SetWindowTextW(body, l10n::Text("setup.body"));
     SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.port")));

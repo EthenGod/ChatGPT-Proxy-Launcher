@@ -12,7 +12,7 @@ fn main() {
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let version_header = fs::read_to_string(root.join("src/AppVersion.h")).unwrap();
     assert!(
-        version_header.contains(&format!("#define APP_VERSION_TEXT \"{version}\"")),
+        version_header.contains(&format!("#define APP_RELEASE_VERSION \"{version}\"")),
         "Version differs from AppVersion.h"
     );
     let package: serde_json::Value =

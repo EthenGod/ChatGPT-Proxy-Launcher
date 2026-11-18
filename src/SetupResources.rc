@@ -19,8 +19,8 @@ BEGIN
    VALUE "ProductName", "ChatGPT Launcher Setup\0"
    VALUE "OriginalFilename", "ChatGPTLauncherSetup.exe\0"
    VALUE "LegalCopyright", "GPL-3.0-only; unofficial local launcher\0"
-   VALUE "FileVersion", APP_VERSION_TEXT "\0"
-   VALUE "ProductVersion", APP_VERSION_TEXT "\0"
+   VALUE "FileVersion", APP_RELEASE_VERSION "\0"
+   VALUE "ProductVersion", APP_RELEASE_VERSION "\0"
   END
  END
  BLOCK "VarFileInfo"

@@ -25,9 +25,9 @@
 - `src/NativeMemory.h` 管理 Windows 返回的内存和 COM 引用；`tests/memory-tests.cpp` 用分配失败替身检查释放。线程和内存审查见 `docs/memory-thread-review.md`。
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；包含 C++、C ABI、前端、Rust、后台对照及交付检查，只启动隔离测试子进程，不启动 ChatGPT。`tests/delivery-tests.ps1` 检查源码清单、正式 feature、EXE 配对、静态运行库及可选的本地 ZIP；GUI 生命周期另用 `tests/ui-prototype-tests.ps1 -Functional`。
 - 静态分析：根目录运行 `cmd /c tests\analyze.cmd`。性能方案与复测方法见 `docs/performance-review.md`；`work\proxy-tests.exe --benchmark` 只解析合成配置，不读取本机代理。
-- `setup.ps1` 是 PowerShell 下载入口，后台模式转发部署、查询和四项 `companion-*` 操作；`tests/download-tests.ps1` 和 `tests/headless-download-tests.ps1` 替换网络和启动操作，验证参数、下载与校验。
+- `setup.ps1` 是 PowerShell 下载入口。`-Channel` 选择正式版或含测试版，`-Branch` 限制标签所在的提交历史，`-Tag` 固定版本；选择逻辑测试在 `tests/release-channel-tests.ps1`。后台模式转发部署、查询和四项 `companion-*` 操作；`tests/download-tests.ps1` 和 `tests/headless-download-tests.ps1` 替换网络和启动操作，验证参数、下载与校验。
 - `tests/preview-download.ps1` 用本机限速数据预览真实下载进度条，不访问 GitHub 或启动配置器。
-- 发布文件：根目录运行 `cmd /c release.cmd`，静态分析、构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；中文说明单独放在 `Releases/README.md`，不自动上传。`release.cmd -TestPackage` 只生成新的 `work/release-stage-*` 测试包，不覆盖既有 Release。版本统一维护在 `src/AppVersion.h`，升级时同步两个 manifest、前端 package 和 Tauri 版本。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
+- 发布文件：根目录运行 `cmd /c release.cmd`，静态分析、构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；正式版中文说明放在 `Releases/README.md`，测试版说明放在 `Releases/v版本号.md`，不自动上传。`release.cmd -TestPackage` 只生成新的 `work/release-stage-*` 测试包，不覆盖既有 Release。`src/AppVersion.h` 同时维护自动化使用的数值版本和界面显示的完整发布版本，升级时同步两个 manifest、前端 package 和 Tauri 版本。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
 - 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
 - `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。

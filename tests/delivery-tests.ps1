@@ -30,6 +30,14 @@ $launcher=Join-Path $projectRoot 'outputs/ChatGPTProxyLauncher.exe'
 Require ((Hash $setup) -eq $metadata.setupSha256 -and (Hash $launcher) -eq $metadata.launcherSha256) 'Outputs no longer match the same build'
 $setupVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($setup).FileVersion
 Require ($setupVersion -eq [Diagnostics.FileVersionInfo]::GetVersionInfo($launcher).FileVersion) 'EXE versions differ'
+$packageVersion=(Get-Content -LiteralPath (Join-Path $projectRoot 'frontend/package.json') -Raw | ConvertFrom-Json).version
+Require ($setupVersion -ceq $packageVersion) 'Release label differs from package version'
+foreach ($pair in @(@($setup,'Setup'),@($launcher,'Launcher'))) {
+    $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($pair[0])
+    $fixed='{0}.{1}.{2}.{3}' -f $info.FileMajorPart,$info.FileMinorPart,$info.FileBuildPart,$info.FilePrivatePart
+    $manifest=[xml][IO.File]::ReadAllText((Join-Path $projectRoot ('src/'+$pair[1]+'.manifest')))
+    Require ($fixed -ceq $manifest.assembly.assemblyIdentity.version -and $info.ProductVersion -ceq $packageVersion) 'Fixed or product version mismatch'
+}
 $binaryText=[Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($setup))
 foreach($marker in @('CHATGPT_SETUP_TEST_ROOT','CHATGPT_SETUP_TEST_SAVE_DELAY_MS','test harness requires an explicit root')) {
     Require (!$binaryText.Contains($marker)) "Production EXE contains test code: $marker"

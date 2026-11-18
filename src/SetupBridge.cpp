@@ -253,7 +253,7 @@ extern "C" uint32_t setup_bridge_read_state(const uint8_t* pathBytes, size_t siz
         loaded.options.codexEnv = isolated ? isolatedCodexEnv : setup::ui::ReadCodexEnvPreference();
         auto state = Json::Object();
         state[L"schemaVersion"] = Json::Number(1);
-        state[L"setupVersion"] = Json(L"" APP_VERSION_TEXT);
+        state[L"setupVersion"] = Json(L"" APP_RELEASE_VERSION);
         state[L"deployedVersion"] = Json(loaded.deployedVersion);
         state[L"deployed"] = Json(loaded.deployed);
         state[L"hasSettings"] = Json(loaded.hasSettings);

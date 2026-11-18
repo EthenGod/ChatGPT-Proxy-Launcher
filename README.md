@@ -26,7 +26,19 @@
 
 如果出现报错而没有打开配置器，可以改用方式二。
 
-当前源码默认构建新界面，需要 WebView2。下载入口发现缺少它时，会询问 **安装 WebView2（推荐）**、**使用兼容界面** 或 **取消**。兼容界面保留原来的配置功能，无需安装运行库。直接双击时，缺少 WebView2 会自动打开兼容界面；也可运行 `ChatGPTLauncherSetup.exe --compatibility` 主动使用它。独立启动器和后台命令不需要 WebView2。此改动尚未发布到在线下载；下面按新界面说明操作，旧版的选项名称和位置略有不同。
+当前源码默认构建新界面，需要 WebView2。下载入口发现缺少它时，会询问 **安装 WebView2（推荐）**、**使用兼容界面** 或 **取消**。兼容界面保留原来的配置功能，无需安装运行库。直接双击时，缺少 WebView2 会自动打开兼容界面；也可运行 `ChatGPTLauncherSetup.exe --compatibility` 主动使用它。独立启动器和后台命令不需要 WebView2。下文使用 v1.2 的界面名称。
+
+**试用测试版**
+
+上面的一行命令只下载正式版。要试用 `refactor/ui` 分支的版本，可在 PowerShell 运行下面三行。
+
+```powershell
+$branch = 'refactor/ui'
+$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
+& $setup -Channel Preview -Branch $branch
+```
+
+`-Channel Preview` 包含测试版和正式版，按发布时间选择。`-Branch` 限定为该分支历史中已有发布的版本。要固定到本次 Beta，在最后一行追加 `-Tag v1.2.0-beta.1`。这些命令需要远端分支已有新版脚本，且目标 Release 已发布。
 
 ### 方式二：手动下载并打开
 

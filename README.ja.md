@@ -28,7 +28,19 @@ Windows x64 向けの非公式 ChatGPT ランチャーです。ChatGPT 用のプ
 
 エラーが出て設定ツールが開かない場合は、方法 2 を使ってください。
 
-現在のソースは新しい UI を標準でビルドし、WebView2 を使用します。未インストールの場合、ダウンロード用スクリプトで **WebView2 をインストール（推奨）**、**互換モードを使用**、**キャンセル** を選べます。互換モードは従来の設定機能を備え、ランタイムのインストールは不要です。ダブルクリックした場合は、WebView2 がなければ互換モードで開きます。`ChatGPTLauncherSetup.exe --compatibility` でも指定できます。単体ランチャーとバックグラウンドコマンドには WebView2 は不要です。この変更はオンライン配布版にはまだ含まれていません。以下は新しい UI の手順です。旧版では項目名と位置が少し異なります。
+現在のソースは新しい UI を標準でビルドし、WebView2 を使用します。未インストールの場合、ダウンロード用スクリプトで **WebView2 をインストール（推奨）**、**互換モードを使用**、**キャンセル** を選べます。互換モードは従来の設定機能を備え、ランタイムのインストールは不要です。ダブルクリックした場合は、WebView2 がなければ互換モードで開きます。`ChatGPTLauncherSetup.exe --compatibility` でも指定できます。単体ランチャーとバックグラウンドコマンドには WebView2 は不要です。以下では v1.2 の画面に表示される項目名を使います。
+
+**ベータ版を試す**
+
+上の 1 行コマンドは正式版のみを取得します。`refactor/ui` のリリースを試すには、次の 3 行を PowerShell で実行してください。
+
+```powershell
+$branch = 'refactor/ui'
+$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
+& $setup -Channel Preview -Branch $branch
+```
+
+`-Channel Preview` は正式版とテスト版の中から、公開日時が最も新しいものを選びます。`-Branch` は、そのブランチの履歴にある公開済みのタグに絞り込みます。今回のベータ版に固定するには、最後の行に `-Tag v1.2.0-beta.1` を追加してください。更新済みスクリプトがリモートブランチにあり、対象のリリースが公開されている必要があります。
 
 ### 方法 2：手動でダウンロードして開く
 

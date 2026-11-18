@@ -28,7 +28,19 @@ Both methods open the same setup tool. **Choose one; method 1 is recommended.**
 
 If an error appears and the setup tool does not open, use method 2.
 
-The current source builds the new UI by default and requires WebView2. If it is missing, the download script offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Compatibility mode keeps the original configuration features and needs no runtime installation. Double-clicking opens compatibility mode automatically when WebView2 is missing; use `ChatGPTLauncherSetup.exe --compatibility` to select it explicitly. The standalone launcher and headless commands do not require WebView2. This change is not yet available in the online release. The steps below describe the new UI; older versions have slightly different labels and positions.
+The current source builds the new UI by default and requires WebView2. If it is missing, the download script offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Compatibility mode keeps the original configuration features and needs no runtime installation. Double-clicking opens compatibility mode automatically when WebView2 is missing; use `ChatGPTLauncherSetup.exe --compatibility` to select it explicitly. The standalone launcher and headless commands do not require WebView2. The instructions below use the v1.2 UI labels.
+
+**Try a beta**
+
+The one-line command above downloads stable releases only. To try a release from `refactor/ui`, paste these three lines into PowerShell.
+
+```powershell
+$branch = 'refactor/ui'
+$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
+& $setup -Channel Preview -Branch $branch
+```
+
+`-Channel Preview` includes stable releases and prereleases and picks the most recently published one. `-Branch` limits the selection to published tags in that branch’s history. Append `-Tag v1.2.0-beta.1` to the last line to pin this beta. The updated script must be on the remote branch and the release must be published.
 
 ### Method 2: Download and open manually
 

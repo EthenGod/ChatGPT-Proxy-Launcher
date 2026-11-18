@@ -352,7 +352,7 @@ Result Load(const Paths& paths, Loaded& loaded) {
         if (!parsed) loaded.notice = parsed.message;
         const DWORD a = GetFileAttributesW(loaded.managedTarget.c_str());
         loaded.deployed = a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
-        if (loaded.deployed) loaded.deployedVersion = automation::ReadAppVersion(loaded.managedTarget);
+        if (loaded.deployed) loaded.deployedVersion = automation::ReadAppVersion(loaded.managedTarget, true);
     } else {
         // These are form defaults, not a statement that Windows startup is already configured.
         loaded.options.startup = true;

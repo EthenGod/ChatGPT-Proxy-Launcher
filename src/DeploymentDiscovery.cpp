@@ -34,7 +34,7 @@ void ValidateDiscovery(const Json& record, const std::wstring& path, const std::
     }
 }
 }
-std::wstring ReadAppVersion(const std::wstring& path) {
+std::wstring ReadAppVersion(const std::wstring& path, bool includeReleaseLabel) {
     DWORD ignored = 0;
     const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
     if (!size || size > 1024 * 1024) return {};
@@ -47,6 +47,16 @@ std::wstring ReadAppVersion(const std::wstring& path) {
     auto version = std::to_wstring(HIWORD(info.dwFileVersionMS)) + L"." + std::to_wstring(LOWORD(info.dwFileVersionMS))
         + L"." + std::to_wstring(HIWORD(info.dwFileVersionLS));
     if (LOWORD(info.dwFileVersionLS)) version += L"." + std::to_wstring(LOWORD(info.dwFileVersionLS));
+    if (includeReleaseLabel && VerQueryValueW(data.data(), L"\\StringFileInfo\\040904B0\\ProductVersion", &value, &length)
+        && value && length > version.size() + 2 && length <= 128) {
+        const auto* text = static_cast<const wchar_t*>(value);
+        if (text[length - 1] == L'\0') {
+            const std::wstring label(text, length - 1);
+            if (label.compare(0, version.size() + 1, version + L"-") == 0 &&
+                label.find_first_not_of(L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.-", version.size() + 1) == std::wstring::npos)
+                return label;
+        }
+    }
     return version;
 }
 Json CapabilityList(bool launcherOnly) {

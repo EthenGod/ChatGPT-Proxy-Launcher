@@ -442,7 +442,7 @@ static int LanguageTests(App& app, PCWSTR folder) {
         REQUIRE(storedLanguage == l10n::At(i).tag && !l10n::FollowsSystem() && LanguageMenuSelected(i + 1));
         REQUIRE(app.dirty && app.editRevision == revision && app.Text(Preview) == arguments && app.Text(Directory) == directory);
         REQUIRE(app.Text(Startup) == l10n::Text("setup.option.startup") && app.Text(LanguageButton) == l10n::Current().name);
-        REQUIRE(app.Text(SetupVersion) == l10n::Format("setup.compatibility.version", {{"version", L"" APP_VERSION_TEXT}}));
+        REQUIRE(app.Text(SetupVersion) == l10n::Format("setup.compatibility.version", {{"version", L"" APP_RELEASE_VERSION}}));
         wchar_t tipText[4096]{}; TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = app.body;
         tip.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); tip.lpszText = tipText;
         SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(tipText), reinterpret_cast<LPARAM>(&tip));
@@ -612,7 +612,7 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(EqualRect(&repaint, &paintBufferBounds));
     REQUIRE(PartialSurfaceMatches(app, app.window) && PartialSurfaceMatches(app, app.body));
     REQUIRE(app.preferredDark && (app.contrast || app.dark));
-    REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_VERSION_TEXT);
+    REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_RELEASE_VERSION);
     REQUIRE(setup::IsCompatibilityCommand(L"--compatibility"));
     REQUIRE(setup::IsCompatibilityCommand(L"\"--compatibility\" \t"));
     for (const auto invalid : {L"", L"--compatibility --headless info", L"--headless info --compatibility",

@@ -70,7 +70,7 @@ $sourceNames = @(
     'src/SetupResources.h', 'src/SetupResources.rc', 'src/StartupApps.cpp', 'src/StartupApps.h',
     'src/StartupIntegration.cpp', 'src/StartupIntegration.h', 'src/TaskbarShortcut.cpp', 'src/TaskbarShortcut.h',
     'tests/analyze.cmd', 'tests/codex-close-tests.cpp', 'tests/companion-tests.cpp', 'tests/download-tests.ps1',
-    'tests/automation-tests.cpp', 'tests/chain-tests.cpp', 'tests/headless-download-tests.ps1', 'tests/protocol-example-tests.ps1',
+    'tests/automation-tests.cpp', 'tests/chain-tests.cpp', 'tests/headless-download-tests.ps1', 'tests/protocol-example-tests.ps1', 'tests/release-channel-tests.ps1',
     'tests/contract-tests.cpp', 'tests/localization-tests.cpp', 'tests/localization-tests.ps1', 'tests/documentation-tests.ps1',
     'tests/memory-tests.cpp', 'tests/MemoryFault.h', 'tests/file-tests.cpp',
     'tests/launcher-tests.cpp', 'tests/preview-download.ps1', 'tests/proxy-tests.cpp',
@@ -122,8 +122,8 @@ try {
     [IO.Directory]::CreateDirectory($stage) | Out-Null
     $setupPath = Join-Path $projectRoot 'outputs\ChatGPTLauncherSetup.exe'
     $releaseVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($setupPath).FileVersion
-    if (!$releaseVersion -or $releaseVersion -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-        throw 'The built setup executable must have a numeric release version.'
+    if ($releaseVersion -cnotmatch '\A[0-9]+(?:\.[0-9]+){2,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z') {
+        throw 'The built setup executable has an invalid release version.'
     }
     $releaseDir = Join-Path (Join-Path $projectRoot 'Releases') ('v' + $releaseVersion)
     $binaryNames = @('ChatGPTLauncherSetup.exe', 'ChatGPTProxyLauncher.exe')
@@ -155,6 +155,7 @@ try {
         [IO.File]::Copy($source, $destination, $true)
         if ((Get-Sha256 $source) -ne (Get-Sha256 $destination)) { throw ('Release copy mismatch: ' + $name) }
     }
-    [IO.File]::Copy((Join-Path $projectRoot 'docs\release-upload.md'), (Join-Path $projectRoot 'Releases\README.md'), $true)
+    $notes = if ($releaseVersion.Contains('-')) { "Releases\v$releaseVersion.md" } else { 'Releases\README.md' }
+    [IO.File]::Copy((Join-Path $projectRoot 'docs\release-upload.md'), (Join-Path $projectRoot $notes), $true)
     Write-Host ('Release files are ready in Releases\v' + $releaseVersion + '. Nothing was uploaded.')
 } finally { Pop-Location }

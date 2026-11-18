@@ -422,7 +422,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         Loaded installed;
         REQUIRE(Load(versionPaths, installed) && !installed.deployed && installed.deployedVersion.empty());
         REQUIRE(WriteLink(versionPaths.settingsLink, {file, L"", base, Marker}));
-        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion == current);
+        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion == L"" APP_RELEASE_VERSION);
         // Give the isolated EXE a different numeric version, leaving its text version unchanged.
         HMODULE image = LoadLibraryExW(file.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
         REQUIRE(image);
@@ -449,7 +449,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         Options fresh; fresh.directory = base;
         std::wstring savedTarget;
         REQUIRE(Apply(versionPaths, fresh, payload, savedTarget));
-        REQUIRE(Load(versionPaths, installed) && installed.deployedVersion == current);
+        REQUIRE(Load(versionPaths, installed) && installed.deployedVersion == L"" APP_RELEASE_VERSION);
         REQUIRE(WriteAtomic(file, {1, 2, 3, 4}));
         REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion.empty());
         REQUIRE(DeleteFileW(file.c_str()));

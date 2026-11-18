@@ -6,7 +6,8 @@ $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
 $suffixes = @('', '.en', '.ja')
 $localeTags = @('zh-CN', 'en-US', 'ja-JP')
 $groups = @('README', 'docs/translating', 'docs/taskbar-repair', 'docs/release-upload', 'assets/README')
-$repository = 'https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/master/'
+$releaseTag = 'v' + (ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $ProjectRoot 'frontend/package.json')))).version
+$repository = "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/$releaseTag/"
 $releaseScript = [IO.File]::ReadAllText((Join-Path $ProjectRoot 'release.ps1'))
 $count = 0
 foreach ($group in $groups) {
@@ -50,7 +51,8 @@ foreach ($group in $groups) {
         }
         if ($group -eq 'docs/release-upload') {
             $downloads = @([regex]::Matches($text, 'https://github.com/[^)\s]+/releases/download/[^)\s]+') | ForEach-Object Value) -join "`n"
-            if (!$downloads) { throw "Missing direct download: $name" }
+            $expectedDownload = "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/$releaseTag/ChatGPTLauncherSetup.exe"
+            if (!$downloads -or @($downloads -split '\n' | Where-Object { $_ -cne $expectedDownload }).Count) { throw "Incorrect release download: $name" }
             if ($suffix -eq '') { $baseDownloads = $downloads }
             elseif ($downloads -cne $baseDownloads) { throw "Release download versions differ: $name" }
         }

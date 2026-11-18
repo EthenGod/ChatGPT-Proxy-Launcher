@@ -3,7 +3,7 @@
 #include "AutomationIO.h"
 
 namespace automation {
-std::wstring ReadAppVersion(const std::wstring& executable);
+std::wstring ReadAppVersion(const std::wstring& executable, bool includeReleaseLabel = false);
 Json CapabilityList(bool launcherOnly = false);
 Json MakeDiscoveryRecord(const std::wstring& executable, const std::wstring& version);
 // Read metadata only; never execute the target or read private launch arguments.

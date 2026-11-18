@@ -165,7 +165,7 @@ $cancelScript = Join-Path $testRoot 'cancel-entry.ps1'
     $hash = (Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash
     function Get-ItemPropertyValue { return 'en-US' }
     function Read-Host { return '0' }
-    function Invoke-RestMethod { return @{tag_name='v1.1.3'} }
+    function Invoke-RestMethod { return @{tag_name='v1.1.3'; draft=$false; prerelease=$false} }
     function Invoke-WebRequest($Uri, $OutFile, $TimeoutSec, [switch]$UseBasicParsing) {
         $cancelObservation.folder = Split-Path $OutFile
         if ($Uri.EndsWith('/SHA256SUMS.txt')) { [IO.File]::WriteAllText($OutFile, "$hash  ChatGPTLauncherSetup.exe") }
