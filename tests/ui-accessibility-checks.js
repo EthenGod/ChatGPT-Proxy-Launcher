@@ -59,16 +59,27 @@ async page => {
     if (await dismiss.isVisible()) await dismiss.click();
     const port = page.getByRole('textbox', { name: '端口', exact: true });
     await port.fill('7897');
+    await port.blur();
+    await port.hover({ position: { x: 8, y: 12 } }); await settle();
+    const portBorder = () => port.evaluate(element => getComputedStyle(element).borderTopColor);
+    const fieldHover = await portBorder();
+    await page.locator('.port-field .input-action').hover(); await settle();
+    if (await portBorder() !== fieldHover) throw Error('Port border changed over its embedded button');
     const extra = page.getByRole('textbox', { name: '额外参数', exact: true });
     const literal = '"" "中文 参数" "quote\\"end" ' + Array(60).fill('--sample="长文本 abcdefghijklmnopqrstuvwxyz"').join(' ');
     await extra.fill(literal); await valid();
     const normal = await geometry();
     const nativeErrors = [];
-    const details = page.locator('.preview-heading button');
+    const details = page.locator('.preview-details:not([inert]) button');
+    const previewOffset = () => page.locator('.preview-heading').evaluate(heading =>
+      heading.nextElementSibling.getBoundingClientRect().top - heading.getBoundingClientRect().top);
+    const restingOffset = await previewOffset();
     for (const scenario of ['port', 'directory']) {
       if (scenario === 'port') await port.fill('70000');
       else await directoryInput.fill(directory + '\\' + Array(12).fill('长路径abcdefghijklmnopqrstuvwxyz').join('\\'));
-      await details.waitFor({ state: 'visible' }); await tabTo(details); await key('Enter');
+      await details.waitFor({ state: 'visible' });
+      if (Math.abs(await previewOffset() - restingOffset) > 1) throw Error('Opening details moved the argument preview');
+      await tabTo(details); await key('Enter');
       const layout = await modalKeyboard();
       const code = await page.locator('.error-heading code').innerText();
       if (!new RegExp('(?:^|\\s)' + (scenario === 'port' ? '87' : '206') + '$').test(code)) throw Error('Incorrect native error: ' + code);
@@ -79,6 +90,7 @@ async page => {
       nativeErrors.push({ scenario, code, layout });
       if (scenario === 'port') await port.fill('7897'); else await directoryInput.fill(directory);
       await valid();
+      if (await details.count() || Math.abs(await previewOffset() - restingOffset) > 1) throw Error('Dismissed input error left an active action or moved the preview');
     }
     const modes = [
       { name: 'reduced', reducedMotion: 'reduce', forcedColors: 'none', contrast: 'no-preference', colorScheme: 'light' },

@@ -95,7 +95,11 @@ export function Modal({ open, title, description, children, actions, variant, on
         popup.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], .dialog-actions button:not([disabled])') ?? false)}>
         <Dialog.Title className="dialog-title">{title}</Dialog.Title>
         <ScrollBox className="dialog-scroll" contentClassName="dialog-content" label={title}>
-          {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
+          {description && (variant === 'help'
+            ? <Dialog.Description render={<div />} className="dialog-description help-paragraphs">
+              {description.split(/\r\n?|\n/).map(line => line.trim()).filter(Boolean).map((line, index) => <p key={index}>{line}</p>)}
+            </Dialog.Description>
+            : <Dialog.Description className="dialog-description">{description}</Dialog.Description>)}
           {children && <div className="dialog-body">{children}</div>}
         </ScrollBox>
         <div className="dialog-actions">{actions}</div>
