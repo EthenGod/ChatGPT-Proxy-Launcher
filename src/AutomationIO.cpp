@@ -120,9 +120,8 @@ void ResultFile::Reserve(const std::wstring& input) {
     if (!file) throw IoError(GetLastError());
 }
 void ResultFile::Write(const Json& result) { WriteBytes(file.value, WriteJson(result)); }
-DWORD UserLock::Acquire(const std::wstring& identity, DWORD waitMs) {
-    if (owned) return ERROR_SUCCESS;
-    mutex.Reset();
+DWORD OpenUserMutex(const std::wstring& suffix, HANDLE& mutex) {
+    mutex = nullptr;
     Handle token;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token.value)) return GetLastError();
     DWORD size = 0; GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
@@ -133,17 +132,24 @@ DWORD UserLock::Acquire(const std::wstring& identity, DWORD waitMs) {
     if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(storage.data())->User.Sid, &sid)) return GetLastError();
     native::LocalPtr<wchar_t> ownedSid(sid);
     std::wstring user(sid);
-    // Stable per-user/per-root identity across sessions, independent of GUI lifetime.
-    unsigned long long hash = 14695981039346656037ull;
-    for (auto c : identity) { hash ^= static_cast<unsigned>(towupper(c)); hash *= 1099511628211ull; }
-    const auto name = L"Global\\Community.ChatGPTLauncher." + user + L"." + std::to_wstring(hash);
+    const auto name = L"Global\\Community.ChatGPTLauncher." + user + L"." + suffix;
     const auto dacl = L"D:P(A;;GA;;;SY)(A;;GA;;;" + user + L")";
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(dacl.c_str(), SDDL_REVISION_1, &sd, nullptr)) return GetLastError();
+    native::LocalPtr<void> ownedDescriptor(sd);
     SECURITY_ATTRIBUTES security{sizeof(security), sd, FALSE};
-    mutex.value = CreateMutexW(&security, FALSE, name.c_str());
-    const DWORD creationError = GetLastError(); LocalFree(sd);
-    if (!mutex) return creationError;
+    mutex = CreateMutexW(&security, FALSE, name.c_str());
+    const DWORD error = GetLastError();
+    return mutex && error != ERROR_ALREADY_EXISTS ? ERROR_SUCCESS : error;
+}
+DWORD UserLock::Acquire(const std::wstring& identity, DWORD waitMs) {
+    if (owned) return ERROR_SUCCESS;
+    mutex.Reset();
+    // Preserve the deployed writer lock's per-user/per-root name.
+    unsigned long long hash = 14695981039346656037ull;
+    for (auto c : identity) { hash ^= static_cast<unsigned>(towupper(c)); hash *= 1099511628211ull; }
+    const DWORD error = OpenUserMutex(std::to_wstring(hash), mutex.value);
+    if (!mutex) return error;
     const DWORD result = WaitForSingleObject(mutex.value, waitMs);
     if (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED) { owned = true; return ERROR_SUCCESS; }
     return result == WAIT_TIMEOUT ? ERROR_BUSY : GetLastError();

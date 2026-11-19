@@ -7,6 +7,7 @@
 #include "DeploymentDiscovery.h"
 #include <shellapi.h>
 #include <objbase.h>
+#include <cstring>
 #include <set>
 
 namespace setup {
@@ -14,11 +15,28 @@ using automation::Json;
 using automation::Invalid;
 namespace rules = automation::contract;
 
+namespace {
+bool SameRootDirectory(const std::wstring& root, const std::wstring& candidate) {
+    constexpr DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+    constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    automation::Handle first(CreateFileW(root.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, flags, nullptr));
+    automation::Handle second(CreateFileW(candidate.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, flags, nullptr));
+    FILE_ID_INFO a{}, b{};
+    return first && second
+        && GetFileInformationByHandleEx(first.value, FileIdInfo, &a, sizeof(a))
+        && GetFileInformationByHandleEx(second.value, FileIdInfo, &b, sizeof(b))
+        && a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof(a.FileId)) == 0;
+}
+}
 void CheckIsolatedPath(const Paths& paths, const std::wstring& path) {
-    const auto prefix = Join(automation::ParentPath(paths.defaultDirectory), L"");
+    const auto root = automation::ParentPath(paths.defaultDirectory);
+    const auto prefix = Join(root, L"");
     const auto full = automation::FullPath(path);
-    if (full.size() <= prefix.size() || CompareStringOrdinal(full.data(), static_cast<int>(prefix.size()),
-        prefix.data(), static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL) throw Invalid("outside-test-root");
+    if (full.size() <= prefix.size() || full[prefix.size() - 1] != L'\\') throw Invalid("outside-test-root");
+    if (full.compare(0, prefix.size(), prefix) != 0) {
+        const auto candidate = full.substr(0, root.size());
+        if (!automation::SamePath(root, candidate) || !SameRootDirectory(root, candidate)) throw Invalid("outside-test-root");
+    }
     automation::CheckPlainPath(full);
 }
 namespace {

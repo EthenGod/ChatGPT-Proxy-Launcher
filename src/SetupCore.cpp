@@ -250,9 +250,12 @@ Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder) {
         return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.paths.redirectedstartup"));
     return {};
 }
-Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
+std::wstring CompanionShortcutPath(const std::wstring& folder, const std::wstring& program) {
     const std::wstring name = program.substr(program.find_last_of(L'\\') + 1);
-    auto targetKind = companions::FileKind(name.c_str());
+    return Join(folder, name.substr(0, name.find_last_of(L'.')) + L".lnk");
+}
+Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
+    auto targetKind = companions::FileKind(program.c_str());
     const bool importing = targetKind == companions::Kind::Link;
     if (!companions::LocalPath(program.c_str()) || (!importing && !companions::ValidTarget(program.c_str(), L"", L"")))
         return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.program.unsupported"));
@@ -281,7 +284,7 @@ Result AddCompanionProgram(const Paths& paths, const std::wstring& program) {
     Result result = EnsureCompanionFolder(paths, folder);
     if (!result) return result;
     if (Same(Parent(program), folder)) return {}; // Already in the dispatch list.
-    const std::wstring destination = Join(folder, name.substr(0, name.find_last_of(L'.')) + L".lnk");
+    const std::wstring destination = CompanionShortcutPath(folder, program);
     if (Exists(destination)) {
         if (importing) {
             Snapshot a, b;

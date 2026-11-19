@@ -53,6 +53,8 @@ public static class SetupWindowClose {
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")]
     public static extern bool ShowWindowAsync(IntPtr window, int command);
     public static bool HasClassIcons(IntPtr window) {
         return GetClassLongPtrW(window, -14) != IntPtr.Zero && GetClassLongPtrW(window, -34) != IntPtr.Zero;
@@ -160,6 +162,41 @@ $requestPath = Join-Path $cliRoot 'outside-request.json'
 $rejected = Compare-Cli $cliRoot ('--headless deploy --request ' + (Quote-Argument $requestPath)) 20
 Require ($rejected.code -eq 'outside-test-root' -and !$rejected.committed) 'Isolated deployment accepted a sibling directory'
 Require (![IO.Directory]::Exists($sibling)) 'Isolated deployment wrote outside its root'
+$rootAlias = Join-Path $testRoot 'CLI SPACE 中文'
+if ([IO.Directory]::Exists($rootAlias)) {
+    $null = Compare-Cli $cliRoot ('--headless plan --directory ' + (Quote-Argument $rootAlias)) 0
+}
+$caseParent = Join-Path $testRoot 'case-sensitive'
+$null = [IO.Directory]::CreateDirectory($caseParent)
+# Only change the newly created, empty fixture directory. Verify actual name resolution.
+$null = & fsutil.exe file setCaseSensitiveInfo $caseParent enable
+$upper = Join-Path $caseParent 'Root'
+$lower = Join-Path $caseParent 'root'
+$null = [IO.Directory]::CreateDirectory($upper)
+$caseSensitive = ![IO.Directory]::Exists($lower)
+if ($caseSensitive) {
+    $null = [IO.Directory]::CreateDirectory($lower)
+    $casePlan = Compare-Cli $upper ('--headless plan --directory ' + (Quote-Argument $lower)) 20
+    Require ($casePlan.code -eq 'outside-test-root' -and !$casePlan.committed) 'Plan accepted a different case-sensitive root'
+    $otherResult = Join-Path $lower 'result.json'
+    foreach ($exe in @($native, $desktop)) {
+        foreach ($suffix in @('', ' --startup invalid')) {
+            $run = Run-Cli $exe $upper ('--headless plan --result ' + (Quote-Argument $otherResult) + $suffix)
+            Require ($run.exitCode -eq 70 -and ![IO.File]::Exists($otherResult)) 'A result reached a case-only sibling'
+        }
+    }
+    Write-Host 'PASS case-sensitive root: deployment plan, normal and parse-error result paths'
+} else { Write-Host 'SKIP case-only siblings: case sensitivity could not be enabled on the empty fixture' }
+
+$importRoot = Join-Path $testRoot 'import'
+$importTarget = Join-Path $testRoot 'junction-target'
+$null = [IO.Directory]::CreateDirectory($importRoot)
+$null = [IO.Directory]::CreateDirectory($importTarget)
+$null = New-Item -ItemType Junction -Path (Join-Path $importRoot 'state') -Target $importTarget
+[IO.File]::WriteAllText((Join-Path $importRoot 'sample.exe'), '')
+& (Join-Path $ProjectRoot 'work\setup-bridge-actions-tests.exe') '--check-redirected-import' $importRoot
+Require ($LASTEXITCODE -eq 0 -and [IO.Directory]::GetFileSystemEntries($importTarget).Count -eq 0) 'Import touched a redirected destination'
+Write-Host 'PASS companion import: redirected parent rejected before creating the shortcut folder'
 $null = Compare-Cli $cliRoot '--headless invalid' 20
 $null = Compare-Cli $cliRoot '--headless plan --startup invalid' 20
 $null = Compare-Cli $cliRoot ('--headless plan --extra-arg ' + (Quote-Argument ('x' * 16000))) 20
@@ -213,23 +250,48 @@ function Wait-Visible([Diagnostics.Process]$Process) {
         if ($Process.MainWindowHandle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
     } while ($Process.MainWindowHandle -eq [IntPtr]::Zero)
 }
-function Check-Duplicate([string]$Root, [string]$Tail, [IntPtr]$FirstWindow) {
-    $null = [SetupWindowClose]::ShowWindowAsync($FirstWindow, 6)
+function Test-Restored([IntPtr]$Window) {
+    return ([SetupWindowClose]::IsWindowVisible($Window) -and ![SetupWindowClose]::IsIconic($Window))
+}
+function Check-Duplicate([string]$Root, [string]$Tail, [IntPtr]$FirstWindow, [switch]$Hide) {
+    $command = if ($Hide) { 0 } else { 6 }
+    $null = [SetupWindowClose]::ShowWindowAsync($FirstWindow, $command)
     $deadline = [DateTime]::UtcNow.AddSeconds(3)
-    while (![SetupWindowClose]::IsIconic($FirstWindow) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    Require ([SetupWindowClose]::IsIconic($FirstWindow)) 'Could not minimize the isolated test window'
+    while ((Test-Restored $FirstWindow) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+    if ($Hide) { Require (![SetupWindowClose]::IsWindowVisible($FirstWindow)) 'Could not hide the isolated window' }
+    else { Require ([SetupWindowClose]::IsIconic($FirstWindow)) 'Could not minimize the isolated window' }
     $duplicate = Start-Isolated $desktop $Root $Tail
     try {
         Require ($duplicate.WaitForExit(10000) -and $duplicate.ExitCode -eq 0) 'A second GUI did not defer to the existing window'
         $deadline = [DateTime]::UtcNow.AddSeconds(3)
-        while ([SetupWindowClose]::IsIconic($FirstWindow) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-        Require (![SetupWindowClose]::IsIconic($FirstWindow)) 'Duplicate launch did not restore the original window'
+        while (!(Test-Restored $FirstWindow) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+        Require (Test-Restored $FirstWindow) 'Duplicate launch did not restore the original window'
     } finally {
         if (!$duplicate.HasExited) { $null = $duplicate.CloseMainWindow() }
         $duplicate.Dispose()
     }
 }
 if (!$SkipGui) {
+    if ($caseSensitive) {
+        $windows = @()
+        try {
+            foreach ($caseRoot in @($upper, $lower)) {
+                $process = Start-Isolated $desktop $caseRoot '--compatibility' $false $true
+                $windows += $process
+                Wait-Visible $process
+            }
+            foreach ($process in $windows) {
+                [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
+                Require ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'Independent fixture window did not close normally'
+            }
+        } finally {
+            foreach ($process in $windows) {
+                if (!$process.HasExited) { $null = $process.CloseMainWindow() }
+                $process.Dispose()
+            }
+        }
+        Write-Host 'PASS case-only siblings have independent setup windows'
+    }
     $root = Join-Path $testRoot 'no-page-script'
     $null = [IO.Directory]::CreateDirectory($root)
     $process = Start-Isolated $desktop $root '' $false $true $true
@@ -253,7 +315,12 @@ if (!$SkipGui) {
             Wait-Visible $process
             $readyMs = $timer.Elapsed.TotalMilliseconds
             Require ([SetupWindowClose]::HasClassIcons($process.MainWindowHandle)) 'Compatibility window is missing its large or small icon'
-            if ($compatibility.Count -eq 0) { Check-Duplicate $root '' $process.MainWindowHandle }
+            if ($compatibility.Count -eq 0) {
+                Check-Duplicate $root '' $process.MainWindowHandle
+                $alias = Join-Path $testRoot 'COMPATIBILITY-0'
+                if (![IO.Directory]::Exists($alias)) { $alias = $root }
+                Check-Duplicate $alias '' $process.MainWindowHandle -Hide
+            }
             Start-Sleep -Seconds 2
             Require ([IO.File]::Exists((Join-Path $root 'compatibility-entered.json'))) 'Native compatibility entry was not used'
             Require (![IO.File]::Exists((Join-Path $root 'gui-entered.json'))) 'Compatibility constructed Tauri state'
@@ -288,7 +355,7 @@ if (!$SkipGui) {
             if ($cycle -eq 1) {
                 $process.Refresh()
                 Check-Duplicate $root '--compatibility' $process.MainWindowHandle
-                Check-Duplicate $root '' $process.MainWindowHandle
+                Check-Duplicate $root '' $process.MainWindowHandle -Hide
                 $output = Join-Path $root 'while-gui-open.json'
                 $run = Run-Cli $desktop $root ('--headless info --result ' + (Quote-Argument $output))
                 Require ($run.exitCode -eq 0 -and [IO.File]::Exists($output)) 'Open GUI intercepted a headless command'

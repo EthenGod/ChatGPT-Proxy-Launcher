@@ -108,6 +108,7 @@
     "ui.scenario.warnings": "保存后续操作",
     "setup.compatibility.version": "兼容模式 v{version}",
     "setup.error.compatibility": "无法打开兼容界面。请关闭已打开的配置器后重试。",
+    "setup.instance.othersession": "配置器已在此账户的另一个 Windows 会话中打开。请回到那个会话继续设置，或关闭那里的配置器后再试。",
     "setup.compatibility.window": "ChatGPT 启动器设置（兼容模式）",
     "setup.state.initial": "尚未部署，仅对当前 Windows 用户生效",
     "setup.section.startup": "启动设置",

@@ -62,7 +62,11 @@ unsafe extern "C" {
         paths_length: usize,
     ) -> i32;
     fn setup_bridge_show_bootstrap_error(compatibility_failed: u32);
-    fn setup_bridge_acquire_gui(window_class: *const u16, instance: *mut RawHandle) -> u32;
+    fn setup_bridge_acquire_gui(
+        window_class: *const u16,
+        session: *mut RawHandle,
+        user: *mut RawHandle,
+    ) -> u32;
     fn setup_bridge_compatibility(paths: *const u8, length: usize, window_class: *const u16)
         -> i32;
 }
@@ -79,11 +83,17 @@ pub fn headless(tail: &[u16], paths: Option<&[u8]>) -> i32 {
     let (paths, length) = bytes(paths);
     unsafe { setup_bridge_headless(tail.as_ptr(), tail.len(), paths, length) }
 }
-pub fn acquire_gui(window_class: &str) -> Result<Option<OwnedHandle>, u32> {
+pub fn acquire_gui(window_class: &str) -> Result<Option<[OwnedHandle; 2]>, u32> {
     let class: Vec<_> = window_class.encode_utf16().chain([0]).collect();
-    let mut handle = ptr::null_mut();
-    match unsafe { setup_bridge_acquire_gui(class.as_ptr(), &mut handle) } {
-        0 => Ok(Some(unsafe { OwnedHandle::from_raw_handle(handle) })),
+    let mut session = ptr::null_mut();
+    let mut user = ptr::null_mut();
+    match unsafe { setup_bridge_acquire_gui(class.as_ptr(), &mut session, &mut user) } {
+        0 => Ok(Some(unsafe {
+            [
+                OwnedHandle::from_raw_handle(session),
+                OwnedHandle::from_raw_handle(user),
+            ]
+        })),
         ERROR_ALREADY_EXISTS => Ok(None),
         error => Err(error),
     }

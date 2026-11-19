@@ -108,6 +108,7 @@
     "ui.scenario.warnings": "保存後の操作",
     "setup.compatibility.version": "互換モード v{version}",
     "setup.error.compatibility": "互換モードを開けませんでした。開いている設定ウィンドウを閉じて再試行してください。",
+    "setup.instance.othersession": "このアカウントの別の Windows セッションで設定画面が開いています。そのセッションで設定を続けるか、そちらの設定画面を閉じてからもう一度お試しください。",
     "setup.compatibility.window": "ChatGPT ランチャー設定（互換モード）",
     "setup.state.initial": "未配置です。この Windows ユーザーにのみ適用されます。",
     "setup.section.startup": "起動設定",

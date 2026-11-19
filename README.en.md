@@ -71,6 +71,8 @@ Older shortcuts may still be named **ChatGPT Proxy Launcher**. Saving with the u
 
 **To change settings later:** run method 1 again, or open the downloaded setup tool from method 2. Make your changes and click **Save changes**.
 
+If setup is already open, running it again shows the existing window. If you opened it in another Windows session under the same account, switch back to that session to continue.
+
 **If Codex .env configuration is on:** save your work in ChatGPT and Codex first. After saving, the setup tool tries to quit the entire ChatGPT desktop app and waits up to 10 seconds. Follow the message at the bottom to reopen it. If the tool cannot confirm that ChatGPT has fully quit, close it completely yourself first. The tool updates `all_proxy`, `ALL_PROXY`, `HTTP_PROXY`, and `HTTPS_PROXY` in `%USERPROFILE%\.codex\.env`, adds missing variables, and preserves other content. This configuration is independent of launcher arguments and does not affect Chat. Turning the option off stops future updates; it does not remove existing entries. Save again after changing your proxy port. This may help with Codex reconnecting, but does not guarantee connectivity.
 
 ## Usage

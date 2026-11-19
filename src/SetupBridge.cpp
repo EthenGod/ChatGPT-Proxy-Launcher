@@ -361,13 +361,17 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             } else Require(setup::ui::ChoosePath(reinterpret_cast<HWND>(owner), program, initial, selected));
             if (isolated && !selected.empty()) setup::CheckIsolatedPath(paths, selected);
             if (program && !selected.empty()) {
-                // Complete the reply allocation before the immediately effective write.
                 response[L"entry"] = Program(selected);
                 response[L"path"] = Json(selected);
-                Deliver(response, *output);
                 automation::UserLock operation;
                 const DWORD locked = operation.Acquire(paths.settingsLink);
-                if (locked) { setup_bridge_free(output); throw setup::Result{locked, l10n::Text("error.busy")}; }
+                if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
+                if (isolated) {
+                    const auto folder = setup::Join(paths.defaultDirectory, companions::Folder);
+                    setup::CheckIsolatedPath(paths, setup::CompanionShortcutPath(folder, selected));
+                }
+                // Complete the reply allocation before the immediately effective write.
+                Deliver(response, *output);
                 try { Require(setup::AddCompanionProgram(paths, selected)); }
                 catch (...) { setup_bridge_free(output); throw; }
                 *commit = 1;
@@ -440,9 +444,9 @@ extern "C" int32_t setup_bridge_headless(const uint16_t* tail, size_t tailLength
     } catch (...) { return 50; }
 }
 
-extern "C" uint32_t setup_bridge_acquire_gui(const uint16_t* windowClass, void** instance) noexcept {
-    if (!windowClass || !*windowClass || !instance) return ERROR_INVALID_PARAMETER;
-    return setup::AcquireGuiInstance(reinterpret_cast<PCWSTR>(windowClass), *instance);
+extern "C" uint32_t setup_bridge_acquire_gui(const uint16_t* windowClass, void** session, void** user) noexcept {
+    if (!windowClass || !*windowClass || !session || !user || session == user) return ERROR_INVALID_PARAMETER;
+    return setup::AcquireGuiInstance(reinterpret_cast<PCWSTR>(windowClass), *session, *user);
 }
 
 extern "C" int32_t setup_bridge_compatibility(const uint8_t* pathBytes, size_t size, const uint16_t* windowClass) noexcept {

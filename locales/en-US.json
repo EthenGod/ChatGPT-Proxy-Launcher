@@ -108,6 +108,7 @@
     "ui.scenario.warnings": "Post-save actions",
     "setup.compatibility.version": "Compatibility mode v{version}",
     "setup.error.compatibility": "Could not open compatibility mode. Close any open setup windows and try again.",
+    "setup.instance.othersession": "Setup is open in another Windows session for this account. Continue there, or close that window and try again.",
     "setup.compatibility.window": "ChatGPT Launcher Setup (Compatibility mode)",
     "setup.state.initial": "Not deployed. Changes apply only to this Windows user.",
     "setup.section.startup": "Startup",

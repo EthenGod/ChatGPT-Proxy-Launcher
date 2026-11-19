@@ -37,8 +37,8 @@ uint32_t setup_bridge_action(uint32_t action, const uint8_t* request, size_t req
 int32_t setup_bridge_headless(const uint16_t* tail, size_t tailLength,
     const uint8_t* paths, size_t pathsLength) SETUP_NOEXCEPT;
 // The trusted host supplies the same NUL-terminated class name to both GUI modes.
-// On success the caller owns the returned Windows handle. A duplicate opens no window.
-uint32_t setup_bridge_acquire_gui(const uint16_t* windowClass, void** instance) SETUP_NOEXCEPT;
+// On success the caller owns both handles. A duplicate opens no editor.
+uint32_t setup_bridge_acquire_gui(const uint16_t* windowClass, void** session, void** user) SETUP_NOEXCEPT;
 int32_t setup_bridge_compatibility(const uint8_t* paths, size_t length, const uint16_t* windowClass) SETUP_NOEXCEPT;
 // Bootstrap errors must also work without WebView2 or an initialized Tauri app.
 void setup_bridge_show_bootstrap_error(uint32_t compatibilityFailed) SETUP_NOEXCEPT;

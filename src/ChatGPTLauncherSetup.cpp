@@ -1493,19 +1493,34 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 } // namespace
 
-DWORD setup::AcquireGuiInstance(PCWSTR windowClass, HANDLE& instance) noexcept try {
+DWORD setup::AcquireGuiInstance(PCWSTR windowClass, HANDLE& session, HANDLE& user) noexcept try {
+    session = user = nullptr;
     const auto name = std::wstring(L"Local\\Community.") + windowClass + L".v1";
-    instance = CreateMutexW(nullptr, FALSE, name.c_str());
+    automation::Handle local(CreateMutexW(nullptr, FALSE, name.c_str()));
     const DWORD status = GetLastError();
-    if (!instance) return status;
-    if (status != ERROR_ALREADY_EXISTS) return ERROR_SUCCESS;
-    CloseHandle(instance);
-    instance = nullptr;
-    if (const HWND existing = FindWindowW(windowClass, nullptr)) {
-        if (IsIconic(existing)) ShowWindowAsync(existing, SW_RESTORE);
-        SetForegroundWindow(existing);
+    if (!local) return status;
+    if (status == ERROR_ALREADY_EXISTS) {
+        if (const HWND existing = FindWindowW(windowClass, nullptr)) {
+            if (IsIconic(existing)) ShowWindowAsync(existing, SW_RESTORE);
+            else if (!IsWindowVisible(existing)) ShowWindowAsync(existing, SW_SHOW);
+            SetForegroundWindow(existing);
+        }
+        return ERROR_ALREADY_EXISTS;
     }
-    return ERROR_ALREADY_EXISTS;
+    automation::Handle global;
+    const DWORD error = automation::OpenUserMutex(std::wstring(L"Gui.") + windowClass, global.value);
+    if (error == ERROR_ALREADY_EXISTS) {
+        // A notification must not prolong either lock after the active editor exits.
+        global.Reset();
+        local.Reset();
+        MessageBoxW(nullptr, l10n::Text("setup.instance.othersession"), l10n::Text("setup.window"), MB_OK | MB_ICONINFORMATION);
+        return error;
+    }
+    if (error) return error;
+    session = local.value;
+    user = global.value;
+    local.value = global.value = nullptr;
+    return ERROR_SUCCESS;
 } catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
 catch (...) { return ERROR_INVALID_DATA; }
 
@@ -1586,8 +1601,8 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
     // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
     if (arguments && *arguments && !compatibility) return setup::RunSetupCommandLine(instance, arguments);
     constexpr auto windowClass = L"ChatGPTLauncherSetup";
-    automation::Handle guiInstance;
-    const auto error = setup::AcquireGuiInstance(windowClass, guiInstance.value);
+    automation::Handle session, user;
+    const auto error = setup::AcquireGuiInstance(windowClass, session.value, user.value);
     if (error) return error == ERROR_ALREADY_EXISTS ? 0 : static_cast<int>(error);
     return setup::RunNativeSetup(instance, show, compatibility, windowClass);
 }

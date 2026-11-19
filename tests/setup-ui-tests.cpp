@@ -570,6 +570,22 @@ static int LanguageTests(App& app, PCWSTR folder) {
     puts("PASS localization UI: three languages, live captions/tooltips, preserved edits, auto/manual preference, failures, rounded popup frame, mouse/keyboard selection, Escape/Tab/outside cancellation, focus return and busy guards; labels/placeholders/statuses at 100/125/150/175/200 percent in dark/light/contrast");
     return 0;
 }
+static int GuiInstanceTests() {
+    const auto windowClass = L"SetupInstanceTest" + std::to_wstring(GetCurrentProcessId());
+    automation::Handle session, user, secondSession, secondUser;
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), session.value, user.value) == ERROR_SUCCESS && session && user);
+    const auto dialogs = reminderCalls;
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), secondSession.value, secondUser.value) == ERROR_ALREADY_EXISTS);
+    REQUIRE(!secondSession && !secondUser && reminderCalls == dialogs);
+    // A different login sees the user's mutex but has an empty session namespace.
+    session.Reset();
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), secondSession.value, secondUser.value) == ERROR_ALREADY_EXISTS);
+    REQUIRE(!secondSession && !secondUser && reminderCalls == dialogs + 1 && lastDialog == l10n::Text("setup.instance.othersession"));
+    user.Reset();
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), secondSession.value, secondUser.value) == ERROR_SUCCESS && secondSession && secondUser);
+    puts("PASS GUI instances: duplicate in current session, occupied user guard in a separate session scope, reopen after close");
+    return 0;
+}
 static int RunTests(PCWSTR folder) {
     REQUIRE(ReadCodexEnvPreference());
     envReadResult = ERROR_SUCCESS; storedCodexEnv = 9; REQUIRE(ReadCodexEnvPreference());
@@ -1143,6 +1159,7 @@ static int RunTests(PCWSTR folder) {
         proxyGate = proxyEntered = saveGate = saveEntered = nullptr;
     }
     puts("PASS worker ownership: lost messages, duplicate notifications, timer failure, idle timer cleanup and concurrent save/detection during window teardown");
+    REQUIRE(GuiInstanceTests() == 0);
     printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
     puts("PASS dirty-region buffers and pixel-identical partial/full surface painting across themes, scaling and scrolling");
     puts("PASS save focus: successful completion selects Done, failures select Save, Enter closes after success");

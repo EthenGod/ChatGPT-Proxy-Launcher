@@ -50,6 +50,7 @@ std::wstring Join(const std::wstring& directory, const std::wstring& file);
 // Paths and companion shortcuts (SetupCore.cpp).
 Result GetPaths(Paths& paths);
 Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder);
+std::wstring CompanionShortcutPath(const std::wstring& folder, const std::wstring& program);
 Result AddCompanionProgram(const Paths& paths, const std::wstring& program);
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output);
 

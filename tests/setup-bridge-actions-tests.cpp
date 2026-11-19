@@ -46,10 +46,28 @@ static void PutTestIcon(const std::wstring& path) {
     bytes.append(maskBytes, '\0');
     Put(path, bytes);
 }
+static int CheckRedirectedImport(PCWSTR root) {
+    const auto paths = BridgeTestPaths(root);
+    const auto attributes = GetFileAttributesW(paths.defaultDirectory.c_str());
+    REQUIRE(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT));
+    const auto source = setup::Join(root, L"sample.exe");
+    REQUIRE(GetFileAttributesW(source.c_str()) != INVALID_FILE_ATTRIBUTES);
+    auto pick = Json::Object(); pick[L"testSelection"] = Json(source);
+    const auto request = automation::WriteJson(pick), locations = BridgeTestPathJson(paths);
+    SetupBridgeBuffer output{};
+    uint32_t commit = 0;
+    const auto code = setup_bridge_action(SETUP_ADD_PROGRAM, reinterpret_cast<const uint8_t*>(request.data()), request.size(),
+        reinterpret_cast<const uint8_t*>(locations.data()), locations.size(), 0, &output, &commit);
+    const bool empty = !output.data && !output.length;
+    setup_bridge_free(&output);
+    REQUIRE(code == ERROR_INVALID_DATA && commit == 0 && empty);
+    return 0;
+}
 int wmain(int argc, wchar_t** argv) {
     if (argc != 3) return 2;
     try {
         l10n::Select(L"zh-CN");
+        if (!wcscmp(argv[1], L"--check-redirected-import")) return CheckRedirectedImport(argv[2]);
         const auto root = setup::Join(argv[1], L"bridge-actions-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         REQUIRE(CreateDirectoryW(root.c_str(), nullptr));
         auto paths = BridgeTestPaths(root);
