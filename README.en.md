@@ -28,19 +28,18 @@ Both methods open the same setup tool. **Choose one; method 1 is recommended.**
 
 If an error appears and the setup tool does not open, use method 2.
 
-The current source builds the new UI by default and requires WebView2. If it is missing, the download script offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Compatibility mode keeps the original configuration features and needs no runtime installation. Double-clicking opens compatibility mode automatically when WebView2 is missing; use `ChatGPTLauncherSetup.exe --compatibility` to select it explicitly. The standalone launcher and headless commands do not require WebView2. The instructions below use the v1.2 UI labels.
+The v1.2 configurator uses the new interface by default and requires WebView2. If WebView2 is missing, PowerShell offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Double-clicking the configurator opens compatibility mode automatically in that case. You can also run `ChatGPTLauncherSetup.exe --compatibility` to open the original interface. The standalone launcher and headless commands work without WebView2.
 
 **Try a beta**
 
-The one-line command above downloads stable releases only. To try a release from `refactor/ui`, paste these three lines into PowerShell.
+The one-line command above downloads stable releases only. To include prereleases, run these two lines in PowerShell.
 
 ```powershell
-$branch = 'refactor/ui'
-$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
-& $setup -Channel Preview -Branch $branch
+$setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1'))
+& $setup -Channel Preview
 ```
 
-`-Channel Preview` includes stable releases and prereleases and picks the most recently published one. `-Branch` limits the selection to published tags in that branch’s history. Append `-Tag v1.2.0-beta.3` to the last line to pin this beta. The updated script must be on the remote branch and the release must be published.
+`-Channel Preview` selects the most recently published stable release or prerelease. To limit the search to a branch, append `-Branch master` to the second line and replace `master` with the branch name. To choose a specific release, append a tag such as `-Tag v1.2.1`. The release must already be published on GitHub.
 
 ### Method 2: Download and open manually
 

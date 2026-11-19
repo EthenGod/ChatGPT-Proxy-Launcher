@@ -26,19 +26,18 @@
 
 如果出现报错而没有打开配置器，可以改用方式二。
 
-当前源码默认构建新界面，需要 WebView2。下载入口发现缺少它时，会询问 **安装 WebView2（推荐）**、**使用兼容界面** 或 **取消**。兼容界面保留原来的配置功能，无需安装运行库。直接双击时，缺少 WebView2 会自动打开兼容界面；也可运行 `ChatGPTLauncherSetup.exe --compatibility` 主动使用它。独立启动器和后台命令不需要 WebView2。下文使用 v1.2 的界面名称。
+v1.2 配置器默认使用新界面，需要 WebView2。缺少 WebView2 时，PowerShell 会提示选择 **安装 WebView2（推荐）**、**使用兼容界面** 或 **取消**。直接双击配置器会自动打开兼容界面。也可运行 `ChatGPTLauncherSetup.exe --compatibility` 打开原来的配置界面。独立启动器和后台命令无需 WebView2。
 
 **试用测试版**
 
-上面的一行命令只下载正式版。要试用 `refactor/ui` 分支的版本，可在 PowerShell 运行下面三行。
+上面的一行命令只下载正式版。要把测试版也列入选择，在 PowerShell 运行下面两行。
 
 ```powershell
-$branch = 'refactor/ui'
-$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
-& $setup -Channel Preview -Branch $branch
+$setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1'))
+& $setup -Channel Preview
 ```
 
-`-Channel Preview` 包含测试版和正式版，按发布时间选择。`-Branch` 限定为该分支历史中已有发布的版本。要固定到本次 Beta，在最后一行追加 `-Tag v1.2.0-beta.3`。这些命令需要远端分支已有新版脚本，且目标 Release 已发布。
+`-Channel Preview` 会选择最近发布的正式版或测试版。要限定分支，在第二行追加 `-Branch master`，把 `master` 换成要测试的分支名。要固定版本，可追加 `-Tag v1.2.1`。目标版本须已在 GitHub 发布。
 
 ### 方式二：手动下载并打开
 

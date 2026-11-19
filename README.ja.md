@@ -28,19 +28,18 @@ Windows x64 向けの非公式 ChatGPT ランチャーです。ChatGPT 用のプ
 
 エラーが出て設定ツールが開かない場合は、方法 2 を使ってください。
 
-現在のソースは新しい UI を標準でビルドし、WebView2 を使用します。未インストールの場合、ダウンロード用スクリプトで **WebView2 をインストール（推奨）**、**互換モードを使用**、**キャンセル** を選べます。互換モードは従来の設定機能を備え、ランタイムのインストールは不要です。ダブルクリックした場合は、WebView2 がなければ互換モードで開きます。`ChatGPTLauncherSetup.exe --compatibility` でも指定できます。単体ランチャーとバックグラウンドコマンドには WebView2 は不要です。以下では v1.2 の画面に表示される項目名を使います。
+v1.2 の設定ツールは標準で新しい画面を使用し、WebView2 が必要です。WebView2 がない場合、PowerShell では **WebView2 をインストール（推奨）**、**互換モードを使用**、**キャンセル** を選べます。設定ツールをダブルクリックすると、自動で互換モードが開きます。`ChatGPTLauncherSetup.exe --compatibility` でも従来の画面を開けます。単体ランチャーとバックグラウンドコマンドは WebView2 がなくても使えます。
 
 **ベータ版を試す**
 
-上の 1 行コマンドは正式版のみを取得します。`refactor/ui` のリリースを試すには、次の 3 行を PowerShell で実行してください。
+上の 1 行コマンドは正式版のみを取得します。テスト版も対象に含めるには、次の 2 行を PowerShell で実行してください。
 
 ```powershell
-$branch = 'refactor/ui'
-$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
-& $setup -Channel Preview -Branch $branch
+$setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1'))
+& $setup -Channel Preview
 ```
 
-`-Channel Preview` は正式版とテスト版の中から、公開日時が最も新しいものを選びます。`-Branch` は、そのブランチの履歴にある公開済みのタグに絞り込みます。今回のベータ版に固定するには、最後の行に `-Tag v1.2.0-beta.3` を追加してください。更新済みスクリプトがリモートブランチにあり、対象のリリースが公開されている必要があります。
+`-Channel Preview` は正式版とテスト版のうち、最後に公開されたものを選びます。ブランチを絞り込むには、2 行目に `-Branch master` を追加し、`master` を対象のブランチ名に置き換えてください。バージョンを固定するには、たとえば `-Tag v1.2.1` を追加します。GitHub で公開済みのバージョンが対象です。
 
 ### 方法 2：手動でダウンロードして開く
 
