@@ -91,6 +91,37 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
     expect(read).toHaveBeenCalledTimes(2)
   })
+  it('preserves saved appearance preferences across a failed first read and retry', async () => {
+    const persist = vi.fn(async (dark: boolean, language: string) => ({
+      preferences: { dark, language, resolvedLanguage: language }, warnings: [],
+    }))
+    const service = Object.assign(new MockSetupService('normal', 0), { setPreferences: persist })
+    const snapshot = await service.load()
+    vi.spyOn(service, 'load').mockRejectedValueOnce({ nativeError: 5 }).mockResolvedValueOnce({
+      ...snapshot, preferences: { dark: false, language: 'en-US', resolvedLanguage: 'en-US' },
+    })
+    const { user } = mount(service)
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: '语言' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '切换为浅色' }))
+    expect(persist).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    const theme = await screen.findByRole('button', { name: translator('en-US')('setup.theme.dark') })
+    await user.click(theme)
+    expect(persist).toHaveBeenCalledExactlyOnceWith(true, 'en-US')
+  })
+  it('shows the native conflict directory in save failure details', async () => {
+    const service = new MockSetupService('normal', 0)
+    const folder = 'C:\\Example\\保存冲突'
+    vi.spyOn(service, 'save').mockResolvedValueOnce({
+      commit: 'not-started', message: 'ui.save.failed', nativeError: 183, detail: 'Conflict', conflictDirectory: folder, tasks: [],
+    })
+    const { user } = mount(service); await loaded()
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    await user.click(await screen.findByRole('button', { name: translator('zh-CN')('ui.details') }))
+    expect(within(await screen.findByRole('dialog')).getByText(folder)).toBeVisible()
+  })
   it('shows the conflicting folder and opens the native conflict location before retrying', async () => {
     const service = new MockSetupService('normal', 0)
     const folder = 'C:\\Example\\冲突目录'

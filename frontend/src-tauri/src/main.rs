@@ -237,7 +237,13 @@ fn main() {
         run_compatibility(paths.as_deref(), &window_class);
     }
     #[cfg(feature = "test-harness")]
-    harness::mark("gui-entered");
+    let profile = {
+        harness::mark("gui-entered");
+        harness::webview_profile().unwrap_or_else(|_| {
+            bridge::bootstrap_error(false);
+            std::process::exit(1);
+        })
+    };
     // Native operations are serialized. Two async workers can serve IPC without scaling with CPU count.
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -270,7 +276,7 @@ fn main() {
                     // Config dataDirectory is relative to AppData. The builder
                     // is required for an absolute, fully isolated test profile.
                     #[cfg(feature = "test-harness")]
-                    let builder = builder.data_directory(harness::webview_profile()?);
+                    let builder = builder.data_directory(profile);
                     builder
                         .window_classname(window_class)
                         .on_navigation(bootstrap::allows_navigation)

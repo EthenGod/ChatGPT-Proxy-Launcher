@@ -252,7 +252,10 @@ fn load_errors_preserve_the_native_conflict_directory() {
         .is_none());
     error["conflictDirectory"] = "C:\\Example".into();
     let decoded: model::BridgeError = serde_json::from_value(error.clone()).unwrap();
-    assert_eq!(serde_json::to_value(decoded).unwrap(), error);
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), error);
+    let save_error = model::SaveResult::unavailable(0, decoded);
+    assert_eq!(save_error.conflict_directory, "C:\\Example");
+    assert_eq!(save_error.native_error, 183);
 }
 
 #[test]
@@ -264,7 +267,7 @@ fn response_failure_preserves_the_independent_native_commit() {
         (3, "rollback-incomplete"),
         (u32::MAX, "rollback-incomplete"),
     ] {
-        let response = model::SaveResult::unavailable(code, String::new(), 8);
+        let response = model::SaveResult::unavailable(code, model::BridgeError::native(8));
         let json = serde_json::to_value(response).unwrap();
         assert_eq!(json["commit"], expected);
         assert_eq!(json["nativeError"], 8);

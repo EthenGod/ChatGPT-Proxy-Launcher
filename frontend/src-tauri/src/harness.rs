@@ -145,6 +145,8 @@ pub fn webview_profile() -> io::Result<PathBuf> {
     PROFILE
         .set(handle)
         .map_err(|_| io::Error::other("profile already assigned"))?;
+    // The loader gives this process variable precedence over the window's data_directory.
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &path);
     Ok(path)
 }
 

@@ -49,6 +49,15 @@ void Deliver(const Json& value, SetupBridgeBuffer& output) {
     output.data = memory.release();
 }
 
+void DeliverError(const setup::Result& result, SetupBridgeBuffer& output) {
+    auto error = Json::Object();
+    error[L"nativeError"] = Json::Number(result.code);
+    error[L"message"] = Json(result.message);
+    if (!result.conflictDirectory.empty()) error[L"conflictDirectory"] = Json(result.conflictDirectory);
+    error[L"commit"] = Json(L"not-started");
+    Deliver(error, output);
+}
+
 Json Options(const setup::Options& o) {
     auto j = Json::Object();
     j[L"startup"] = Json(o.startup); j[L"silent"] = Json(o.silent);
@@ -109,7 +118,11 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
         if (!entry.enabled) {
             // The dispatcher's disabled record deliberately does not open its package.
             // Only a matching, still valid manifest earns the protocol badge in the UI.
-            try { entry = chain::ReadManifest(entry.manifestPath, record.json.At(L"overrides")); }
+            try {
+                entry = chain::ReadManifest(entry.manifestPath, record.json.At(L"overrides"), [](const std::wstring& path) {
+                    return setup::ui::ClassifyProgramDrive(path) == setup::ui::ProgramDrive::Local;
+                });
+            }
             catch (const automation::Invalid&) {}
             catch (const automation::IoError&) {}
             if (entry.id != record.id || entry.name.empty()) {
@@ -238,12 +251,7 @@ extern "C" uint32_t setup_bridge_read_state(const uint8_t* pathBytes, size_t siz
         setup::Loaded loaded;
         const auto status = setup::Load(paths, loaded);
         if (!status) {
-            auto error = Json::Object();
-            error[L"nativeError"] = Json::Number(status.code);
-            error[L"message"] = Json(status.message);
-            if (!status.conflictDirectory.empty()) error[L"conflictDirectory"] = Json(status.conflictDirectory);
-            error[L"commit"] = Json(L"not-started");
-            Deliver(error, *output);
+            DeliverError(status, *output);
             return status.code;
         }
         // Test paths imply deterministic preferences; production never supplies them.
@@ -442,12 +450,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
         Deliver(response, *output);
         return ERROR_SUCCESS;
     } catch (const setup::Result& result) {
-        try {
-            auto error = Json::Object();
-            error[L"nativeError"] = Json::Number(result.code); error[L"message"] = Json(result.message);
-            error[L"commit"] = Json(L"not-started");
-            Deliver(error, *output);
-        } catch (...) {}
+        try { DeliverError(result, *output); } catch (...) {}
         return result.code;
     } catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
     catch (const automation::IoError& error) { return error.code; }

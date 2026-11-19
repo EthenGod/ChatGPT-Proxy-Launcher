@@ -144,6 +144,5 @@ pub fn action<T: DeserializeOwned>(
 }
 pub fn save(options: Options, paths: Option<&[u8]>) -> SaveResult {
     let (commit, result) = action::<SaveResult>(Action::Save, &options, paths, 0);
-    result
-        .unwrap_or_else(|error| SaveResult::unavailable(commit, error.message, error.native_error))
+    result.unwrap_or_else(|error| SaveResult::unavailable(commit, error))
 }

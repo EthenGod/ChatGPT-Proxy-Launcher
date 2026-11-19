@@ -143,7 +143,7 @@ pub struct SaveResult {
 }
 impl SaveResult {
     // The independent ABI outcome survives JSON encoding/decoding/allocation failures.
-    pub fn unavailable(code: u32, detail: String, native_error: u32) -> Self {
+    pub fn unavailable(code: u32, error: BridgeError) -> Self {
         let (commit, message) = match code {
             0 => (Commit::NotStarted, "ui.save.failed"),
             1 => (Commit::Saved, "ui.save.response"),
@@ -154,15 +154,15 @@ impl SaveResult {
         Self {
             commit,
             message: message.into(),
-            detail,
-            native_error,
+            detail: error.message,
+            native_error: error.native_error,
             tasks: vec![],
             warnings: if code == 1 {
                 vec!["ui.save.response".into()]
             } else {
                 vec![]
             },
-            conflict_directory: String::new(),
+            conflict_directory: error.conflict_directory.unwrap_or_default(),
             options: None,
         }
     }

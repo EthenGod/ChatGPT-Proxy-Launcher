@@ -169,6 +169,7 @@ function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$Witho
     $info.WindowStyle = if ($ShowWindow) { 'Normal' } else { 'Hidden' }
     $info.WorkingDirectory = $Root
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT'] = $Root
+    $info.EnvironmentVariables['WEBVIEW2_USER_DATA_FOLDER'] = Join-Path $Root 'inherited-profile'
     if ($WithoutWebView) { $info.EnvironmentVariables['WEBVIEW2_BROWSER_EXECUTABLE_FOLDER'] = (Join-Path $Root 'no-webview') }
     if ($WithoutPageScript) { $info.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--blink-settings=scriptEnabled=false' }
     if ($Track) { return Start-UiTrackedProcess $info }
@@ -432,6 +433,9 @@ if (!$SkipGui) {
             }
             $readyMs = $timer.Elapsed.TotalMilliseconds
             if ($cycle -eq 1) {
+                $profiles = [IO.Directory]::GetDirectories($root, 'webview-*')
+                Require ($profiles.Count -eq 1 -and [IO.Directory]::Exists((Join-Path $profiles[0] 'EBWebView'))) 'WebView2 did not use the checked profile'
+                Require (![IO.Directory]::Exists((Join-Path $root 'inherited-profile'))) 'WebView2 wrote to the inherited profile'
                 $process.Refresh()
                 Check-Duplicate $root '--compatibility' $process.MainWindowHandle
                 Check-Duplicate $root '' $process.MainWindowHandle -Hide

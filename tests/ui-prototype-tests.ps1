@@ -102,6 +102,7 @@ function Test-StandaloneSampleProfile {
         $info.FileName = $exe; $info.WorkingDirectory = $session; $info.UseShellExecute = $false
         $info.EnvironmentVariables['TEMP'] = $temp
         $info.EnvironmentVariables['TMP'] = $temp
+        $info.EnvironmentVariables['WEBVIEW2_USER_DATA_FOLDER'] = $outside
         $info.EnvironmentVariables.Remove('CHATGPT_SETUP_TEST_ROOT')
         $process = Start-UiTrackedProcess $info
         try {

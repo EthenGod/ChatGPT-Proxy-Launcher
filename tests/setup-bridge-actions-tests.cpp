@@ -330,6 +330,21 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(linkImage.find(L"iVBORw0KGgo") == 0 && linkImage != exeImage && imageOf(L"Example Tool") == exeImage);
         REQUIRE(MoveFileW(iconPath.c_str(), setup::Join(root, L"moved.ico").c_str()));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && imageOf(L"工具.lnk") == exeImage);
+        // Disabled records on an offline drive need no package reads to remain visible.
+        unprobedTarget = manifest;
+        simulatedDrive = setup::ui::ProgramDrive::Unverified;
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled"));
+        unprobedTarget.clear();
+        auto hosted = spec;
+        hosted[L"entry"][L"runtime"] = Json(L"powershell");
+        hosted[L"entry"][L"path"] = Json(L"disabled.ps1");
+        hosted[L"entry"][L"hostPath"] = Json(target);
+        Put(setup::Join(root, L"disabled.ps1"), "# never executed");
+        Put(manifest, automation::WriteJson(hosted));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"Example Tool", L"adapted-disabled"));
+        unprobedTarget = target;
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled") && !targetProbes);
+        unprobedTarget.clear();
         spec[L"id"] = Json(L"org.example.different"); Put(manifest, automation::WriteJson(spec));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled"));
         record[L"overrides"][L"enabled"] = Json(true); Put(registration, automation::WriteJson(record));
@@ -356,6 +371,9 @@ int wmain(int argc, wchar_t** argv) {
         setup_bridge_free(&conflict);
         REQUIRE(error.At(L"nativeError").Integer(0, MAXDWORD) == ERROR_ALREADY_EXISTS
             && error.At(L"conflictDirectory").String() == paths.defaultDirectory && !error.At(L"message").String().empty());
+        REQUIRE(call(SETUP_SAVE, Options(options)) == ERROR_ALREADY_EXISTS && !commit);
+        REQUIRE(reply.At(L"conflictDirectory").String() == paths.defaultDirectory && reply.At(L"commit").String() == L"not-started");
+        REQUIRE(automation::ReadBytes(paths.settingsLink) == automation::ReadBytes(shortcut));
         REQUIRE(call(SETUP_OPEN_LOCATION, location) == 0 && !commit);
         location[L"path"] = Json(root);
         REQUIRE(call(SETUP_OPEN_LOCATION, location) == ERROR_INVALID_DATA);

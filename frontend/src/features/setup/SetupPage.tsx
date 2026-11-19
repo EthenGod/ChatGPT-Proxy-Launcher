@@ -72,7 +72,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const adding = operation === 'program'
   const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>('idle')
   const detecting = detectionPhase === 'pending' || detectionPhase === 'scanning'
-  const appearanceLocked = busy || loading || detecting || loadError?.message === 'setup.error.webviewstart'
+  const appearanceLocked = busy || loading || detecting || !!loadError
   const [advanced, setAdvanced] = useState(showPrograms)
   const revealPrograms = useRef(showPrograms)
   const [inspectedProgram, setInspectedProgram] = useState<ListedProgram | null>(null)

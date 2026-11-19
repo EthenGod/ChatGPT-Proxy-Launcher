@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 param(
-    [ValidateSet('build', 'dev', 'check', 'test', 'harness', 'prototype', 'sample')][string]$Command = 'build',
+    [ValidateSet('build', 'native', 'launcher', 'dev', 'check', 'test', 'harness', 'prototype', 'sample')][string]$Command = 'build',
     [string]$RustBin = $env:CHATGPT_RUST_BIN,
     # Used by the full test pipeline after its native build has succeeded.
     [switch]$ReuseNativeBuild
@@ -14,11 +14,6 @@ foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache'
 function Check-Exit([string]$Step) { if ($LASTEXITCODE -ne 0) { throw "$Step failed: $LASTEXITCODE" } }
 $buildLock = $null
 try {
-    if ($RustBin) { $env:PATH = [IO.Path]::GetFullPath($RustBin) + ';' + $env:PATH }
-    $extraTools = Join-Path $projectRoot 'work\ui-toolchain\bin'
-    if (Test-Path -LiteralPath $extraTools) { $env:PATH = $extraTools + ';' + $env:PATH }
-    if (!(Get-Command cargo.exe -ErrorAction SilentlyContinue)) { throw 'Rust MSVC toolchain required. Pass -RustBin or set CHATGPT_RUST_BIN.' }
-    $env:CARGO_HOME = Join-Path $projectRoot 'work\ui-toolchain\cargo'
     $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'work\ui-target'
     # Cargo releases its own lock before we copy and identify the executable.
     # A workspace lock also protects the native resources shared by all variants.
@@ -31,6 +26,16 @@ try {
             Start-Sleep -Milliseconds 250
         }
     }
+    if ($Command -in @('launcher', 'native')) {
+        & (Join-Path $projectRoot 'tools\build-native.cmd') $Command
+        Check-Exit 'Native build'
+        return
+    }
+    if ($RustBin) { $env:PATH = [IO.Path]::GetFullPath($RustBin) + ';' + $env:PATH }
+    $extraTools = Join-Path $projectRoot 'work\ui-toolchain\bin'
+    if (Test-Path -LiteralPath $extraTools) { $env:PATH = $extraTools + ';' + $env:PATH }
+    if (!(Get-Command cargo.exe -ErrorAction SilentlyContinue)) { throw 'Rust MSVC toolchain required. Pass -RustBin or set CHATGPT_RUST_BIN.' }
+    $env:CARGO_HOME = Join-Path $projectRoot 'work\ui-toolchain\cargo'
     $env:npm_config_cache = Join-Path $projectRoot 'work\npm-cache'
     $visualPreview = $Command -in @('prototype', 'sample')
     $env:CHATGPT_UI_PROTOTYPE = $(if ($visualPreview) { '1' } else { '0' })

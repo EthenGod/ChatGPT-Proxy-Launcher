@@ -27,7 +27,8 @@ bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, s
 std::wstring Join(const std::wstring& directory, const std::wstring& leaf);
 bool ValidId(const std::wstring& id);
 int CompareVersion(const std::wstring& left, const std::wstring& right);
-Entry ReadManifest(const std::wstring& file, const Json& overrides = Json::Object());
+using ManifestPathFilter = bool (*)(const std::wstring&);
+Entry ReadManifest(const std::wstring& file, const Json& overrides = Json::Object(), ManifestPathFilter canRead = nullptr);
 void ValidateOverrides(const Json& overrides);
 // Disabled registrations remain manageable even when their package is unavailable.
 Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides);

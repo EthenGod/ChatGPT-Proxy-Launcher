@@ -92,7 +92,7 @@ cmd /c tests\test-bridge.cmd
 
 若 Cargo 不在 PATH，可用 `-RustBin` 指定现有 MSVC 工具链的 `bin` 目录，或设置进程变量 `CHATGPT_RUST_BIN`。脚本结束后恢复环境变量。
 
-根目录 `cmd /c build.cmd` 生成配套的正式配置器和启动器。`cmd /c build.cmd native` 在 `work/ui-native/` 编译旧 GUI 和内嵌的启动器。原型、功能测试版和示例版默认从 `work/ui-test-native/` 嵌入各自构建的启动器。这些构建保留现有正式产物。`cmd /c build.cmd launcher` 会单独重建 `outputs/` 中的启动器。交付前须重新完整构建，确保两个 EXE 配对。
+根目录 `cmd /c build.cmd` 生成配套的正式配置器和启动器。`cmd /c build.cmd native` 在 `work/ui-native/` 编译旧 GUI 和内嵌的启动器。`cmd /c build.cmd launcher` 单独重建 `outputs/` 中的启动器。三个入口共用一把构建锁。旧 GUI 和独立启动器只需 C++ 工具和 Windows SDK。原型、功能测试版和示例版默认从 `work/ui-test-native/` 嵌入各自构建的启动器。如果最后一次只构建了正式启动器，交付前须再做一次完整构建，确保两个 EXE 配对。`tests/build-lock-tests.ps1` 检查编译和内嵌时是否持有同一把锁。
 
 `cmd /c tests\test-build.cmd` 包含原生、桥接、前端、Rust、后台对照和交付检查；`cmd /c tests\analyze.cmd` 包含 C++ 分析及正式/测试 feature 的 Clippy。桌面验收单独运行 `tests/ui-prototype-tests.ps1 -Functional`，默认观察 60 秒并正常关闭三次。
 

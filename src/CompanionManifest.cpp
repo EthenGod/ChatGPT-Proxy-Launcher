@@ -95,8 +95,14 @@ Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, 
     if (entry.id != id) throw Invalid("manifest-id-changed");
     return entry;
 }
-Entry ReadManifest(const std::wstring& file, const Json& overrides) {
-    Entry e; e.manifestPath = automation::FullPath(file);
+Entry ReadManifest(const std::wstring& file, const Json& overrides, ManifestPathFilter canRead) {
+    // Relative entries stay inside the package. Only the manifest and explicit host can select a drive.
+    const auto absolutePath = [canRead](const std::wstring& path) {
+        auto full = automation::FullPath(path);
+        if (canRead && !canRead(full)) throw Invalid("manifest-drive-unavailable");
+        return full;
+    };
+    Entry e; e.manifestPath = absolutePath(file);
     const auto j = automation::ParseJson(automation::ReadBytes(e.manifestPath));
     j.Fields({L"schemaVersion", L"id", L"name", L"version", L"requires", L"entry", L"dependsOn", L"readiness", L"retry", L"config"});
     if (j.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::ManifestSchema) throw Invalid("unsupported-schema-version");
@@ -139,7 +145,7 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides) {
     }
     if (entry.Has(L"hostPath")) {
         if (e.kind == companions::Kind::Exe || e.kind == companions::Kind::Batch) throw Invalid("unexpected-host-path");
-        e.host = automation::FullPath(entry.At(L"hostPath").String()); automation::CheckPlainPath(e.host);
+        e.host = absolutePath(entry.At(L"hostPath").String()); automation::CheckPlainPath(e.host);
         if (companions::FileKind(e.host.c_str()) != companions::Kind::Exe || !companions::HostFile(e.host)) throw Invalid("runtime-missing");
     }
     if (j.Has(L"dependsOn")) {

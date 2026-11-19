@@ -169,6 +169,7 @@ $files = @(
     # tests
     'tests/analyze.cmd'
     'tests/automation-tests.cpp'
+    'tests/build-lock-tests.ps1'
     'tests/chain-tests.cpp'
     'tests/codex-close-tests.cpp'
     'tests/companion-tests.cpp'

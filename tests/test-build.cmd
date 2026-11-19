@@ -3,6 +3,8 @@ rem SPDX-License-Identifier: GPL-3.0-only
 setlocal
 set "PSModulePath=%SystemRoot%\System32\WindowsPowerShell\v1.0\Modules"
 cd /d "%~dp0.."
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests\build-lock-tests.ps1
+if errorlevel 1 exit /b %errorlevel%
 call build.cmd
 if errorlevel 1 exit /b %errorlevel%
 set "SETUP_VALUE_OBJECTS=work\SetupArguments.obj work\CodexEnv.obj work\AutomationJson.obj work\AutomationIO.obj work\DeploymentDiscovery.obj advapi32.lib"
