@@ -6,6 +6,17 @@
 static std::wstring probePath, renamePath;
 static bool probe = false, writeBlocked = false, renameBlocked = false, failRemoval = false, shortRead = false;
 static unsigned dispositionCalls = 0;
+static DWORD fileIdError = ERROR_SUCCESS;
+static bool omitLegacyId = false;
+static BOOL WINAPI TestFileInformation(HANDLE file, LPBY_HANDLE_FILE_INFORMATION info) {
+    const auto ok = GetFileInformationByHandle(file, info);
+    if (ok && omitLegacyId) { info->nFileIndexHigh = 0; info->nFileIndexLow = 0; }
+    return ok;
+}
+static BOOL WINAPI TestGetInformationEx(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kind, LPVOID data, DWORD bytes) {
+    if (kind == FileIdInfo && fileIdError) { SetLastError(fileIdError); return FALSE; }
+    return GetFileInformationByHandleEx(file, kind, data, bytes);
+}
 static BOOL WINAPI TestSetInformation(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kind, LPVOID data, DWORD bytes) {
     if (kind == FileDispositionInfo) {
         ++dispositionCalls;
@@ -26,7 +37,11 @@ static BOOL WINAPI TestRead(HANDLE file, LPVOID data, DWORD count, LPDWORD got, 
 }
 #define SetFileInformationByHandle TestSetInformation
 #define ReadFile TestRead
+#define GetFileInformationByHandleEx TestGetInformationEx
+#define GetFileInformationByHandle TestFileInformation
 #include "../src/AutomationIO.cpp"
+#undef GetFileInformationByHandle
+#undef GetFileInformationByHandleEx
 #undef SetFileInformationByHandle
 #undef ReadFile
 
@@ -45,6 +60,24 @@ int wmain(int argc, wchar_t** argv) {
     try {
         const auto root = std::wstring(argv[1]) + L"\\files-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
         REQUIRE(CreateDirectoryW(root.c_str(), nullptr));
+        auto alias = root;
+        alias.replace(alias.rfind(L'\\') + 1, 5, L"FILES");
+        if (GetFileAttributesW(alias.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            const auto other = root + L"-other";
+            REQUIRE(CreateDirectoryW(other.c_str(), nullptr));
+            fileIdError = ERROR_NOT_SUPPORTED;
+            for (const bool pathOnly : {false, true}) {
+                omitLegacyId = pathOnly;
+                automation::CheckPathUnderRoot(alias + L"\\child.exe", root);
+                REQUIRE(!automation::SameRootDirectory(root, other));
+            }
+            omitLegacyId = false;
+            fileIdError = ERROR_ACCESS_DENIED;
+            bool refused = false;
+            try { automation::CheckPathUnderRoot(alias + L"\\child.exe", root); } catch (const automation::Invalid&) { refused = true; }
+            REQUIRE(refused);
+            fileIdError = ERROR_SUCCESS;
+        }
         const auto changed = root + L"\\changed.json"; Write(changed, "foreign");
         REQUIRE(Remove(changed, "managed") == ERROR_RETRY && dispositionCalls == 0);
         REQUIRE(automation::ReadBytes(changed) == "foreign");

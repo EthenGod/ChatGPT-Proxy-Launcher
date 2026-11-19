@@ -43,8 +43,12 @@ fn native_close_is_available_until_the_page_installs_its_listener() {
     let unread = jobs::NativeJobs::new(None);
     assert!(unread.allow_native_close());
     let ready = jobs::NativeJobs::new(None);
-    ready.mark_close_listener_ready();
+    ready.set_close_listener_ready(true);
     assert!(!ready.allow_native_close());
+    ready.set_close_listener_ready(false);
+    assert!(ready.allow_native_close());
+    let ready = jobs::NativeJobs::new(None);
+    ready.set_close_listener_ready(true);
     assert!(ready.try_close());
     assert!(ready.allow_native_close());
 }

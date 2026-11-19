@@ -18,6 +18,12 @@ struct Entry {
     std::vector<DWORD> exitCodes{0};
 };
 struct Record { std::wstring id, path, error; Entry entry; Json json; };
+struct Policy {
+    DWORD budget = automation::contract::BudgetDefaultMs;
+    bool notify = true;
+};
+Policy ReadPolicy(const std::wstring& root);
+bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order);
 std::wstring Join(const std::wstring& directory, const std::wstring& leaf);
 bool ValidId(const std::wstring& id);
 int CompareVersion(const std::wstring& left, const std::wstring& right);

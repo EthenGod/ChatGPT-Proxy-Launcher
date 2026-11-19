@@ -4,8 +4,10 @@ $entry = Join-Path (Split-Path $PSScriptRoot) 'setup.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw $errors[0] }
-$selector = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-SetupReleaseTag' }, $true)
-. ([scriptblock]::Create($selector.Extent.Text))
+foreach ($name in @('Test-SetupTagName','Assert-SetupReleaseFilters','Get-SetupReleaseTag')) {
+    $selector = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+    . ([scriptblock]::Create($selector.Extent.Text))
+}
 function Get-SetupText($Key) { $Key }
 
 $tip = 'a' * 40
@@ -24,12 +26,13 @@ function Release($Name, $Date, [bool]$Pre, [long]$Id) {
 }
 function Check($Expected, $Channel='Stable', $Branch='', $Tag='') {
     $calls.Clear()
+    Assert-SetupReleaseFilters $Branch $Tag
     $actual = Get-SetupReleaseTag 'owner/repo' $Channel $Branch $Tag
     if ($actual -cne $Expected) { throw "Expected $Expected, got $actual" }
 }
 function Reject($Expected, $Channel='Stable', $Branch='', $Tag='') {
     $calls.Clear()
-    try { $actual = Get-SetupReleaseTag 'owner/repo' $Channel $Branch $Tag }
+    try { Assert-SetupReleaseFilters $Branch $Tag; $actual = Get-SetupReleaseTag 'owner/repo' $Channel $Branch $Tag }
     catch { if ($_.Exception.Message -cne $Expected) { throw }; return }
     throw "Unexpected release accepted: $actual"
 }

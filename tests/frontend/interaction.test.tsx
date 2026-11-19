@@ -414,6 +414,47 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('8123')
     expect(screen.getByRole('button', { name: '完成' })).toBeEnabled()
   })
+  it('keeps the submitted Codex choice when the preference could not be written', async () => {
+    const service = new MockSetupService('normal', 0)
+    const save = vi.spyOn(service, 'save').mockImplementation(async options => ({
+      commit: 'saved', message: 'setup.status.saved', tasks: [], warnings: ['setup.status.envunsaved'], options,
+    }))
+    const { user } = mount(service); await loaded()
+    await user.click(screen.getByRole('switch', { name: '应用于 Codex' }))
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '知道了' }))
+    expect(screen.getByRole('switch', { name: '应用于 Codex' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('button', { name: '完成' })).toBeEnabled()
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '8124' } })
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1]?.[0]).toMatchObject({ codexEnv: false, port: '8124' })
+  })
+  it('refreshes a native warning in the chosen language while keeping edited fields', async () => {
+    const service = new MockSetupService('normal', 0)
+    const clean = await service.load()
+    vi.spyOn(service, 'load').mockResolvedValueOnce({ ...clean, notice: '原警告' })
+      .mockResolvedValueOnce({ ...clean, notice: 'Startup conflict' })
+    Object.assign(service, { setPreferences: async (dark: boolean, language: string) => ({
+      preferences: { dark, language, resolvedLanguage: language }, warnings: [],
+    }) })
+    const { user } = mount(service); await loaded()
+    fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '8125' } })
+    await user.click(screen.getByRole('button', { name: '语言' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
+    expect(await screen.findByText('Startup conflict')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Port' })).toHaveValue('8125')
+  })
+  it.each([['1.0.3', false], ['', false], ['1.0.4', true], ['1.2.0-beta.3', true]] as const)(
+    'uses the installed version %s when explaining when a new program will run', async (version, ready) => {
+      const service = new MockSetupService('normal', 0)
+      const state = await service.load()
+      vi.spyOn(service, 'load').mockResolvedValue({ ...state, deployed: true, deployedVersion: version })
+      const { user } = mount(service, true); await loaded()
+      await user.click(await screen.findByRole('button', { name: '添加程序…' }))
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '选择' }))
+      expect(await screen.findByText(translator('zh-CN')(ready ? 'setup.status.added' : 'setup.status.addeddeploy'))).toBeInTheDocument()
+    })
   it('preserves a confirmed save and its follow-ups when the readback fails', async () => {
     const service = new MockSetupService('warnings', 0)
     const state = await service.load()

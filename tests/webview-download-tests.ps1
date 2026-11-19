@@ -56,7 +56,14 @@ Write-Host 'PASS UI capability: old native EXE, dual-UI resource and invalid sch
 # No real registry access, network, installer or GUI launch below.
 $script:versions = @{}
 $script:runtimeReads = 0
-function Get-SetupRuntimeVersion($Hive, $View) { $script:runtimeReads++; return $script:versions["$Hive/$View"] }
+function Get-SetupRuntimeVersion($Hive, $View) {
+    $script:runtimeReads++
+    $value = $script:versions["$Hive/$View"]
+    if ($value -eq 'deny') { throw [UnauthorizedAccessException]::new('fixture') }
+    return $value
+}
+$script:versions = @{'LocalMachine/Registry32'='deny'; 'CurrentUser/Registry64'='123.0.0.1'}
+Require (Test-SetupWebView2) 'One inaccessible view must not hide the current user runtime'
 foreach ($value in @($null, '', '0.0.0.0', 'bad-version')) {
     $script:versions = @{'LocalMachine/Registry32'=$value}
     Require (!(Test-SetupWebView2)) 'Missing or invalid runtime version was accepted'
@@ -87,6 +94,7 @@ function Invoke-WebRequest($Uri, $OutFile, $TimeoutSec, [switch]$UseBasicParsing
     [IO.File]::WriteAllText($OutFile, 'isolated installer substitute')
 }
 function Get-AuthenticodeSignature($LiteralPath) {
+    if ($script:state.holdInstaller) { $script:state.reader = [IO.File]::OpenRead($LiteralPath) }
     return [pscustomobject]@{Status=$script:state.signature; SignerCertificate=[pscustomobject]@{Subject=$script:state.publisher}}
 }
 function Start-Process($FilePath, $WorkingDirectory, $ArgumentList, $WindowStyle, [switch]$PassThru) {
@@ -146,6 +154,16 @@ foreach ($failure in @('network', 'signature', 'publisher', 'exit', 'missing')) 
     Require ($failed -and $state.launches -eq 0) "Failed $failure must not open the modern GUI"
     if ($failure -in @('network','signature','publisher')) { Require ($state.installs -eq 0) 'Unverified installer was executed' }
 }
+Reset-Scenario; $state.choice='install'; $state.holdInstaller=$true
+try {
+    Open-TestUi | Out-Null
+    Require ($state.launches -eq 1 -and [IO.File]::Exists($installer)) 'A temporary cleanup failure blocked the GUI after installation'
+} finally { if ($state.reader) { $state.reader.Dispose() } }
+Reset-Scenario; $state.choice='install'
+[IO.File]::WriteAllText($installer,'foreign')
+$rejected = $false
+try { Open-TestUi | Out-Null } catch { $rejected = $true }
+Require ($rejected -and !$state.downloads -and [IO.File]::ReadAllText($installer) -eq 'foreign') 'Pre-existing installer was modified'
 Write-Host 'PASS GUI dispatch: legacy, installed, compatibility, cancel, install success, signature/network/install failures'
 
 # Run the complete entry's cancellation/cleanup path. Replace only OS discovery;
@@ -164,7 +182,12 @@ $cancelScript = Join-Path $testRoot 'cancel-entry.ps1'
     $oldTemp = $env:TEMP
     $hash = (Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash
     function Get-ItemPropertyValue { return 'en-US' }
-    function Read-Host { return '0' }
+    function Read-Host {
+        if ($cancelObservation.foreign) {
+            [IO.File]::WriteAllText((Join-Path $cancelObservation.folder 'MicrosoftEdgeWebview2Setup.exe'),'unrelated')
+        }
+        return '0'
+    }
     function Invoke-RestMethod { return @{tag_name='v1.1.3'; draft=$false; prerelease=$false} }
     function Invoke-WebRequest($Uri, $OutFile, $TimeoutSec, [switch]$UseBasicParsing) {
         $cancelObservation.folder = Split-Path $OutFile
@@ -178,6 +201,9 @@ $cancelScript = Join-Path $testRoot 'cancel-entry.ps1'
         $env:TEMP = $testRoot
         & $cancelScript
         Require ($cancelObservation.folder -and ![IO.Directory]::Exists($cancelObservation.folder)) 'Cancellation left download files behind'
+        $cancelObservation.foreign = $true
+        & $cancelScript
+        Require ([IO.File]::ReadAllText((Join-Path $cancelObservation.folder 'MicrosoftEdgeWebview2Setup.exe')) -eq 'unrelated') 'Cancellation removed an unrelated file'
     } finally { $env:TEMP = $oldTemp }
 }
 Write-Host 'PASS complete entry cancellation: verified download cleaned, no installer/GUI/browser, returned to caller'

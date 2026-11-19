@@ -76,6 +76,8 @@ foreach ($exe in @($production, $desktop)) {
     $metadataPath = if ($exe -eq $production) { Join-Path $ProjectRoot 'work\ui-build.json' } else { (Split-Path $exe) + '-build.json' }
     $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
     Require ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -eq $metadata.setupSha256) 'EXE changed after its recorded build'
+    $hasFixtureEntry = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($exe)).Contains('CHATGPT_SETUP_TEST_ROOT')
+    Require ($hasFixtureEntry -eq ($exe -eq $desktop)) 'Actual EXE has the wrong isolation mode'
     $bytes = [SetupPeResource]::Read($exe, 101, 10)
     $hash = [Security.Cryptography.SHA256]::Create()
     try { $payloadHash = [BitConverter]::ToString($hash.ComputeHash($bytes)).Replace('-', '') }
@@ -102,8 +104,33 @@ function Quote-Argument([string]$Value) {
     $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
     return '"' + $escaped + '"'
 }
+. (Join-Path $PSScriptRoot 'ui-process-job.ps1')
+if (!$SkipGui) {
+    $fixture = Join-Path $testRoot 'late-child'
+    $null = [IO.Directory]::CreateDirectory($fixture)
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = (Get-Command powershell.exe).Source
+    $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $PSScriptRoot 'ui-process-job.ps1') + '" -LateChildFixture'
+    $info.UseShellExecute = $false; $info.WorkingDirectory = $fixture; $info.CreateNoWindow = $true
+    $owner = Start-UiTrackedProcess $info
+    try {
+        $started = $owner.StartTime.ToUniversalTime().Ticks
+        Write-UiTestReport (Join-Path $fixture 'inspected') '{}'
+        Require ($owner.WaitForExit(15000)) 'Late-child fixture parent stayed alive'
+        $late = [IO.File]::ReadAllText((Join-Path $fixture 'late-child.json')) | ConvertFrom-Json
+        $child = [Diagnostics.Process]::GetProcessById($late.id)
+        try {
+            Require ($child.StartTime.ToUniversalTime().Ticks -eq $late.started -and !$child.HasExited) 'Expected a late child after owner exit'
+            Require (![IO.File]::Exists((Join-Path $fixture 'job-exit.json'))) 'Observer reported completion while a late child was waiting'
+            Write-UiTestReport (Join-Path $fixture 'release-child') '{}'
+            Assert-UiJobExited $fixture $owner.Id $started
+            Require ($child.HasExited) 'Job reported exit before its late child'
+        } finally { $child.Dispose() }
+    } finally { $owner.Dispose() }
+    Write-Host 'PASS Job tracks a child born after inspection until its real exit'
+}
 function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$WithoutWebView = $false,
-    [bool]$ShowWindow = $false, [bool]$WithoutPageScript = $false) {
+    [bool]$ShowWindow = $false, [bool]$WithoutPageScript = $false, [switch]$Track) {
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $Exe
     $info.Arguments = $Tail
@@ -114,6 +141,7 @@ function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$Witho
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT'] = $Root
     if ($WithoutWebView) { $info.EnvironmentVariables['WEBVIEW2_BROWSER_EXECUTABLE_FOLDER'] = (Join-Path $Root 'no-webview') }
     if ($WithoutPageScript) { $info.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--blink-settings=scriptEnabled=false' }
+    if ($Track) { return Start-UiTrackedProcess $info }
     return [Diagnostics.Process]::Start($info)
 }
 function Run-Cli([string]$Exe, [string]$Root, [string]$Tail) {
@@ -335,7 +363,7 @@ if (!$SkipGui) {
             Start-Sleep -Seconds 2
             Require ([IO.File]::Exists((Join-Path $root 'compatibility-entered.json'))) 'Native compatibility entry was not used'
             Require (![IO.File]::Exists((Join-Path $root 'gui-entered.json'))) 'Compatibility constructed Tauri state'
-            Require (![IO.Directory]::Exists((Join-Path $root 'webview'))) 'Compatibility created WebView data'
+            Require ([IO.Directory]::GetDirectories($root,'webview*').Length -eq 0) 'Compatibility created WebView data'
             $tree = @(Get-ProcessTree $process.Id)
             Require ($tree.Count -eq 1) 'Compatibility created a child process'
             $process.Refresh()
@@ -353,8 +381,18 @@ if (!$SkipGui) {
     for ($cycle = 1; $cycle -le 3; $cycle++) {
         $root = Join-Path $testRoot "window-$cycle"
         $null = [IO.Directory]::CreateDirectory($root)
+        if ($cycle -eq 1) {
+            $outside = Join-Path $testRoot 'outside-window'
+            $null = [IO.Directory]::CreateDirectory($outside)
+            $sentinel = Join-Path $testRoot 'observation-sentinel.json'
+            [IO.File]::WriteAllText($sentinel,'{"keep":true}')
+            $null = New-Item -ItemType HardLink -Path (Join-Path $root 'close-events.json') -Target $sentinel
+            $null = New-Item -ItemType HardLink -Path (Join-Path $root 'actions.json') -Target $sentinel
+            $null = New-Item -ItemType Junction -Path (Join-Path $root 'webview') -Target $outside
+        }
         $timer = [Diagnostics.Stopwatch]::StartNew()
-        $process = Start-Isolated $desktop $root '' $false $true
+        $process = Start-Isolated $desktop $root '' $false $true -Track
+        $started = $process.StartTime.ToUniversalTime().Ticks
         try {
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
             while (![IO.File]::Exists((Join-Path $root 'ui-ready.json')) -or ![IO.File]::Exists((Join-Path $root 'read-ok.json'))) {
@@ -386,12 +424,11 @@ if (!$SkipGui) {
             $process.Refresh()
             [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
             Require ($process.WaitForExit(10000)) 'Desktop did not exit after normal close'
-            $deadline = [DateTime]::UtcNow.AddSeconds(10)
-            do {
-                $remaining = @($handles | Where-Object { !$_.HasExited })
-                if ($remaining.Count) { Start-Sleep -Milliseconds 100 }
-            } while ($remaining.Count -and [DateTime]::UtcNow -lt $deadline)
-            Require ($remaining.Count -eq 0) 'A process from this UI tree remained after close'
+            Assert-UiJobExited $root $process.Id $started
+            if ($cycle -eq 1) {
+                Require ([IO.File]::ReadAllText($sentinel) -ceq '{"keep":true}') 'A test report modified its old hard-link target'
+                Require ([IO.Directory]::GetFileSystemEntries($outside).Length -eq 0) 'WebView used an existing redirected profile'
+            }
             foreach ($handle in $handles) { $handle.Dispose() }
             Require (![IO.Directory]::Exists((Join-Path $root 'state'))) 'Read-only GUI wrote deployment state'
         } finally {

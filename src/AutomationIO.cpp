@@ -62,13 +62,38 @@ Handle OpenDirectory(const std::wstring& path) {
     return Handle(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
 }
+bool FileIdUnsupported(DWORD error) {
+    return error == ERROR_INVALID_PARAMETER || error == ERROR_INVALID_FUNCTION || error == ERROR_NOT_SUPPORTED;
+}
+std::wstring NormalizedHandlePath(HANDLE directory) {
+    const DWORD size = GetFinalPathNameByHandleW(directory, nullptr, 0, FILE_NAME_NORMALIZED);
+    if (!size || size > 32768) return {};
+    std::wstring name(size, L'\0');
+    const DWORD written = GetFinalPathNameByHandleW(directory, name.data(), size, FILE_NAME_NORMALIZED);
+    if (!written || written >= size) return {};
+    name.resize(written);
+    return name;
+}
 bool SameRootDirectory(const std::wstring& root, const std::wstring& candidate) {
     const auto first = OpenDirectory(root), second = OpenDirectory(candidate);
+    if (!first || !second) return false;
     FILE_ID_INFO a{}, b{};
-    return first && second
-        && GetFileInformationByHandleEx(first.value, FileIdInfo, &a, sizeof(a))
-        && GetFileInformationByHandleEx(second.value, FileIdInfo, &b, sizeof(b))
-        && a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof(a.FileId)) == 0;
+    const bool haveFirst = GetFileInformationByHandleEx(first.value, FileIdInfo, &a, sizeof(a)) != FALSE;
+    if (!haveFirst && !FileIdUnsupported(GetLastError())) return false;
+    const bool haveSecond = GetFileInformationByHandleEx(second.value, FileIdInfo, &b, sizeof(b)) != FALSE;
+    if (!haveSecond && !FileIdUnsupported(GetLastError())) return false;
+    if (haveFirst && haveSecond)
+        return a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof(a.FileId)) == 0;
+    BY_HANDLE_FILE_INFORMATION left{}, right{};
+    if (GetFileInformationByHandle(first.value, &left) && GetFileInformationByHandle(second.value, &right)
+        && left.dwVolumeSerialNumber && right.dwVolumeSerialNumber
+        && (left.nFileIndexHigh || left.nFileIndexLow) && (right.nFileIndexHigh || right.nFileIndexLow))
+        return left.dwVolumeSerialNumber == right.dwVolumeSerialNumber
+            && left.nFileIndexHigh == right.nFileIndexHigh && left.nFileIndexLow == right.nFileIndexLow;
+    // Ask the filesystem for the spelling of the opened directories. Compare exactly
+    // so a case-sensitive sibling can never be accepted by folding its name.
+    const auto name = NormalizedHandlePath(first.value);
+    return !name.empty() && name == NormalizedHandlePath(second.value);
 }
 void CheckPlainComponents(std::wstring full) {
     for (size_t p = 3;;) {
@@ -187,8 +212,7 @@ DWORD UserLock::AcquireForSetup(const setup::Paths& paths, bool isolated, DWORD 
     if (!GetFileInformationByHandleEx(root.value, FileIdInfo, &id, sizeof(id))) {
         const DWORD error = GetLastError();
         // Keep the previous locking behavior on filesystems without volume/file IDs.
-        if (error == ERROR_INVALID_PARAMETER || error == ERROR_INVALID_FUNCTION || error == ERROR_NOT_SUPPORTED)
-            return Acquire(paths.settingsLink, waitMs);
+        if (FileIdUnsupported(error)) return Acquire(paths.settingsLink, waitMs);
         return error;
     }
     auto name = L"Fixture." + std::to_wstring(id.VolumeSerialNumber) + L".";

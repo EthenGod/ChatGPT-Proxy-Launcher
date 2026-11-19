@@ -51,8 +51,8 @@ impl NativeJobs {
         self.activity.lock().unwrap().closing = false;
     }
 
-    pub fn mark_close_listener_ready(&self) {
-        self.activity.lock().unwrap().close_listener_ready = true;
+    pub fn set_close_listener_ready(&self, ready: bool) {
+        self.activity.lock().unwrap().close_listener_ready = ready;
     }
 
     pub fn allow_native_close(&self) -> bool {

@@ -11,7 +11,7 @@ default-run = "chatgpt-launcher-setup-ui"
 default = []
 custom-protocol = ["tauri/custom-protocol"]
 # Only the separate test executable accepts isolated paths / writes test reports.
-test-harness = []
+test-harness = ["windows-sys/Win32_Storage_FileSystem"]
 ui-prototype = ["test-harness"]
 program-sample = ["ui-prototype"]
 

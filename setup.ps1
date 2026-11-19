@@ -37,15 +37,19 @@ param([switch]$Headless, [string]$Request, [string]$Result,
             return $match.Value
         })
     }
+    function Test-SetupTagName([string]$Name) {
+        return $Name.Length -le 128 -and $Name -cmatch '\Av[0-9]+(?:\.[0-9]+){2,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z'
+    }
+    function Assert-SetupReleaseFilters([string]$Branch, [string]$Tag) {
+        if ($Tag -and !(Test-SetupTagName $Tag)) { throw (Get-SetupText 'download.releasetag') }
+        if ($Branch -and ($Branch.Length -gt 255 -or $Branch -match '[\s\x00-\x1f\x7f~^:?*\[\\]|\.\.|@\{|(^|/)\.|\.lock(/|$)|^[-/]|[./]$|//|^@$')) {
+            throw (Get-SetupText 'download.invalidbranch')
+        }
+    }
     function Get-SetupReleaseTag([string]$Repo, [string]$Channel, [string]$Branch, [string]$Tag) {
         $api = "https://api.github.com/repos/$Repo"
         $stablePattern = '\Av[0-9]+(?:\.[0-9]+){2,3}\z'
-        $tagPattern = '\Av[0-9]+(?:\.[0-9]+){2,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z'
-        if ($Tag -and ($Tag.Length -gt 128 -or $Tag -cnotmatch $tagPattern)) { throw (Get-SetupText 'download.releasetag') }
         if ($Branch) {
-            if ($Branch.Length -gt 255 -or $Branch -match '[\s\x00-\x1f\x7f~^:?*\[\\]|\.\.|@\{|(^|/)\.|\.lock(/|$)|^[-/]|[./]$|//|^@$') {
-                throw (Get-SetupText 'download.invalidbranch')
-            }
             $branchRef = Invoke-RestMethod -Uri ($api + '/branches/' + [Uri]::EscapeDataString($Branch)) -TimeoutSec 30
             $head = [string]$branchRef.commit.sha
             if ($branchRef.name -cne $Branch -or $head -cnotmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z') { throw (Get-SetupText 'download.invalidbranch') }
@@ -67,7 +71,7 @@ param([switch]$Headless, [string]$Request, [string]$Result,
         }
         foreach ($release in $candidates) {
             $name = [string]$release.tag_name
-            if ($name.Length -gt 128 -or $name -cnotmatch $tagPattern -or ($Tag -and $Tag -cne $name) -or
+            if (!(Test-SetupTagName $name) -or ($Tag -and $Tag -cne $name) -or
                 $release.draft -isnot [bool] -or $release.draft -or $release.prerelease -isnot [bool]) { continue }
             if ($Channel -eq 'Stable' -and ($release.prerelease -or $name -cnotmatch $stablePattern)) { continue }
             if ($Branch) {
@@ -181,7 +185,10 @@ namespace ChatGPTSetup {
         foreach ($hive in @('LocalMachine', 'CurrentUser')) {
             foreach ($view in @('Registry32', 'Registry64')) {
                 $version = $null
-                $value = Get-SetupRuntimeVersion $hive $view
+                try { $value = Get-SetupRuntimeVersion $hive $view }
+                catch [System.Security.SecurityException] { continue }
+                catch [UnauthorizedAccessException] { continue }
+                catch [IO.IOException] { continue }
                 if ($value -is [string] -and [version]::TryParse($value, [ref]$version) -and $version -gt [version]'0.0.0.0') { return $true }
             }
         }
@@ -198,21 +205,32 @@ namespace ChatGPTSetup {
         switch ($answer) { '1' { return 'install' }; '2' { return 'compatibility' }; default { return 'cancel' } }
     }
     function Install-SetupWebView2([string]$Installer) {
-        Invoke-SetupProgress {
-            Show-SetupStage (Get-SetupText 'download.webviewtransfer')
-            Invoke-WebRequest -UseBasicParsing -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $Installer -TimeoutSec 120
-            $stream = [IO.File]::OpenRead($Installer)
+        # Reserve the name only after the user selected installation. A pre-existing file is foreign.
+        [IO.File]::Open($Installer, 'CreateNew', 'Write', 'None').Dispose()
+        try {
+            Invoke-SetupProgress {
+                Show-SetupStage (Get-SetupText 'download.webviewtransfer')
+                Invoke-WebRequest -UseBasicParsing -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $Installer -TimeoutSec 120
+                $stream = [IO.File]::OpenRead($Installer)
+                try {
+                    $signature = Get-AuthenticodeSignature -LiteralPath $Installer
+                    if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate -or
+                        $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)') {
+                        throw (Get-SetupText 'download.webviewsignature')
+                    }
+                    Show-SetupStage (Get-SetupText 'download.webviewinstalling')
+                    $process = Start-Process -FilePath $Installer -ArgumentList @('/silent', '/install') -WindowStyle Hidden -PassThru
+                    try { $process.WaitForExit(); $code = $process.ExitCode } finally { $process.Dispose() }
+                    if ($code -notin @(0, 3010) -or !(Test-SetupWebView2)) { throw (Get-SetupText 'download.webviewfailed' @{code=$code}) }
+                } finally { $stream.Dispose() }
+            }
+        } finally {
+            $directory = [IO.Path]::GetDirectoryName($Installer)
             try {
-                $signature = Get-AuthenticodeSignature -LiteralPath $Installer
-                if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate -or
-                    $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)') {
-                    throw (Get-SetupText 'download.webviewsignature')
+                if (([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+                    [IO.File]::Delete($Installer)
                 }
-                Show-SetupStage (Get-SetupText 'download.webviewinstalling')
-                $process = Start-Process -FilePath $Installer -ArgumentList @('/silent', '/install') -WindowStyle Hidden -PassThru
-                try { $process.WaitForExit(); $code = $process.ExitCode } finally { $process.Dispose() }
-                if ($code -notin @(0, 3010) -or !(Test-SetupWebView2)) { throw (Get-SetupText 'download.webviewfailed' @{code=$code}) }
-            } finally { $stream.Dispose() }
+            } catch { Write-Warning (Get-SetupText 'download.removefile' @{path=$Installer}) }
         }
     }
     function Get-SetupUiMode([string]$Path, [string]$Installer) {
@@ -287,10 +305,12 @@ namespace ChatGPTSetup {
             if ($Manifest -and (![IO.File]::Exists($Manifest) -or (Get-Item -LiteralPath $Manifest).Length -gt 65536)) { throw (Get-SetupText 'download.manifestsize') }
             $phase = 'result'
             $resultStream = [IO.File]::Open($Result, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-            $phase = 'transport'
+            $phase = 'parse'
         }
         if ($entryParameters -and $entryParameters.ContainsKey('Branch') -and !$Branch) { throw (Get-SetupText 'download.invalidbranch') }
         if ($entryParameters -and $entryParameters.ContainsKey('Tag') -and !$Tag) { throw (Get-SetupText 'download.releasetag') }
+        Assert-SetupReleaseFilters $Branch $Tag
+        $phase = 'transport'
         $selectedTag = Invoke-SetupProgress {
             Show-SetupStage ((Get-SetupText 'download.latest'))
             Get-SetupReleaseTag $repo $Channel $Branch $Tag
@@ -373,7 +393,6 @@ namespace ChatGPTSetup {
             } else {
                 try { [IO.File]::Delete($exe) } catch { $cleanupComplete = $false; if (!$Headless) { Write-Warning (Get-SetupText 'download.removefile' @{path=$exe}) } }
                 try { [IO.File]::Delete($sums) } catch { $cleanupComplete = $false; if (!$Headless) { Write-Warning (Get-SetupText 'download.removefile' @{path=$sums}) } }
-                if ($webviewInstaller) { try { [IO.File]::Delete($webviewInstaller) } catch { $cleanupComplete = $false; if (!$Headless) { Write-Warning (Get-SetupText 'download.removefile' @{path=$webviewInstaller}) } } }
                 if ($Headless -and $nativeResult) { try { [IO.File]::Delete($nativeResult) } catch { $cleanupComplete = $false } }
                 try { [IO.Directory]::Delete($folder, $false) } catch { $cleanupComplete = $false; if (!$Headless) { Write-Warning (Get-SetupText 'download.keepfolder' @{path=$folder}) } }
             }

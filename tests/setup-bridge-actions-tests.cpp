@@ -3,6 +3,7 @@
 #include "SetupBridgeFixture.h"
 #include "../src/SetupCommandLine.h"
 #include "../src/SetupBridge.h"
+#include "../src/SetupProgramIcons.h"
 #include <shlobj.h>
 #include <wrl/client.h>
 #include <thread>
@@ -11,6 +12,15 @@
 static int syntheticCommit = -1;
 static bool failAfterCommit = false;
 static HANDLE saveEntered = nullptr, continueSave = nullptr;
+static std::wstring remoteTarget;
+static unsigned remoteProbes = 0;
+namespace setup::ui {
+bool TestProgramDrive(const std::wstring& path) { return path != remoteTarget && LocalProgramDrive(path); }
+}
+static DWORD WINAPI ObservedAttributes(PCWSTR path) {
+    if (!remoteTarget.empty() && remoteTarget == path) ++remoteProbes;
+    return GetFileAttributesW(path);
+}
 namespace setup {
 Result UnexpectedSystemPaths(Paths&) { return {ERROR_PATH_NOT_FOUND, L"System folders unavailable"}; }
 Result BridgeTestApply(const Paths& paths, const Options& options, Payload payload, std::wstring& target, bool isolated) {
@@ -30,7 +40,11 @@ Result BridgeTestApply(const Paths& paths, const Options& options, Payload paylo
 }
 #define Apply BridgeTestApply
 #define GetPaths UnexpectedSystemPaths
+#define LocalProgramDrive TestProgramDrive
+#define GetFileAttributesW ObservedAttributes
 #include "../src/SetupBridge.cpp"
+#undef GetFileAttributesW
+#undef LocalProgramDrive
 #undef GetPaths
 #undef Apply
 
@@ -282,6 +296,28 @@ int wmain(int argc, wchar_t** argv) {
         };
         const auto exeImage = imageOf(L"Example Tool"), typeImage = imageOf(L"ordinary.ps1");
         REQUIRE(exeImage.find(L"iVBORw0KGgo") == 0 && typeImage.find(L"iVBORw0KGgo") == 0 && exeImage != typeImage);
+        const auto policy = setup::Join(paths.defaultDirectory, automation::contract::PolicyFile);
+        Put(policy, "invalid policy");
+        remoteTarget = target;
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool());
+        REQUIRE(listed(L"工具.lnk", L"ordinary") && listed(L"Example Tool", L"invalid") && !remoteProbes);
+        remoteTarget.clear();
+        Put(policy, R"({"schemaVersion":1,"budgetMs":30000,"feedback":"quiet"})");
+        auto second = spec, other = record;
+        second[L"id"] = Json(L"org.example.other"); second[L"name"] = Json(L"Other Tool");
+        second[L"dependsOn"] = automation::ParseJson(R"([{"id":"org.example.tool"}])");
+        const auto secondManifest = setup::Join(root, L"other.json");
+        Put(secondManifest, automation::WriteJson(second));
+        other[L"id"] = Json(L"org.example.other"); other[L"manifestPath"] = Json(secondManifest);
+        const auto secondRegistration = setup::Join(registry, L"org.example.other.json");
+        Put(secondRegistration, automation::WriteJson(other));
+        auto cyclic = spec;
+        cyclic[L"dependsOn"] = automation::ParseJson(R"([{"id":"org.example.other"}])");
+        Put(manifest, automation::WriteJson(cyclic));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool());
+        REQUIRE(listed(L"工具.lnk", L"ordinary") && listed(L"Example Tool", L"invalid"));
+        REQUIRE(DeleteFileW(secondRegistration.c_str()));
+        Put(manifest, automation::WriteJson(spec));
         record[L"overrides"][L"enabled"] = Json(false); Put(registration, automation::WriteJson(record));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"entries").array.size() == 4);
         REQUIRE(listed(L"Example Tool", L"adapted-disabled") && listed(L"工具.lnk", L"ordinary"));

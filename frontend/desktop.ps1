@@ -12,6 +12,7 @@ foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache'
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 function Check-Exit([string]$Step) { if ($LASTEXITCODE -ne 0) { throw "$Step failed: $LASTEXITCODE" } }
+$buildLock = $null
 try {
     if ($RustBin) { $env:PATH = [IO.Path]::GetFullPath($RustBin) + ';' + $env:PATH }
     $extraTools = Join-Path $projectRoot 'work\ui-toolchain\bin'
@@ -19,6 +20,17 @@ try {
     if (!(Get-Command cargo.exe -ErrorAction SilentlyContinue)) { throw 'Rust MSVC toolchain required. Pass -RustBin or set CHATGPT_RUST_BIN.' }
     $env:CARGO_HOME = Join-Path $projectRoot 'work\ui-toolchain\cargo'
     $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'work\ui-target'
+    # Cargo releases its own lock before we copy and identify the executable.
+    # A workspace lock also protects the native resources shared by all variants.
+    $null = [IO.Directory]::CreateDirectory($env:CARGO_TARGET_DIR)
+    $lockPath = Join-Path $env:CARGO_TARGET_DIR 'desktop-build.lock'
+    while (!$buildLock) {
+        try { $buildLock = [IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch [IO.IOException] {
+            if (($_.Exception.GetBaseException().HResult -band 65535) -ne 32) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    }
     $env:npm_config_cache = Join-Path $projectRoot 'work\npm-cache'
     $visualPreview = $Command -in @('prototype', 'sample')
     $env:CHATGPT_UI_PROTOTYPE = $(if ($visualPreview) { '1' } else { '0' })
@@ -52,6 +64,8 @@ try {
                 & cargo.exe clippy --manifest-path src-tauri/Cargo.toml --locked --release --all-targets --all-features -- -D warnings; Check-Exit 'Clippy test features'
             }
         } elseif ($Command -eq 'dev') {
+            # The development window uses Cargo's debug output and may stay open indefinitely.
+            $buildLock.Dispose(); $buildLock = $null
             & npm.cmd exec -- tauri dev; Check-Exit 'Tauri dev'
         } else {
             $arguments = @('exec', '--', 'tauri', 'build', '--no-bundle', '--config', $configFile)
@@ -85,5 +99,6 @@ try {
         }
     } finally { Pop-Location }
 } finally {
+    if ($buildLock) { $buildLock.Dispose() }
     foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
 }

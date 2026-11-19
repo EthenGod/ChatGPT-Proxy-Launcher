@@ -92,7 +92,15 @@ struct ProgramList {
     }
 };
 void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std::wstring>& activeTargets) {
-    for (auto& record : chain::ReadRegistry(root)) {
+    bool dispatchable = true;
+    try { chain::ReadPolicy(root); }
+    catch (const automation::Invalid&) { dispatchable = false; }
+    catch (const automation::IoError&) { dispatchable = false; }
+    std::vector<chain::Record> records;
+    std::vector<size_t> order;
+    if (!chain::ReadRegistryOrder(root, records, order)) dispatchable = false;
+    if (!dispatchable) list.incomplete = true;
+    for (auto& record : records) {
         if (!record.error.empty()) {
             list.Add(record.path, record.id.empty() ? L".json" : record.id, record.path, L"", L"invalid");
             continue;
@@ -109,13 +117,14 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
                 continue;
             }
         }
-        if (entry.enabled) activeTargets.push_back(entry.target);
+        if (entry.enabled && dispatchable) activeTargets.push_back(entry.target);
         std::wstring arguments;
         for (const auto& argument : entry.arguments) {
             if (!arguments.empty()) arguments += L' ';
             arguments += automation::Quote(argument);
         }
-        list.Add(record.id, entry.name, entry.target, arguments, entry.enabled ? L"adapted" : L"adapted-disabled");
+        const auto status = !entry.enabled ? L"adapted-disabled" : dispatchable ? L"adapted" : L"invalid";
+        list.Add(record.id, entry.name, entry.target, arguments, status);
     }
 }
 void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& activeTargets, ProgramList& list) {
@@ -145,7 +154,7 @@ void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& act
             return automation::SamePath(active, target);
         })) continue;
         bool available = valid;
-        if (valid && shortcut) {
+        if (valid && shortcut && setup::ui::LocalProgramDrive(target)) {
             const auto attrs = GetFileAttributesW(target.c_str());
             available = attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
         }

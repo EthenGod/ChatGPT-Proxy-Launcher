@@ -13,6 +13,7 @@ param(
     [ValidateRange(1,30)][int]$ExpectedReads=1
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'ui-process-job.ps1')
 $projectRoot=Split-Path $PSScriptRoot
 if($Sample -and $Functional) { throw 'Select either the sample or the functional build' }
 $exe=Join-Path $projectRoot $(if($Sample) {'work\ui-sample\ChatGPTLauncherSetup-Sample.exe'} elseif($Functional) {'work\ui-stage1-test\ChatGPTLauncherSetup.exe'} else {'work\ui-prototype\ChatGPTLauncherSetup.exe'})
@@ -66,10 +67,23 @@ function Tree([int]$RootId, [object[]]$Rows=@(Get-CimInstance Win32_Process -Pro
     } while($added)
     return @($Rows | Where-Object { $ids.Contains([int]$_.ProcessId) })
 }
+function Assert-UiSessionDirectory([string]$Path) {
+    for ($component=[IO.DirectoryInfo]::new($Path); $null -ne $component; $component=$component.Parent) {
+        Require ($component.Exists -and !($component.Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Session directory is redirected'
+    }
+}
+function New-UiSessionDirectory {
+    Assert-UiSessionDirectory ([IO.Path]::GetDirectoryName($parent))
+    $null=[IO.Directory]::CreateDirectory($parent)
+    Assert-UiSessionDirectory $parent
+    $path=Join-Path $parent ([guid]::NewGuid().ToString('N'))
+    $null=New-Item -ItemType Directory -Path $path -ErrorAction Stop
+    Assert-UiSessionDirectory $path
+    return $path
+}
 function Start-Preview {
     Require ([IO.File]::Exists($exe)) 'Build the prototype first'
-    $root=Join-Path $parent ([guid]::NewGuid().ToString('N'))
-    $null=[IO.Directory]::CreateDirectory($root)
+    $root=New-UiSessionDirectory
     $info=[Diagnostics.ProcessStartInfo]::new()
     $info.FileName=$exe; $info.WorkingDirectory=$root; $info.UseShellExecute=$false
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT']=$root
@@ -81,7 +95,7 @@ function Start-Preview {
         $info.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']="--remote-debugging-port=$port --remote-debugging-address=127.0.0.1"
     }
     $timer=[Diagnostics.Stopwatch]::StartNew()
-    $process=[Diagnostics.Process]::Start($info)
+    $process=Start-UiTrackedProcess $info
     try {
         $deadline=[DateTime]::UtcNow.AddSeconds(30)
         while(![IO.File]::Exists((Join-Path $root 'ui-ready.json'))) {
@@ -95,7 +109,7 @@ function Start-Preview {
             }
         }
         $metadata=@{processId=$process.Id; started=$process.StartTime.ToUniversalTime().Ticks; readyMs=$timer.Elapsed.TotalMilliseconds; port=$port; exe=$exe; root=$root}
-        [IO.File]::WriteAllText((Join-Path $root 'session.json'),($metadata | ConvertTo-Json))
+        Write-UiTestReport (Join-Path $root 'session.json') ($metadata | ConvertTo-Json)
         return $metadata
     } catch {
         if(!$process.HasExited) { $null=$process.CloseMainWindow() }
@@ -104,8 +118,15 @@ function Start-Preview {
 }
 function Resolve-Session {
     $path=[IO.Path]::GetFullPath($Session)
-    Require ($path.StartsWith($parent+'\',[StringComparison]::OrdinalIgnoreCase)) 'Session must be an isolated prototype test'
-    return Get-Content -LiteralPath (Join-Path $path 'session.json') -Raw | ConvertFrom-Json
+    $leaf=[IO.Path]::GetFileName($path.TrimEnd('\'))
+    $path=$path.TrimEnd('\')
+    Require ($leaf -cmatch '^[a-f0-9]{32}$' -and [IO.Path]::GetDirectoryName($path) -ieq $parent) 'Session must be an isolated prototype test'
+    $path=Join-Path $parent $leaf
+    Assert-UiSessionDirectory $path
+    $metadata=[IO.File]::ReadAllText((Join-Path $path 'session.json')) | ConvertFrom-Json
+    Require ($metadata.root -ceq $path) 'Session metadata does not match its directory'
+    $metadata.root=$path
+    return $metadata
 }
 function Owned-Process($Metadata) {
     $process=Get-Process -Id $Metadata.processId -ErrorAction SilentlyContinue
@@ -136,7 +157,7 @@ function Inspect-Preview($Metadata, [int]$Reads=1) {
     })
     $hostSample=$samples | Where-Object { $_.id -eq $Metadata.processId -and $_.started -eq $Metadata.started }
     Require ($null -ne $hostSample) 'Preview owner changed while sampling'
-    [IO.File]::WriteAllText((Join-Path $Metadata.root 'tree.json'),(ConvertTo-Json -InputObject $samples))
+    Write-UiTestReport (Join-Path $Metadata.root 'tree.json') (ConvertTo-Json -InputObject $samples)
     return @{processes=$samples.Count; privateMiB=[Math]::Round(($samples | Measure-Object private -Sum).Sum/1MB,2);
         hostPrivateMiB=[Math]::Round($hostSample.private/1MB,2); hostThreads=$hostSample.threads;
         workingMiB=[Math]::Round(($samples | Measure-Object working -Sum).Sum/1MB,2); readyMs=[Math]::Round($Metadata.readyMs,2);
@@ -160,13 +181,7 @@ function Get-LiveSampleIds([object[]]$Rows) {
     }
 }
 function Verify-Closed($Metadata) {
-    $rows=Read-SampledTree $Metadata
-    $deadline=[DateTime]::UtcNow.AddSeconds(10)
-    do {
-        $remaining=@(Get-LiveSampleIds $rows)
-        if($remaining.Count) { Start-Sleep -Milliseconds 100 }
-    } while($remaining.Count -and [DateTime]::UtcNow -lt $deadline)
-    Require ($remaining.Count -eq 0) 'An owned prototype process remained after close'
+    Assert-UiJobExited $Metadata.root $Metadata.processId $Metadata.started
     $events=Get-Content -LiteralPath (Join-Path $Metadata.root 'close-events.json') -Raw | ConvertFrom-Json
     Require ($events.approved -ge 1) 'The page did not approve a normal close'
     if(!$Functional) { Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state' }
@@ -187,6 +202,23 @@ switch($Action) {
     }
     'VerifyClosed' { Verify-Closed (Resolve-Session) }
     'Smoke' {
+        & {
+            $Session=New-UiSessionDirectory
+            $text=[string][char]0x4E2D+[char]0x6587
+            $metaFile=Join-Path $Session 'session.json'
+            Write-UiTestReport $metaFile (@{root=$parent; text=$text} | ConvertTo-Json)
+            $refused=$false
+            try { $null=Resolve-Session } catch { $refused=$true }
+            Require $refused 'Session metadata redirected reports'
+            Write-UiTestReport $metaFile (@{root=$Session; text=$text} | ConvertTo-Json)
+            Require ((Resolve-Session).text -ceq $text) 'Session metadata did not preserve Unicode'
+            $sentinel=Join-Path $Session 'sentinel'
+            [IO.File]::WriteAllText($sentinel,'keep')
+            $linked=Join-Path $Session 'tree.json'
+            $null=New-Item -ItemType HardLink -Path $linked -Target $sentinel
+            Write-UiTestReport $linked '[]'
+            Require ([IO.File]::ReadAllText($sentinel) -ceq 'keep') 'Session report changed the old link target'
+        }
         $sampleTime=[datetime]'2026-01-01T00:00:00Z'
         $sampleTree=@(
             [pscustomobject]@{ProcessId=1;ParentProcessId=0;CreationDate=$sampleTime},
@@ -218,7 +250,7 @@ switch($Action) {
             $metrics.idleCpuMs=if ($metrics.processTreeChanged) { $null } else { [Math]::Round($metrics.cpuMs-$initial.cpuMs,2) }
             $metrics.cycle=$cycle
             if($Functional) { Require ([IO.File]::ReadAllText((Join-Path $metadata.root 'actions.json')) -eq $actionsBefore) 'Idle page repeated a native command' }
-            [IO.File]::WriteAllText((Join-Path $metadata.root 'metrics.json'),($metrics | ConvertTo-Json))
+            Write-UiTestReport (Join-Path $metadata.root 'metrics.json') ($metrics | ConvertTo-Json)
             Write-Output ($metrics | ConvertTo-Json -Compress)
             $process=Owned-Process $metadata
             try {
@@ -232,7 +264,7 @@ switch($Action) {
             $measurements+=$metrics
         }
         $report=Join-Path $parent ('lifecycle-'+[guid]::NewGuid().ToString('N')+'.json')
-        [IO.File]::WriteAllText($report, (ConvertTo-Json -InputObject $measurements))
+        Write-UiTestReport $report (ConvertTo-Json -InputObject $measurements)
         Write-Host "PASS embedded page, event permissions, $Cycles native closes and isolated lifecycle"
         Write-Host "Local measurements: $report"
     }

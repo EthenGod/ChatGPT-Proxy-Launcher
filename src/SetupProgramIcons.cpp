@@ -10,6 +10,12 @@
 #include <memory>
 
 namespace setup::ui {
+bool LocalProgramDrive(const std::wstring& path) {
+    if (path.size() < 3 || path[1] != L':' || path[2] != L'\\') return false;
+    const wchar_t root[] = {path[0], L':', L'\\', L'\0'};
+    const auto drive = GetDriveTypeW(root);
+    return drive == DRIVE_FIXED || drive == DRIVE_REMOVABLE || drive == DRIVE_RAMDISK || drive == DRIVE_CDROM;
+}
 namespace {
 using automation::Json;
 using Microsoft::WRL::ComPtr;
@@ -66,8 +72,7 @@ std::wstring LocalResource(const std::wstring& input, const std::wstring& item, 
     if (PathIsRelativeW(path.c_str())) path = Join(automation::ParentPath(item), path);
     try {
         path = automation::FullPath(path);
-        const auto drive = GetDriveTypeW(path.substr(0, 3).c_str());
-        if (drive != DRIVE_FIXED && drive != DRIVE_REMOVABLE && drive != DRIVE_RAMDISK && drive != DRIVE_CDROM) return {};
+        if (!LocalProgramDrive(path)) return {};
         if (isolatedRoot.empty()) automation::CheckPlainPath(path);
         else automation::CheckPathUnderRoot(path, isolatedRoot);
     } catch (const automation::Invalid&) { return {}; }

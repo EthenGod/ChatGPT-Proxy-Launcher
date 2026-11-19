@@ -22,6 +22,25 @@ bool ValidId(const std::wstring& id) {
     try { automation::FullPath(L"C:\\" + id + L".json"); } catch (...) { return false; }
     return true;
 }
+Policy ReadPolicy(const std::wstring& root) {
+    const auto path = Join(root, rules::PolicyFile);
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return {};
+        throw automation::IoError(error);
+    }
+    const auto json = automation::ParseJson(automation::ReadBytes(path, rules::PolicyBytes), rules::PolicyBytes);
+    json.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
+    if (json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::PolicySchema) throw Invalid("invalid-policy-version");
+    const auto budget = static_cast<DWORD>(json.At(L"budgetMs").Integer(rules::BudgetMinMs, rules::BudgetMaxMs));
+    const auto feedback = json.At(L"feedback").String();
+    if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback");
+    return {budget, feedback == L"notify"};
+}
+bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order) {
+    records = ReadRegistry(root);
+    return SortEntries(records, order);
+}
 namespace {
 std::array<unsigned long, 3> Version(const std::wstring& value) {
     if (value.size() > 32) throw Invalid("invalid-version");

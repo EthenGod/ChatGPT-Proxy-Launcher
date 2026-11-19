@@ -13,7 +13,7 @@
 - `frontend/desktop.ps1 -Command sample` 生成可双击的附加程序示例版。示例存于 `platform/mock.ts`，只在内存中操作。`tests/ui-prototype-tests.ps1 -Sample` 和 `tests/ui-program-sample-checks.js` 验证独立窗口与示例场景。`tests/ui-program-clip-checks.js` 逐帧检查语言过渡时的列表裁剪。
 - 新 UI 构建入口为 `frontend/desktop.ps1`。测试源码统一放在 `tests/frontend/`、`tests/rust/` 和 `tests/setup-bridge-*`；测试包及缓存放在 `work/`。`test-harness` 只编入隔离测试包，不进入普通 Tauri 构建或发布产物。
 - `frontend/desktop.ps1 -Command prototype` 构建内存模拟原型，`-Command harness` 构建真实接口的隔离测试包。`frontend/preview.ps1` 默认打开原型，加 `-Functional` 打开隔离功能界面。`tests/ui-prototype-tests.ps1` 同样支持 `-Functional`，检查内嵌页面、调用计数、关闭保护和所属进程清理。两种测试包均强制使用隔离路径；系统操作用替身。
-- 延长生命周期检查使用 `ui-prototype-tests.ps1 -Cycles <次数> -IdleSeconds <首轮秒数>`。`tests/ui-interaction-checks.js` 由 Playwright CLI 附加隔离功能窗口执行，覆盖三语、主题、渲染缩放和反复操作后的样式、DOM 清理；不能附加正式配置器。`-Action Resize` 只调整指定隔离测试窗口的物理尺寸。
+- 延长生命周期检查使用 `ui-prototype-tests.ps1 -Cycles <次数> -IdleSeconds <首轮秒数>`。`tests/ui-interaction-checks.js` 由 Playwright CLI 附加隔离功能窗口执行，覆盖三语、主题、渲染缩放和反复操作后的样式、DOM 清理；不能附加正式配置器。`-Action Resize` 只调整指定隔离测试窗口的物理尺寸。进程退出由 `tests/ui-process-job.ps1` 核对。
 - `tests/ui-accessibility-checks.js` 在同类隔离窗口检查键盘、长输入、原生错误详情、高对比度和减少动画；使用简体中文起始界面，不点击保存，不改 Windows 无障碍设置。浏览器模拟不能代替真实系统设置和屏幕阅读器验收。
 - `tests/ui-responsive-checks.js` 在隔离窗口逐帧检查底栏提示图标、保存按钮亮度和“恢复默认”的文字亮度。还检查代理栏换行时的移动和焦点，以及三语正文、菜单和弹窗的滚动范围。
 - `tests/ui-response-checks.js` 测量隔离窗口中开关、连续输入到原生校验完成的耗时。`work/launcher-tests.exe --benchmark-lookup` 测量启动器查找合成应用包的耗时和调用次数。

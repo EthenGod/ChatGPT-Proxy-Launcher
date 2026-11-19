@@ -85,9 +85,15 @@ try {
     if ($value.exitCode -ne 71 -or $value.committed -ne $false -or $calls.launch -ne $before+1) { throw 'Stable channel launched a beta' }
     $before = $calls.requests
     foreach ($name in 'Branch','Tag') {
-        $emptyFilter = @{$name=''}
-        $value = & $entry -Headless -Operation info -Result (Join-Path $testRoot ("empty-$name.json")) @emptyFilter
-        if ($value.exitCode -ne 71 -or $calls.requests -ne $before) { throw 'Empty filter fell back to a different release' }
+        foreach ($inputValue in @('','bad..filter')) {
+            $filter = @{$name=$inputValue}
+            $resultPath = Join-Path $testRoot ("filter-$name-$($inputValue.Length).json")
+            $value = & $entry -Headless -Operation info -Result $resultPath @filter
+            $written = [IO.File]::ReadAllText($resultPath) | ConvertFrom-Json
+            if ($value.exitCode -ne 20 -or $written.code -ne 'invalid-request' -or $written.stage -ne 'parse' -or $calls.requests -ne $before) {
+                throw 'Invalid release filter was not rejected before network access'
+            }
+        }
     }
     # Each operation uses the native CLI spelling and preserves literal file paths.
     $scenario = 'ok'; $calls.version = '1.1.0'

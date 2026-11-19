@@ -40,6 +40,14 @@ const helpTitles = {
   'ui.help.programs': 'ui.help.programs.title',
 } as const satisfies Partial<Record<MessageKey, MessageKey>>
 
+// The first release that starts ordinary StartupApps entries is v1.0.4.
+function supportsStartupApps(version: string) {
+  const parts = /^(\d+)\.(\d+)\.(\d+)(?:\.\d+)?(?:-[\w.-]+)?$/.exec(version)
+  if (!parts) return false
+  const major = Number(parts[1]), minor = Number(parts[2]), patch = Number(parts[3])
+  return major > 1 || (major === 1 && (minor > 0 || patch >= 4))
+}
+
 export function SetupPage({ service, host, scenarioControls, onLanguageChange, showPrograms = false }: {
   service: SetupService; host: WindowHost; scenarioControls?: React.ReactNode; onLanguageChange?: (language: string) => void; showPrograms?: boolean
 }) {
@@ -81,6 +89,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const focusAfterSave = useRef(false)
   const detectRevision = useRef(0)
   const loadRevision = useRef(0)
+  const savedWithoutSnapshot = useRef(false)
   const closeRequest = useRef<() => void>(() => {})
   const focusReturn = useRef<HTMLElement | null>(null)
   const cancelButton = useRef<HTMLButtonElement | null>(null)
@@ -151,6 +160,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   }
   const load = useCallback(async () => {
     const revision = ++loadRevision.current
+    savedWithoutSnapshot.current = false
     ++detectRevision.current; setDetectionPhase('idle')
     setLoading(true); setLoadError(null)
     try {
@@ -236,6 +246,19 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       if (reply.preferences.language !== language || reply.preferences.resolvedLanguage !== resolved) transitionAppearance('language', apply)
       else apply()
       setPreferenceWarnings(reply.warnings)
+      // Native notices include the OS error details. Refresh only their text,
+      // without replacing edits or the baseline for unsaved changes.
+      if (snapshot?.notice && reply.preferences.resolvedLanguage !== resolved) {
+        const previous = snapshot.notice
+        try {
+          const refreshed = await service.load()
+          if (alive.current && revision === preferenceRevision.current) {
+            setSnapshot(current => current?.notice === previous ? { ...current, notice: refreshed.notice } : current)
+          }
+        } catch (cause) {
+          if (alive.current && revision === preferenceRevision.current) reportFailure('ui.load.failed', cause)
+        }
+      }
     } catch { if (alive.current && revision === preferenceRevision.current) setPreferenceWarnings(['setup.language.unsaved', 'setup.status.themeunsaved']) }
   }
   function changeLanguage(value: string) {
@@ -260,7 +283,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   }
   function programAdded(path: string) {
     setProgramRevision(previous => previous + 1)
-    notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success', undefined, path)
+    const ready = snapshot?.deployed && (savedWithoutSnapshot.current || supportsStartupApps(snapshot.deployedVersion))
+    notify(ready ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success', undefined, path)
     setError(null)
     setNotice(null)
   }
@@ -322,9 +346,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
         try {
           const state = await service.load()
           if (!currentPage()) return
-          setSnapshot(state); setOptions({ ...state.options })
+          savedWithoutSnapshot.current = false
+          const restored = saved.warnings?.includes('setup.status.envunsaved')
+            ? { ...state.options, codexEnv: (saved.options ?? submitted).codexEnv } : state.options
+          setSnapshot({ ...state, options: restored }); setOptions({ ...restored })
         } catch (cause) {
           if (!currentPage()) return
+          savedWithoutSnapshot.current = true
           const committed = saved.options ?? submitted
           setOptions(committed)
           setSnapshot(current => current && { ...current, options: committed, deployed: true, hasSettings: true,

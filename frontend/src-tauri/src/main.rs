@@ -169,7 +169,7 @@ fn setup_window_ready(
     if window.label() != "main" {
         return Err("unexpected-window".into());
     }
-    state.mark_close_listener_ready();
+    state.set_close_listener_ready(true);
     #[cfg(feature = "test-harness")]
     if !harness::root().join("ui-ready.json").exists() {
         harness::mark("ui-ready");
@@ -272,10 +272,17 @@ fn main() {
                     // Config dataDirectory is relative to AppData. The builder
                     // is required for an absolute, fully isolated test profile.
                     #[cfg(feature = "test-harness")]
-                    let builder = builder.data_directory(harness::root().join("webview"));
+                    let builder = builder.data_directory(harness::webview_profile()?);
                     builder
                         .window_classname(window_class)
                         .on_navigation(bootstrap::allows_navigation)
+                        .on_page_load(|window, payload| {
+                            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                                window
+                                    .state::<NativeState>()
+                                    .set_close_listener_ready(false);
+                            }
+                        })
                         .build()
                 });
             if result.is_err() {
