@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import registry from '../locales/languages.json' with { type: 'json' }
 
 const localeModule = 'virtual:setup-locales'
+const servedDirectories = ['.', '../locales']
+if (process.env.VITEST === 'true') servedDirectories.push('../tests/frontend')
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), {
@@ -31,6 +33,6 @@ export default defineConfig({
   build: { target: 'es2022', outDir: process.env.CHATGPT_UI_DIST ?? 'dist', emptyOutDir: false,
     rollupOptions: { input: process.env.CHATGPT_UI_PROTOTYPE === '1'
       ? { main: 'index.html', prototype: 'prototype.html' } : { main: 'index.html' } } },
-  server: { fs: { allow: ['..'] } },
+  server: { fs: { allow: servedDirectories.map(dir => fileURLToPath(new URL(dir, import.meta.url))) } },
   test: { include: ['../tests/frontend/**/*.test.{ts,tsx}'] },
 })

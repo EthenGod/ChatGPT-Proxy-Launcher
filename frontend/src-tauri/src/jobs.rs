@@ -3,10 +3,18 @@ use std::sync::{Arc, Mutex};
 use windows_sys::Win32::Foundation::{ERROR_BUSY, ERROR_INVALID_DATA};
 
 #[derive(Default)]
+enum CloseListener {
+    #[default]
+    Loading,
+    Ready,
+    RendererExited,
+}
+
+#[derive(Default)]
 struct Activity {
     pending: usize,
     closing: bool,
-    close_listener_ready: bool,
+    listener: CloseListener,
 }
 
 pub struct NativeJobs {
@@ -51,14 +59,26 @@ impl NativeJobs {
         self.activity.lock().unwrap().closing = false;
     }
 
-    pub fn set_close_listener_ready(&self, ready: bool) {
-        self.activity.lock().unwrap().close_listener_ready = ready;
+    pub fn page_started(&self) {
+        self.activity.lock().unwrap().listener = CloseListener::Loading;
+    }
+
+    pub fn renderer_exited(&self) {
+        self.activity.lock().unwrap().listener = CloseListener::RendererExited;
+    }
+
+    pub fn listener_ready(&self) -> bool {
+        let mut activity = self.activity.lock().unwrap();
+        if activity.closing || matches!(activity.listener, CloseListener::RendererExited) {
+            return false;
+        }
+        activity.listener = CloseListener::Ready;
+        true
     }
 
     pub fn allow_native_close(&self) -> bool {
         let mut activity = self.activity.lock().unwrap();
-        // The page cannot edit settings before the listener handshake succeeds.
-        if !activity.close_listener_ready && activity.pending == 0 {
+        if !matches!(activity.listener, CloseListener::Ready) && activity.pending == 0 {
             activity.closing = true;
         }
         activity.closing

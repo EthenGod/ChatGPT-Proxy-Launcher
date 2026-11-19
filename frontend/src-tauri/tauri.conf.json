@@ -24,6 +24,7 @@
         "height": 760,
         "minWidth": 480,
         "minHeight": 400,
+        "preventOverflow": { "width": 32, "height": 48 },
         "center": true,
         "visible": true,
         "create": false,

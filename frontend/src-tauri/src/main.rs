@@ -20,6 +20,8 @@ use tauri::{Emitter, Manager};
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
 
 type NativeState = Arc<jobs::NativeJobs>;
+// One subscription per WebView, including across page reloads.
+type RendererWatch = std::sync::OnceLock<Result<(), String>>;
 
 async fn action<T: DeserializeOwned + Send + 'static>(
     state: &NativeState,
@@ -161,18 +163,65 @@ async fn set_setup_preferences(
     )
     .await
 }
+fn watch_renderer(view: tauri::webview::PlatformWebview, jobs: NativeState) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+    };
+    let handler = webview2_com::ProcessFailedEventHandler::create(Box::new(move |_, args| {
+        if let Some(args) = args {
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+            unsafe { args.ProcessFailedKind(&mut kind)? };
+            if matches!(
+                kind,
+                COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+                    | COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
+            ) {
+                jobs.renderer_exited();
+            }
+        }
+        Ok(())
+    }));
+    // The WebView owns the handler until it is destroyed. The handler only retains the job queue.
+    let mut token = 0;
+    unsafe {
+        view.controller()
+            .CoreWebView2()
+            .and_then(|web| web.add_ProcessFailed(&handler, &mut token))
+    }
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
-fn setup_window_ready(
+async fn setup_window_ready(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, NativeState>,
 ) -> Result<(), String> {
     if window.label() != "main" {
         return Err("unexpected-window".into());
     }
-    state.set_close_listener_ready(true);
-    #[cfg(feature = "test-harness")]
-    harness::mark_ready();
-    Ok(())
+    let jobs = Arc::clone(state.inner());
+    let main = window.clone();
+    let (send, received) = tokio::sync::oneshot::channel();
+    window
+        .with_webview(move |view| {
+            let installed = main.state::<RendererWatch>();
+            let ready = installed
+                .get_or_init(|| watch_renderer(view, Arc::clone(&jobs)))
+                .clone()
+                .and_then(|_| {
+                    jobs.listener_ready()
+                        .then_some(())
+                        .ok_or_else(|| "page-unavailable".into())
+                });
+            #[cfg(feature = "test-harness")]
+            if ready.is_ok() {
+                harness::mark_ready();
+            }
+            let _ = send.send(ready);
+        })
+        .map_err(|error| error.to_string())?;
+    received.await.map_err(|error| error.to_string())?
 }
 #[tauri::command]
 async fn close_setup_window(
@@ -257,6 +306,7 @@ fn main() {
     let context = tauri::generate_context!();
     let result = tauri::Builder::default()
         .manage(Arc::new(jobs::NativeJobs::new(paths)))
+        .manage(RendererWatch::new())
         .setup(move |app| {
             let config = &app.config().app.windows[0];
             #[cfg(feature = "ui-prototype")]
@@ -277,14 +327,19 @@ fn main() {
                     // is required for an absolute, fully isolated test profile.
                     #[cfg(feature = "test-harness")]
                     let builder = builder.data_directory(profile);
+                    #[cfg(all(feature = "test-harness", not(feature = "ui-prototype")))]
+                    let builder =
+                        if std::env::var_os("CHATGPT_SETUP_TEST_OVERSIZED_WINDOW").is_some() {
+                            builder.inner_size(12000.0, 12000.0)
+                        } else {
+                            builder
+                        };
                     builder
                         .window_classname(window_class)
                         .on_navigation(bootstrap::allows_navigation)
                         .on_page_load(|window, payload| {
                             if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
-                                window
-                                    .state::<NativeState>()
-                                    .set_close_listener_ready(false);
+                                window.state::<NativeState>().page_started();
                             }
                         })
                         .build()

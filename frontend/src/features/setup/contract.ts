@@ -35,7 +35,7 @@ interface SetupActions {
   detectPort(protocol: string, host: string): Promise<Detection>
   save(options: SetupOptions): Promise<SaveResult>
   listPrograms(): Promise<ProgramList>
-  openLocation(location: 'startup' | 'deployment' | 'windows' | 'conflict'): Promise<void>
+  openLocation(location: 'startup' | 'deployment' | 'windows' | 'conflict' | 'program-conflict'): Promise<void>
 }
 export interface DesktopSetupService extends SetupActions {
   validate(options: SetupOptions, signal?: AbortSignal): Promise<Validation>

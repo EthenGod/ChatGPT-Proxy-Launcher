@@ -1,13 +1,15 @@
 import type { MessageKey } from '../../i18n'
 
-export interface ErrorInfo { nativeError?: number; detail?: string; conflictDirectory?: string }
-export function nativeIssue(value: unknown): ErrorInfo {
+export type ConflictLocation = 'conflict' | 'program-conflict'
+export interface ErrorInfo { nativeError?: number; detail?: string; conflictDirectory?: string; conflictLocation?: ConflictLocation }
+export function nativeIssue(value: unknown, conflictLocation?: ConflictLocation): ErrorInfo {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   const code = record.nativeError
   return {
     nativeError: typeof code === 'number' && Number.isInteger(code) && code > 0 && code <= 0xffffffff ? code : undefined,
     detail: typeof record.message === 'string' ? record.message : typeof value === 'string' ? value : '',
     conflictDirectory: typeof record.conflictDirectory === 'string' ? record.conflictDirectory : undefined,
+    conflictLocation,
   }
 }
 

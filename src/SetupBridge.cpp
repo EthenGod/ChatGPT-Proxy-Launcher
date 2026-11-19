@@ -107,9 +107,17 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
     catch (const automation::IoError&) { dispatchable = false; }
     std::vector<chain::Record> records;
     std::vector<size_t> order;
-    if (!chain::ReadRegistryOrder(root, records, order)) dispatchable = false;
+    const auto localDrive = [](const std::wstring& path) {
+        return setup::ui::ClassifyProgramDrive(path) == setup::ui::ProgramDrive::Local;
+    };
+    if (!chain::ReadRegistryOrder(root, records, order, localDrive)) dispatchable = false;
     if (!dispatchable) list.incomplete = true;
     for (auto& record : records) {
+        if (record.error == L"manifest-drive-unavailable") {
+            list.incomplete = true;
+            list.Add(record.id, record.id, record.json.At(L"manifestPath").String(), L"", L"unavailable");
+            continue;
+        }
         if (!record.error.empty()) {
             list.Add(record.path, record.id.empty() ? L".json" : record.id, record.path, L"", L"invalid");
             continue;
@@ -119,9 +127,7 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
             // The dispatcher's disabled record deliberately does not open its package.
             // Only a matching, still valid manifest earns the protocol badge in the UI.
             try {
-                entry = chain::ReadManifest(entry.manifestPath, record.json.At(L"overrides"), [](const std::wstring& path) {
-                    return setup::ui::ClassifyProgramDrive(path) == setup::ui::ProgramDrive::Local;
-                });
+                entry = chain::ReadManifest(entry.manifestPath, record.json.At(L"overrides"), localDrive);
             }
             catch (const automation::Invalid&) {}
             catch (const automation::IoError&) {}
@@ -139,6 +145,8 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
         const auto status = !entry.enabled ? L"adapted-disabled" : dispatchable ? L"adapted" : L"invalid";
         list.Add(record.id, entry.name, entry.target, arguments, status);
     }
+    // An unread package can change the dependency graph. Keep ordinary entries visible in that case.
+    if (list.incomplete) activeTargets.clear();
 }
 void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& activeTargets, ProgramList& list) {
     automation::CheckPlainPath(folder);
@@ -405,16 +413,23 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
         } else if (action == SETUP_OPEN_LOCATION) {
             request.Fields({L"location"});
             const auto& location = request.At(L"location").String(32);
-            if (location != L"startup" && location != L"deployment" && location != L"windows" && location != L"conflict")
+            const bool programConflict = location == L"program-conflict";
+            if (location != L"startup" && location != L"deployment" && location != L"windows" && location != L"conflict" && !programConflict)
                 throw automation::Invalid("unknown-location");
             if (location == L"windows") {
                 if (!isolated) Require(setup::OpenStartupSettings(reinterpret_cast<HWND>(owner)));
-            } else if (!isolated || location == L"conflict") {
+            } else if (!isolated || location == L"conflict" || programConflict) {
                 automation::UserLock operation;
                 const DWORD locked = operation.AcquireForSetup(paths, isolated);
                 if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
                 std::wstring folder;
-                if (location == L"startup") Require(setup::EnsureCompanionFolder(paths, folder));
+                if (programConflict) {
+                    folder = setup::Join(paths.defaultDirectory, companions::Folder);
+                    automation::CheckPlainPath(folder);
+                    const auto attributes = GetFileAttributesW(folder.c_str());
+                    if (attributes == INVALID_FILE_ATTRIBUTES) throw automation::IoError(GetLastError());
+                    if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)) throw automation::IoError(ERROR_DIRECTORY);
+                } else if (location == L"startup") Require(setup::EnsureCompanionFolder(paths, folder));
                 else {
                     setup::Loaded loaded;
                     const auto status = setup::Load(paths, loaded);

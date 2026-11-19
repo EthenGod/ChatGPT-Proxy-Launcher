@@ -43,14 +43,30 @@ fn native_close_is_available_until_the_page_installs_its_listener() {
     let unread = jobs::NativeJobs::new(None);
     assert!(unread.allow_native_close());
     let ready = jobs::NativeJobs::new(None);
-    ready.set_close_listener_ready(true);
+    assert!(ready.listener_ready());
     assert!(!ready.allow_native_close());
-    ready.set_close_listener_ready(false);
+    ready.page_started();
     assert!(ready.allow_native_close());
     let ready = jobs::NativeJobs::new(None);
-    ready.set_close_listener_ready(true);
+    assert!(ready.listener_ready());
     assert!(ready.try_close());
     assert!(ready.allow_native_close());
+}
+
+#[test]
+fn renderer_exit_releases_close_until_a_new_page_is_ready() {
+    let jobs = jobs::NativeJobs::new(None);
+    assert!(jobs.listener_ready());
+    jobs.renderer_exited();
+    assert!(
+        !jobs.listener_ready(),
+        "a delayed handshake cannot revive the old page"
+    );
+    jobs.page_started();
+    assert!(jobs.listener_ready());
+    assert!(!jobs.allow_native_close());
+    jobs.renderer_exited();
+    assert!(jobs.allow_native_close());
 }
 
 #[test]
@@ -79,6 +95,12 @@ fn cancelled_waiters_leave_but_running_work_still_blocks_close() {
                 .await
         });
         running.await.unwrap();
+        assert!(jobs.listener_ready());
+        jobs.renderer_exited();
+        assert!(
+            !jobs.allow_native_close(),
+            "a lost page cannot interrupt a native write"
+        );
         caller.abort();
         assert!(caller.await.unwrap_err().is_cancelled());
         assert!(!jobs.try_close());

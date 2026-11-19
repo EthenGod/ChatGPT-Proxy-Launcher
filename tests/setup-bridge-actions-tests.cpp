@@ -299,6 +299,11 @@ int wmain(int argc, wchar_t** argv) {
         };
         const auto exeImage = imageOf(L"Example Tool"), typeImage = imageOf(L"ordinary.ps1");
         REQUIRE(exeImage.find(L"iVBORw0KGgo") == 0 && typeImage.find(L"iVBORw0KGgo") == 0 && exeImage != typeImage);
+        unprobedTarget = manifest;
+        simulatedDrive = setup::ui::ProgramDrive::Unverified;
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool());
+        REQUIRE(listed(L"org.example.tool", L"unavailable") && listed(L"工具.lnk", L"ordinary") && !targetProbes);
+        unprobedTarget.clear();
         const auto policy = setup::Join(paths.defaultDirectory, automation::contract::PolicyFile);
         Put(policy, "invalid policy");
         unprobedTarget = target;
@@ -344,6 +349,10 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"Example Tool", L"adapted-disabled"));
         unprobedTarget = target;
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled") && !targetProbes);
+        record[L"overrides"][L"enabled"] = Json(true); Put(registration, automation::WriteJson(record));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool());
+        REQUIRE(listed(L"org.example.tool", L"unavailable") && listed(L"工具.lnk", L"ordinary") && !targetProbes);
+        record[L"overrides"][L"enabled"] = Json(false); Put(registration, automation::WriteJson(record));
         unprobedTarget.clear();
         spec[L"id"] = Json(L"org.example.different"); Put(manifest, automation::WriteJson(spec));
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"org.example.tool", L"disabled"));
@@ -360,6 +369,18 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(call(SETUP_PREFERENCES, prefs) == 0 && reply.At(L"preferences").At(L"resolvedLanguage").String() == L"ja-JP");
         prefs[L"language"] = Json(L"bad"); REQUIRE(call(SETUP_PREFERENCES, prefs) != 0);
         auto location = Json::Object(); location[L"location"] = Json(L"windows");
+        auto addExe = Json::Object(); addExe[L"testSelection"] = Json(target);
+        REQUIRE(call(SETUP_ADD_PROGRAM, addExe) == 0 && commit == 1);
+        const auto originalLink = automation::ReadBytes(setup::CompanionShortcutPath(folder, target));
+        const auto sameName = setup::Join(nested, L"tool.exe");
+        REQUIRE(CopyFileW(target.c_str(), sameName.c_str(), TRUE));
+        addExe[L"testSelection"] = Json(sameName);
+        REQUIRE(call(SETUP_ADD_PROGRAM, addExe) == ERROR_ALREADY_EXISTS && !commit && reply.At(L"conflictDirectory").String() == folder);
+        auto programFolder = Json::Object(); programFolder[L"location"] = Json(L"program-conflict");
+        REQUIRE(call(SETUP_OPEN_LOCATION, programFolder) == 0 && !commit);
+        programFolder[L"path"] = Json(root);
+        REQUIRE(call(SETUP_OPEN_LOCATION, programFolder) == ERROR_INVALID_DATA);
+        REQUIRE(automation::ReadBytes(setup::CompanionShortcutPath(folder, target)) == originalLink);
         REQUIRE(call(SETUP_OPEN_LOCATION, location) == 0); // No real Settings process.
         location[L"location"] = Json(L"cmd.exe"); REQUIRE(call(SETUP_OPEN_LOCATION, location) != 0);
         location[L"location"] = Json(L"conflict");

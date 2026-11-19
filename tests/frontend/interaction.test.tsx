@@ -135,6 +135,22 @@ describe('settings prototype behavior', () => {
     await loaded()
     expect(screen.queryByText(folder)).toBeNull()
   })
+  it('opens the fixed companion folder from same-name program conflict details', async () => {
+    const folder = 'C:\\Example\\StartupApps'
+    const service = Object.assign(new MockSetupService('first', 0), {
+      selectProgram: vi.fn().mockRejectedValue({ nativeError: 183, conflictDirectory: folder }),
+    })
+    const open = vi.spyOn(service, 'openLocation')
+    const { user } = mount(service); await loaded()
+    const t = translator('zh-CN')
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    await user.click(await screen.findByRole('button', { name: '添加程序…' }))
+    await user.click(await screen.findByRole('button', { name: t('ui.details'), description: t('setup.error.add') }))
+    const dialog = within(await screen.findByRole('dialog', { name: t('ui.error.title') }))
+    expect(dialog.getByText(folder)).toBeVisible()
+    await user.click(dialog.getByRole('button', { name: t('ui.openconflictfolder') }))
+    expect(open).toHaveBeenCalledExactlyOnceWith('program-conflict')
+  })
   it.each(['zh-CN', 'en-US', 'ja-JP'])('renders the shared native Codex help in %s', async language => {
     Object.defineProperty(navigator, 'language', { configurable: true, value: language })
     const t = translator(language)

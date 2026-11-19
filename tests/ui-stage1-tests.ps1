@@ -57,6 +57,21 @@ public static class SetupPeResource {
     }
 }
 public static class SetupWindowClose {
+    [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct MonitorInfo { public int Size; public Rect Screen, Work; public uint Flags; }
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    public static bool FitsWorkArea(IntPtr window) {
+        IntPtr previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        try {
+            var info = new MonitorInfo { Size = Marshal.SizeOf(typeof(MonitorInfo)) };
+            Rect rect;
+            return GetMonitorInfoW(MonitorFromWindow(window, 2), ref info) && GetWindowRect(window, out rect)
+                && rect.Left >= info.Work.Left && rect.Top >= info.Work.Top && rect.Right <= info.Work.Right && rect.Bottom <= info.Work.Bottom;
+        } finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+    }
     [DllImport("user32.dll", SetLastError=true)]
     static extern bool PostMessageW(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")]
@@ -160,7 +175,7 @@ if (!$SkipGui) {
     Write-Host 'PASS Job tracks a child born after inspection until its real exit'
 }
 function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$WithoutWebView = $false,
-    [bool]$ShowWindow = $false, [bool]$WithoutPageScript = $false, [switch]$Track) {
+    [bool]$ShowWindow = $false, [bool]$WithoutPageScript = $false, [switch]$Track, [switch]$OversizedWindow) {
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $Exe
     $info.Arguments = $Tail
@@ -169,6 +184,7 @@ function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$Witho
     $info.WindowStyle = if ($ShowWindow) { 'Normal' } else { 'Hidden' }
     $info.WorkingDirectory = $Root
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT'] = $Root
+    if ($OversizedWindow) { $info.EnvironmentVariables['CHATGPT_SETUP_TEST_OVERSIZED_WINDOW'] = '1' }
     $info.EnvironmentVariables['WEBVIEW2_USER_DATA_FOLDER'] = Join-Path $Root 'inherited-profile'
     if ($WithoutWebView) { $info.EnvironmentVariables['WEBVIEW2_BROWSER_EXECUTABLE_FOLDER'] = (Join-Path $Root 'no-webview') }
     if ($WithoutPageScript) { $info.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--blink-settings=scriptEnabled=false' }
@@ -364,10 +380,11 @@ if (!$SkipGui) {
     }
     $root = Join-Path $testRoot 'no-page-script'
     $null = [IO.Directory]::CreateDirectory($root)
-    $process = Start-Isolated $desktop $root '' $false $true $true
+    $process = Start-Isolated $desktop $root '' $false $true $true -OversizedWindow
     try {
         Wait-Visible $process
         Require ([IO.File]::Exists((Join-Path $root 'gui-entered.json'))) 'Expected a WebView window'
+        Require ([SetupWindowClose]::FitsWorkArea($process.MainWindowHandle)) 'Window frame extended outside the monitor work area'
         [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
         Require ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'Window could not close before the page handshake'
         Require (![IO.File]::Exists((Join-Path $root 'ui-ready.json'))) 'Expected the page handshake to be absent'
@@ -375,7 +392,7 @@ if (!$SkipGui) {
         if (!$process.HasExited) { $null = $process.CloseMainWindow() }
         $process.Dispose()
     }
-    Write-Host 'PASS window bootstrap: visible and closable with the page script disabled'
+    Write-Host 'PASS window bootstrap: oversized frame fits the work area and closes with page script disabled'
     foreach ($case in @(@('--compatibility', $false), @('"--compatibility" ', $true), @('', $true))) {
         $root = Join-Path $testRoot ('compatibility-' + $compatibility.Count)
         $null = [IO.Directory]::CreateDirectory($root)

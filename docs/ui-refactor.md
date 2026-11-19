@@ -194,11 +194,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\frontend\preview.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ui-prototype-tests.ps1 -Functional -Cycles 10 -IdleSeconds 180
 ```
 
-交互检查用 Playwright CLI 附加实际 WebView2。以下命令仅启动隔离包；脚本不点击保存。CLI 缓存和截图留在 `work/`。
+交互检查用 Playwright CLI 附加隔离包的 WebView2。请在同一个 PowerShell 窗口运行下面的命令，以便窗口打开后立即取得调试地址。脚本不点击保存。CLI 缓存和截图留在 `work/`。
 
 ```powershell
 $root = (Get-Location).Path
-$session = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/ui-prototype-tests.ps1 -Action Start -Functional -RemoteDebugging | ConvertFrom-Json
+$session = & .\tests\ui-prototype-tests.ps1 -Action Start -Functional -RemoteDebugging | ConvertFrom-Json
 Add-Type -AssemblyName System.Net.Http
 $handler = [Net.Http.HttpClientHandler]::new()
 $handler.UseProxy = $false

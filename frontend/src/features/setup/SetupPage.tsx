@@ -11,7 +11,7 @@ import { NoticeToasts, createNoticeManager, type NoticeData } from '../../compon
 import { useAppearanceTransition } from '../../components/useAppearanceTransition'
 import { languageItems, resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
-import { nativeIssue, type ErrorInfo } from './errors'
+import { nativeIssue, type ConflictLocation, type ErrorInfo } from './errors'
 import { portErrorKey, sameOptions } from './options'
 import { useSetupValidation } from './useSetupValidation'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
@@ -108,8 +108,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     noticeManager.add({ id: 'activity', type, timeout: problem ? 5000 : 3500,
       data: { message, values, detail, error: problem, fullDetail } })
   }
-  function reportFailure(message: MessageKey, cause: unknown) {
-    const problem = nativeIssue(cause)
+  function reportFailure(message: MessageKey, cause: unknown, conflictLocation?: ConflictLocation) {
+    const problem = nativeIssue(cause, conflictLocation)
     setNotice({ message, error: problem }); notify(message, {}, '', 'error', problem)
   }
 
@@ -171,7 +171,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       requestedLanguage.current = data.preferences.language
       setError(null); setPreferenceWarnings([])
       setDark(data.preferences.dark); setResult(null); setNotice(null)
-    } catch (cause) { if (alive.current && revision === loadRevision.current) setLoadError({ message: 'ui.load.failed', issue: nativeIssue(cause) }) }
+    } catch (cause) { if (alive.current && revision === loadRevision.current) setLoadError({ message: 'ui.load.failed', issue: nativeIssue(cause, 'conflict') }) }
     finally { if (alive.current && revision === loadRevision.current) setLoading(false) }
   }, [service, resetValidation])
   useEffect(() => {
@@ -296,7 +296,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     try {
       const entry = await service.selectProgram()
       if (alive.current && entry) programAdded(entry.path)
-    } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
+    } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause, 'program-conflict') }
     finally { finishOperation(trigger) }
   }
 
@@ -385,7 +385,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       if (!alive.current) return
       programAdded(entry.path)
       setDialogOpen(false)
-    } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
+    } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause, 'program-conflict') }
     finally { finishOperation() }
   }
   async function openLocation(location: Parameters<SetupService['openLocation']>[0]) {
@@ -395,6 +395,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     catch (cause) { if (alive.current) reportFailure('setup.error.openfolder', cause) }
     finally { openingLocation.current = false }
   }
+  const errorDetails = (issue: ErrorInfo) => <ErrorDetails error={issue} t={t} disabled={busy} onOpenConflict={openLocation} />
   const helpButton = (key: keyof typeof helpTitles) => {
     const label = t(helpTitles[key])
     return <Hint label={label}><Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button></Hint>
@@ -439,9 +440,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
         </div>
       </header>
       {loading ? <SetupSkeleton />
-        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError.message)}</p><ErrorDetails error={loadError.issue} t={t} />
-          {loadError.issue.conflictDirectory && <><p className="error-detail">{loadError.issue.conflictDirectory}</p>
-            <Button className="button secondary-button" disabled={busy} onClick={() => void openLocation('conflict')}>{t('ui.openconflictfolder')}</Button></>}
+        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError.message)}</p>{errorDetails(loadError.issue)}
           {loadError.message === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
@@ -535,16 +534,15 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       {dialog === 'program-details' && inspectedProgram && <ProgramDetails program={inspectedProgram} t={t} />}
       {dialog === 'result' && result && <>
         {result.warnings?.map(key => <p key={key}>{t(key)}</p>)}
-        {!saved || !!result.nativeError ? <ErrorDetails error={result} t={t} /> : result.detail && <p className="error-detail">{result.detail}</p>}
+        {!saved || !!result.nativeError || !!result.conflictDirectory ? errorDetails(result) : result.detail && <p className="error-detail">{result.detail}</p>}
         {result.commit === 'rollback-incomplete' && <p>{t('ui.recovery')}</p>}
-        {result.conflictDirectory && <p className="error-detail">{result.conflictDirectory}</p>}
         {result.tasks.map(task => <div className="followup" key={task}><p>{t(task === 'startup' ? 'ui.task.startup' : 'ui.task.restart')}</p>{task === 'startup' && <Button className="control-button" onClick={() => void openLocation('windows')}>{t('ui.openstartup')}<ArrowUpRight size={14} /></Button>}</div>)}
       </>}
-      {dialog === 'error' && error && <ErrorDetails error={error} t={t} />}
+      {dialog === 'error' && error && errorDetails(error)}
       {dialog === 'notice' && selectedNotice && <div className="notice-detail">
         <p className="notice-summary">{t(selectedNotice.message, selectedNotice.values)}</p>
         {noticeDetail && <p>{typeof noticeDetail === 'string' ? noticeDetail : t(noticeDetail.message, noticeDetail.values)}</p>}
-        {selectedNotice.error && <ErrorDetails error={selectedNotice.error} t={t} />}
+        {selectedNotice.error && errorDetails(selectedNotice.error)}
       </div>}
     </Modal>
   </div>
