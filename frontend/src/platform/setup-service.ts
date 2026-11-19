@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { assertOptions, nativeRecord, parseSnapshot } from './types'
-import type { SetupService, SaveResult, Validation, ProgramEntry, ListedProgram, ProgramList, Detection } from '../features/setup/contract'
+import type { DesktopSetupService, SaveResult, Validation, ProgramEntry, ListedProgram, ProgramList, Detection } from '../features/setup/contract'
 import type { MessageKey } from '../i18n'
 import catalog from '../../../locales/zh-CN.json'
 
@@ -37,7 +37,7 @@ export function parseSaveResult(value: unknown): SaveResult {
 }
 
 /** One FIFO for all native work, including preferences. No polling or browser storage. */
-export function createSetupService(): SetupService {
+export function createSetupService(): DesktopSetupService {
   let tail = Promise.resolve()
   const call = <T,>(command: string, args?: Record<string, unknown>, signal?: AbortSignal): Promise<T> => {
     const job = tail.then(() => {

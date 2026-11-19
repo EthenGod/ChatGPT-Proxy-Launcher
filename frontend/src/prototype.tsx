@@ -6,7 +6,7 @@ import { MockSetupService, programScenarios, scenarios, scenarioLabels, type Sce
 import { desktopWindow } from './platform/desktop'
 import { translator } from './i18n'
 import './styles/theme.css'
-import './styles/prototype.css'
+import './styles/setup.css'
 
 function Prototype() {
   const initial = new URLSearchParams(window.location.search).get('scenario')

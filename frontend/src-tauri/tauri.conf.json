@@ -35,7 +35,7 @@
     "security": {
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",
       "capabilities": [
-        "setup-readonly"
+        "main-window"
       ]
     }
   },

@@ -12,7 +12,7 @@ import { useAppearanceTransition } from '../../components/useAppearanceTransitio
 import { resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeIssue, type ErrorInfo } from './errors'
-import { portErrorKey, sameOptions } from './preview'
+import { portErrorKey, sameOptions } from './options'
 import { useSetupValidation } from './useSetupValidation'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'

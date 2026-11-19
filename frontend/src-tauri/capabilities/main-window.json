@@ -1,6 +1,6 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "setup-readonly",
+  "identifier": "main-window",
   "description": "Configure the launcher through bounded native commands for the main window only.",
   "windows": [
     "main"

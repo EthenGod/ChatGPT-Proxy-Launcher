@@ -36,9 +36,9 @@ describe('desktop command boundary', () => {
     const service = createSetupService()
     const busy = service.openLocation('startup')
     const obsolete = new AbortController()
-    const skipped = service.validate!(fixture.options, obsolete.signal)
+    const skipped = service.validate(fixture.options, obsolete.signal)
     const current = { ...fixture.options, extra: '--latest' }
-    const latest = service.validate!(current)
+    const latest = service.validate(current)
     obsolete.abort()
     await Promise.resolve()
     expect(invoke).toHaveBeenCalledExactlyOnceWith('open_setup_location', { location: 'startup' })

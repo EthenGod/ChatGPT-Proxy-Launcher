@@ -7,7 +7,7 @@
 - 新 UI 位于 `frontend/src/`。正式入口 `main.tsx` 和模拟入口 `prototype.tsx` 共用 `features/setup/SetupPage.tsx`。共用控件在 `components/`，真实接口在 `platform/setup-service.ts`，模拟接口在 `platform/mock.ts`。Rust 外壳在 `frontend/src-tauri/`，C ABI 连接层为 `src/SetupBridge.*`。`src/SetupUiServices.*` 供新旧界面共用偏好、原生选择器和保存后处理。阶段约定与验证见 `docs/ui-refactor.md`。
 - `components/ScrollBox.tsx` 统一正文和弹层滚动。`useAppearanceTransition.ts` 处理语言和主题过渡。正式页与原型共用 `platform/desktop.ts` 管理窗口就绪、外观和关闭。权限仅授予主窗口。
 - `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。
-- `features/setup/SetupSkeleton.tsx` 提供加载骨架。`useSetupValidation.ts` 管理参数预览和原生校验结果。`SetupPage.tsx` 管理保存、选择、关闭和端口检测。
+- `features/setup/SetupSkeleton.tsx` 提供加载骨架。`useSetupValidation.ts` 管理参数预览和原生校验结果。模拟参数由 `platform/mock.ts` 生成。设置页共用样式在 `styles/setup.css`，主窗口权限在 `frontend/src-tauri/capabilities/main-window.json`。
 - `features/setup/SetupStatus.tsx` 显示底部的操作结果、退出提醒、输入问题入口和偏好警告。
 - `features/setup/CompanionPrograms.tsx` 显示附加程序。只读命令 `list_setup_programs` 合并普通启动目录和注册扩展。清单由现有 C++ 协议解析器校验。`src/SetupProgramIcons.*` 读取本地图标资源和 Windows 文件类型图标。
 - `frontend/desktop.ps1 -Command sample` 生成可双击的附加程序示例版。示例存于 `platform/mock.ts`，只在内存中操作。`tests/ui-prototype-tests.ps1 -Sample` 和 `tests/ui-program-sample-checks.js` 验证独立窗口与示例场景。`tests/ui-program-clip-checks.js` 逐帧检查语言过渡时的列表裁剪。

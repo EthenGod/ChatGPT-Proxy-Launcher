@@ -20,7 +20,7 @@ export interface Validation {
   valid: boolean; arguments: string; errors: Partial<Record<keyof SetupOptions, MessageKey>>; detail?: string; nativeError?: number
 }
 export interface Detection { port: string | null; source: string; message: string }
-export interface SetupService {
+interface SetupActions {
   native?: boolean
   settled?(): Promise<void>
   picker?: {
@@ -28,7 +28,6 @@ export interface SetupService {
     programs: ProgramEntry[]
     addProgram(entry: ProgramEntry): Promise<void>
   }
-  validate?(options: SetupOptions, signal?: AbortSignal): Promise<Validation>
   chooseDirectory?(initial: string): Promise<string | null>
   selectProgram?(): Promise<ProgramEntry | null>
   setPreferences?(dark: boolean, language: string): Promise<{ preferences: SetupSnapshot['preferences']; warnings: MessageKey[] }>
@@ -38,6 +37,14 @@ export interface SetupService {
   listPrograms(): Promise<ProgramList>
   openLocation(location: 'startup' | 'deployment' | 'windows'): Promise<void>
 }
+export interface DesktopSetupService extends SetupActions {
+  validate(options: SetupOptions, signal?: AbortSignal): Promise<Validation>
+}
+export interface PreviewSetupService extends SetupActions {
+  preview(options: SetupOptions): Validation
+}
+export type SetupService = DesktopSetupService | PreviewSetupService
+
 export interface WindowHost {
   connect(onClose: () => void): Promise<() => void>
   ready(): Promise<void>

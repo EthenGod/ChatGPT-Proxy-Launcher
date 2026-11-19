@@ -65,7 +65,10 @@ foreach($exe in @($setup,$launcher)) {
     if($exe -eq $launcher) { Require (@($imports | Where-Object { $_ -match 'webview|tauri' }).Count -eq 0) 'Standalone launcher gained a frontend dependency' }
 }
 
-$capability=Get-Content -LiteralPath (Join-Path $projectRoot 'frontend/src-tauri/capabilities/setup-readonly.json') -Raw | ConvertFrom-Json
+$capability=Get-Content -LiteralPath (Join-Path $projectRoot 'frontend/src-tauri/capabilities/main-window.json') -Raw | ConvertFrom-Json
+$config=Get-Content -LiteralPath (Join-Path $projectRoot 'frontend/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+$enabled=@($config.app.security.capabilities)
+Require ($enabled.Count -eq 1 -and $enabled[0] -ceq $capability.identifier) 'Desktop configuration must select the main window capability'
 Require (($capability.windows -join ',') -ceq 'main' -and !($capability.PSObject.Properties.Name -contains 'remote')) 'Desktop commands must be limited to the local main window'
 Write-Host "PASS delivery: $($names.Count) source files, production features/assets, same-build EXEs, no redistributable DLLs and local permissions"
 

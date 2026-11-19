@@ -3,7 +3,7 @@ import { SetupPage } from './features/setup/SetupPage'
 import { setupService } from './platform/setup-service'
 import { desktopWindow } from './platform/desktop'
 import './styles/theme.css'
-import './styles/prototype.css'
+import './styles/setup.css'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing application root')

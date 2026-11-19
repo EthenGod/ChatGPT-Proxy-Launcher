@@ -1,8 +1,8 @@
 import { version as setupVersion } from '../../package.json'
 import type { SetupOptions, SetupSnapshot } from './types'
-import type { SetupService, SaveResult, ProgramEntry, ListedProgram, Detection } from '../features/setup/contract'
+import type { PreviewSetupService, SaveResult, ProgramEntry, ListedProgram, Detection } from '../features/setup/contract'
 import { translator, resolveLanguage, type MessageKey } from '../i18n'
-import { previewOptions } from '../features/setup/preview'
+import { portErrorKey } from '../features/setup/options'
 import audioIcon from '../assets/sample-audio.png'
 import archiveIcon from '../assets/sample-archive.png'
 
@@ -16,7 +16,7 @@ export const scenarioLabels: Record<Scenario, MessageKey> = {
   programs: 'ui.scenario.programs', 'programs-partial': 'ui.scenario.programspartial', 'programs-error': 'ui.scenario.programserror',
   'save-error': 'ui.scenario.saveerror', rollback: 'ui.scenario.rollback', incomplete: 'ui.scenario.incomplete', warnings: 'ui.scenario.warnings',
 }
-export const defaultDirectory = 'C:\\Apps\\ChatGPT Launcher'
+const defaultDirectory = 'C:\\Apps\\ChatGPT Launcher'
 const samplePrograms: ProgramEntry[] = [
   { name: 'Notes.lnk', path: 'C:\\Apps\\Notes\\Notes.lnk', arguments: '--profile "Work notes"' },
   { name: 'Helper.exe', path: 'C:\\Apps\\Helper\\Helper.exe', arguments: '' },
@@ -25,8 +25,33 @@ const samplePrograms: ProgramEntry[] = [
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 const ordinal = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0
 
+// Prototype-only argument generation.
+function quoteArgument(value: string): string {
+  if (value && !/[\s"]/.test(value)) return value
+  return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"'
+}
+function previewOptions(options: SetupOptions) {
+  const errors: Partial<Record<keyof SetupOptions, MessageKey>> = {}
+  if (options.proxy) {
+    if (!options.host || /[\s/\\"@]/.test(options.host)) errors.host = 'ui.invalid.host'
+    const portError = portErrorKey(options.port)
+    if (portError) errors.port = portError
+    if (!['http', 'https', 'socks5'].includes(options.protocol)) errors.protocol = 'ui.invalid.protocol'
+  }
+  if (!/^[a-z]:\\.+/i.test(options.directory) || /[<>"|?*\r\n]/.test(options.directory)) errors.directory = 'ui.invalid.directory'
+  if (options.extra.length > 16000 || /[\r\n\0]/.test(options.extra)) errors.extra = 'ui.invalid.extra'
+  if (/[\r\n\0]/.test(options.bypass)) errors.bypass = 'ui.invalid.bypass'
+  const parts: string[] = []
+  if (options.proxy) parts.push(quoteArgument(`--proxy-server=${options.protocol}://${options.host}:${options.port}`))
+  if (options.silent) parts.push('--no-startup-window')
+  if (options.bypass) parts.push(quoteArgument(`--proxy-bypass-list=${options.bypass}`))
+  if (options.extra) parts.push(options.extra)
+  return { errors, valid: Object.keys(errors).length === 0, arguments: parts.join(' ') }
+}
+
 /** No invoke, filesystem, registry, fetch, storage or system actions. Reset on reload. */
-export class MockSetupService implements SetupService {
+export class MockSetupService implements PreviewSetupService {
+  readonly preview = previewOptions
   programs: ListedProgram[] = []
   calls = { load: 0, detect: 0, save: 0, add: 0, open: 0, list: 0 }
   readonly picker = {
@@ -88,7 +113,7 @@ export class MockSetupService implements SetupService {
   async save(options: SetupOptions): Promise<SaveResult> {
     this.calls.save++
     await wait((this.scenario === 'saving' ? 8000 : 1200) * this.delay)
-    if (!previewOptions(options).valid) return { commit: 'not-started', message: 'ui.save.invalid', tasks: [] }
+    if (!this.preview(options).valid) return { commit: 'not-started', message: 'ui.save.invalid', tasks: [] }
     const failure = { 'save-error': 'not-started', rollback: 'rolled-back', incomplete: 'rollback-incomplete' } as const
     if (this.scenario in failure) {
       const commit = failure[this.scenario as keyof typeof failure]
