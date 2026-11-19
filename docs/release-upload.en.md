@@ -2,25 +2,28 @@
 
 > This document may include machine-translated content. If anything differs, refer to the [Chinese original](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/docs/release-upload.md).
 
-# v1.2.1
+# 🚀 v1.2.1 Redesigned settings
 
 [![Download the Windows x64 configurator](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.1/ChatGPTLauncherSetup.exe)
 
-Double-click the download to open it. To update an existing installation, choose **Save changes**. [Direct download](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.1/ChatGPTLauncherSetup.exe) | [User guide](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/README.en.md)
+Double-click the configurator to set up launch at sign-in, your desktop shortcut, and your proxy from the main screen. If you already use the launcher, choose **Save changes** to update it.
 
-## What's new
+[Direct download](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.1/ChatGPTLauncherSetup.exe) | [User guide](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/README.en.md)
 
-- The redesigned configurator puts startup options, proxy settings, and the argument preview on one page. Turning the proxy on checks the port once. Click the notification in the lower right to see where the port was found.
-- Open **Advanced settings** to see which companion programs start with ChatGPT. Programs that support the launcher’s integration protocol have a badge. Select a name to see its path and arguments.
-- PowerShell downloads stable releases by default. Use `-Channel Preview` to include prereleases, `-Branch` to filter by branch, or `-Tag` to choose a specific release.
+## ✨ What's new
 
-## Fixes
+- Turn on the proxy and the configurator looks up the port and fills it in if it finds one. Click the notification in the lower right to see where it came from.
+- See and add programs that open alongside ChatGPT under **Advanced settings**. The list marks programs with launcher integration and shows which ones are disabled.
+- If your PC is missing WebView2, double-clicking the configurator opens compatibility mode so you can still change your settings.
+- PowerShell downloads stable releases by default. You can also choose to try a beta.
 
-- Opening the configurator again restores its minimized window. Clicking Save repeatedly writes the settings once.
-- The configurator reads the deployed settings back after saving. If the write succeeds but the read fails, it still shows the settings as saved and asks you to reopen the configurator.
+## 🛠️ Fixes
 
-## Before saving
+- Fixed a black flash across the window when switching languages. The proxy address and port you entered also stay in place.
+- If you minimize the configurator, double-clicking it again brings back the same window so you can pick up where you left off.
+- Fixed an error message that could appear even after a successful save.
 
-If WebView2 is missing, double-clicking the configurator opens compatibility mode. Opening it from PowerShell also gives you the option to install WebView2.
+## ⚠️ Known issues
 
-Silent startup remains unavailable. When applying proxy settings to Codex, save your work in ChatGPT before saving the settings. The configurator will try to quit ChatGPT.
+- Silent startup is still unavailable. The main ChatGPT window may appear at launch.
+- With **Apply to Codex** enabled, save your work first. When you save the settings, the configurator will try to quit ChatGPT. If prompted, quit it manually and reopen it.
