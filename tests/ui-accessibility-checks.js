@@ -103,7 +103,11 @@ async page => {
       const code = await page.locator('.error-heading code').innerText();
       if (!new RegExp('(?:^|\\s)' + (scenario === 'port' ? '87' : '206') + '$').test(code)) throw Error('Incorrect native error: ' + code);
       if (!await page.locator('.error-advice').innerText()) throw Error('Missing recovery advice');
-      const summary = page.locator('.error-guide summary'); await tabTo(summary); await key('Enter');
+      const summary = page.locator('.error-guide summary');
+      if (!await summary.evaluate(el => getComputedStyle(el).listStyleType === 'none' && !!el.querySelector('svg[aria-hidden="true"]'))) {
+        throw Error('The technical details must display one custom disclosure arrow');
+      }
+      await tabTo(summary); await key('Enter');
       if (!await page.locator('.error-guide details').evaluate(element => element.open)) throw Error('Technical details did not expand');
       await geometry(); await closeModal(details);
       nativeErrors.push({ scenario, code, layout });

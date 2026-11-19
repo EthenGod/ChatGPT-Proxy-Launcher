@@ -19,7 +19,7 @@
   --radius-help: 6px;
   --control-inset: 2px;
   --scrollbar-space: 12px;
-  --page-inset: 24px;
+  --page-inset: clamp(16px, calc(25vw - 115px), 24px);
   --settings-width: 744px;
   --radius-inset: calc(var(--radius-control) - var(--control-inset) - 1px);
   --radius-pill: 999px;
@@ -34,14 +34,16 @@
 button, input { font: inherit; }
 button, input, a { -webkit-tap-highlight-color: transparent; }
 button { touch-action: manipulation; user-select: none; }
-body { user-select: none; }
+html, body, #root { height: 100%; overflow: clip; }
+/* Keep portaled hints inside the clipped body as their anchors scroll away. */
+body { position: relative; user-select: none; }
 input, textarea, .argument-preview, .dialog-description, .error-detail, .error-guide, .notice-detail, .status-line > span { user-select: text; }
 .error-guide summary { user-select: none; }
 button:focus-visible, .button:focus-visible, [role=radio]:focus-visible, [role=switch]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 button:disabled, [data-disabled] { cursor: default; }
 button svg { flex-shrink: 0; }
-.setup-shell { height: 100dvh; min-height: 280px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--gray-1); }
-.prototype-bar { min-height: 32px; padding: 2px 24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--gray-2); border-bottom: 1px solid var(--gray-6); font-size: 12px; color: var(--gray-11); }
+.setup-shell { height: 100dvh; display: grid; grid-template: auto minmax(0, 1fr) auto / minmax(0, 1fr); background: var(--gray-1); }
+.prototype-bar { min-height: 32px; padding: 2px var(--page-inset); display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--gray-2); border-bottom: 1px solid var(--gray-6); font-size: 12px; color: var(--gray-11); }
 .prototype-bar fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .prototype-label { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 2px 0; background: none; border: 0; border-radius: var(--radius-small); color: inherit; cursor: pointer; white-space: nowrap; }
 .prototype-label { transition: color var(--motion-fast) ease-out; }
@@ -117,7 +119,26 @@ button svg { flex-shrink: 0; }
 .switch-thumb { width: 16px; height: 16px; background: white; border-radius: var(--radius-pill); box-shadow: 0 1px 2px #0003; transform-origin: left center; transform: translateX(var(--thumb-x, 0px)) scaleX(var(--thumb-scale, 1)); transition: transform var(--motion-fast) var(--motion-space); }
 .switch[data-checked] .switch-thumb { --thumb-x: 14px; transform-origin: right center; }
 .switch:active:not([data-disabled]) .switch-thumb { --thumb-scale: 1.12; }
-.connection-fields { display: grid; grid-template-columns: 1.5fr 1.25fr .8fr; gap: 12px; padding: 8px 16px 6px; }
+.connection-fields {
+  --connection-gap: 12px;
+  --protocol-width: calc((100% - 2 * var(--connection-gap)) * 1.5 / (1.5 + 1.25 + .8));
+  --reflow: 130ms cubic-bezier(.22, .61, .36, 1);
+  --row-delay: 120ms;
+  --inline-delay: 0ms;
+  display: grid; grid-template-columns: minmax(0, 1fr); padding: 8px 16px 6px;
+}
+/* The protocol shares the first line in wide windows. Grow its row before
+   widening the control, and reverse that order when returning to one line. */
+.connection-protocol-row {
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 0fr);
+  transition: grid-template-rows var(--reflow) var(--row-delay);
+}
+.protocol-field { align-self: start; inline-size: var(--protocol-width); transition: inline-size var(--reflow) var(--inline-delay); }
+.connection-endpoints {
+  display: grid; grid-template-columns: minmax(0, 1fr) calc((100% - var(--connection-gap)) * .8 / (1.25 + .8));
+  gap: var(--connection-gap); margin-inline-start: calc(var(--protocol-width) + var(--connection-gap)); margin-block-start: 0;
+  transition: margin-inline-start var(--reflow) var(--inline-delay), grid-template-columns var(--reflow) var(--inline-delay), margin-block-start var(--reflow) var(--row-delay);
+}
 .field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .field-heading { display: flex; align-items: center; gap: 4px; min-height: 18px; }
 .field-heading label, .field > span:first-child { font-size: 12px; line-height: 18px; color: var(--gray-11); }
@@ -235,6 +256,7 @@ button svg { flex-shrink: 0; }
   .program-badge { padding-inline: 4px; }
 }
 .settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
+.settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
 .status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); }
 .status-scroll:not(:has(.status-line, .status-input-link)) { flex-basis: 0; }
 .footer-status { display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 12px; line-height: 18px; color: var(--gray-11); }
@@ -336,7 +358,10 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 .error-guide .error-advice { color: var(--gray-12); }
 .error-advice strong { font-weight: 500; }
 .error-guide details { margin-top: 12px; font-size: 12px; }
-.error-guide summary { width: fit-content; cursor: pointer; color: var(--gray-11); border-radius: var(--radius-small); }
+.error-guide summary { display: inline-flex; align-items: center; gap: 4px; width: fit-content; list-style: none; cursor: pointer; color: var(--gray-11); border-radius: var(--radius-small); }
+.error-guide summary::-webkit-details-marker { display: none; }
+.error-guide summary svg { flex: none; transition: transform var(--motion-fast) ease-out; }
+.error-guide details[open] > summary svg { transform: rotate(90deg); }
 .error-guide summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .error-guide pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 Consolas, 'Segoe UI', monospace; user-select: text; }
 .notice-viewport { position: absolute; right: 8px; bottom: calc(100% + 10px); width: max-content; max-width: min(320px, calc(100% - 16px)); display: flex; flex-direction: column; gap: 8px; z-index: 20; outline: none; pointer-events: none; }
@@ -376,6 +401,7 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 :root[data-appearance-transition=language] [style*="view-transition-name"] { transition: none !important; }
 :root[data-appearance-transition=language] .disclosure-panel { height: auto; }
 :root[data-appearance-transition=language] :is(.scroll-viewport, .disclosure-panel) { view-transition-group: contain; }
+::view-transition-group-children(.language-clip) { overflow: clip; border-radius: inherit; }
 :root[data-window-resizing] :is(.scroll-content, .scroll-track, .program-scroll, .disclosure-panel) { transition: none !important; }
 :root[data-window-resizing] .disclosure-panel[data-open]:not([data-ending-style]) { height: auto; }
 :root[data-appearance-transition=language]::view-transition-group(*) { animation-duration: var(--motion-enter); animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
@@ -389,18 +415,18 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 @keyframes appearance-out { to { opacity: 0; } }
 @keyframes appearance-in { from { opacity: 0; } }
 @media (max-width: 540px) {
-  :root { --page-inset: 16px; }
-  .prototype-bar { padding-inline: var(--page-inset); }
   .settings-header { gap: 8px; }
-  .connection-fields { grid-template-columns: minmax(0, 1fr) 104px; }
-  .protocol-field { grid-column: 1 / -1; }
+  .connection-fields { --row-delay: 0ms; --inline-delay: 120ms; }
+  .connection-protocol-row { grid-template-rows: minmax(0, 1fr); }
+  .protocol-field { inline-size: 100%; }
+  .connection-endpoints { grid-template-columns: minmax(0, 1fr) var(--compact-port-width, 104px); margin-inline-start: 0; margin-block-start: var(--connection-gap); }
   .setting-row { gap: 12px; }
   .settings-footer { padding-block: 10px; column-gap: 12px; }
 }
 @media (max-width: 360px) {
   :root { --page-inset: 12px; }
   .settings-header { align-items: start; }
-  .connection-fields { padding-inline: 12px; gap: 8px; grid-template-columns: minmax(0, 1fr) 90px; }
+  .connection-fields { padding-inline: 12px; --connection-gap: 8px; --compact-port-width: 90px; }
   .setting-row { padding-inline: 12px; }
   .section-heading { padding-inline-end: 13px; }
   .quiet-button { max-width: 160px; }

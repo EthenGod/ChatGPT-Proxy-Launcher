@@ -77,7 +77,7 @@ $sourceNames = @(
     'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
     'tests/taskbar-tests.cpp', 'tests/test-build.cmd',
     'tests/SetupBridgeFixture.h', 'tests/setup-bridge-tests.cpp', 'tests/setup-bridge-actions-tests.cpp', 'tests/setup-bridge-runner.cpp', 'tests/test-bridge.cmd', 'tests/ui-stage1-tests.ps1',
-    'tests/webview-download-tests.ps1', 'tests/ui-prototype-tests.ps1', 'tests/ui-interaction-checks.js', 'tests/ui-accessibility-checks.js', 'tests/ui-program-sample-checks.js', 'tests/ui-program-clip-checks.js', 'tests/delivery-tests.ps1',
+    'tests/webview-download-tests.ps1', 'tests/ui-prototype-tests.ps1', 'tests/ui-interaction-checks.js', 'tests/ui-accessibility-checks.js', 'tests/ui-responsive-checks.js', 'tests/ui-program-sample-checks.js', 'tests/ui-program-clip-checks.js', 'tests/delivery-tests.ps1',
     'tests/fixtures/setup-snapshot.json', 'tests/frontend/contract.test.ts', 'tests/frontend/desktop-service.test.ts', 'tests/frontend/interaction.test.tsx', 'tests/frontend/appearance.test.tsx', 'tests/frontend/errors.test.tsx',
     'tests/rust/bridge_contract.rs', 'tests/rust/embedded_assets.rs',
     'frontend/.npmrc', 'frontend/.cargo/config.toml', 'frontend/desktop.ps1', 'frontend/preview.ps1', 'frontend/index.html', 'frontend/prototype.html',

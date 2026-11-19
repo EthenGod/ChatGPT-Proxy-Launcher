@@ -374,19 +374,25 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
               <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls={options.proxy ? 'proxy-details' : undefined} checked={options.proxy} disabled={locked} onChange={changeProxy} /></div>
             <Collapsible.Panel id="proxy-details" className="disclosure-panel">
               <div className="settings-card proxy-card">
-                <div className="connection-fields"><div className="field protocol-field"><span id="protocol-label" data-motion-text>{t('setup.label.protocol')}</span>
-                  <RadioGroup aria-labelledby="protocol-label" className="segmented" data-protocol={options.protocol} value={options.protocol} disabled={locked} onValueChange={value => update('protocol', String(value))}>
-                    {['http', 'https', 'socks5'].map(protocol => <Radio.Root key={protocol} value={protocol} className="segment">{protocol.toUpperCase()}</Radio.Root>)}
-                  </RadioGroup></div>
-                  <TextField id="proxy-host" label={t('setup.label.host')} value={options.host} onChange={event => update('host', event.target.value)} disabled={locked} error={fieldError('host')} autoComplete="off" spellCheck={false} />
-                  <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} errorDescriptionId="validation-message" inputMode="numeric" maxLength={5} autoComplete="off"
-                    suffix={<Hint label={t(detecting ? 'ui.detect.running' : 'ui.detect')}>
-                      <Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} aria-busy={detecting}
-                        disabled={locked || detecting} focusableWhenDisabled={detecting && !locked} onClick={() => void detect()}>
-                        <span className="detect-glyph" data-phase={detectionPhase} aria-hidden="true">
-                          <Search className="detect-search" size={16} /><LoaderCircle className="detect-progress" size={16} /><Check className="detect-check" size={16} />
-                        </span>
-                      </Button></Hint>} />
+                <div className="connection-fields">
+                  <div className="connection-protocol-row">
+                    <div className="field protocol-field"><span id="protocol-label" data-motion-text>{t('setup.label.protocol')}</span>
+                      <RadioGroup aria-labelledby="protocol-label" className="segmented" data-protocol={options.protocol} value={options.protocol} disabled={locked} onValueChange={value => update('protocol', String(value))}>
+                        {['http', 'https', 'socks5'].map(protocol => <Radio.Root key={protocol} value={protocol} className="segment">{protocol.toUpperCase()}</Radio.Root>)}
+                      </RadioGroup>
+                    </div>
+                  </div>
+                  <div className="connection-endpoints">
+                    <TextField id="proxy-host" label={t('setup.label.host')} value={options.host} onChange={event => update('host', event.target.value)} disabled={locked} error={fieldError('host')} autoComplete="off" spellCheck={false} />
+                    <TextField id="proxy-port" className="port-field" label={t('setup.label.port')} value={options.port} onChange={event => update('port', event.target.value)} disabled={locked} error={fieldError('port')} errorDescriptionId="validation-message" inputMode="numeric" maxLength={5} autoComplete="off"
+                      suffix={<Hint label={t(detecting ? 'ui.detect.running' : 'ui.detect')}>
+                        <Button className="input-action" aria-label={t(detecting ? 'ui.detect.running' : 'ui.detect')} aria-busy={detecting}
+                          disabled={locked || detecting} focusableWhenDisabled={detecting && !locked} onClick={() => void detect()}>
+                          <span className="detect-glyph" data-phase={detectionPhase} aria-hidden="true">
+                            <Search className="detect-search" size={16} /><LoaderCircle className="detect-progress" size={16} /><Check className="detect-check" size={16} />
+                          </span>
+                        </Button></Hint>} />
+                  </div>
                 </div>
                 <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex')} />
               </div>

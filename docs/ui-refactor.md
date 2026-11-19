@@ -381,6 +381,8 @@ try {
 
 在同一会话用 `-Action Resize -Functional -Session $session.root -Width 480 -Height 400` 调整外框后，可再运行交互检查。尺寸单位是物理像素，页面可用尺寸会扣除标题栏和边框。结束前先用 `-Action Inspect` 记录所属进程；点击标题栏关闭，检查 Esc 返回和放弃更改，再用 `-Action VerifyClosed` 核对退出。后三个动作也须传入 `-Functional -Session $session.root`。不要把脚本附加到正式配置器。
 
+复测语言亮度和窄窗布局时，另开一个隔离功能窗口，将上例的 `--filename` 改为 `../../tests/ui-responsive-checks.js`。它采样深浅色中“恢复默认”的画面，检查 540 像素断点两侧的换行、焦点和反向拖动，再检查三语菜单及说明窗的边界。
+
 窗口实际 DPI 来自 [GetDpiForWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdpiforwindow)。页面密度由 [CDP Emulation](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/) 临时覆盖，结束后还原；它不验证 Windows 原生控件缩放。
 
 ### 补充结果

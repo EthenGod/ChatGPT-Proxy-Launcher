@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 import type { translator } from '../i18n'
 import { errorPresentation, type ErrorInfo } from '../features/setup/errors'
 
@@ -8,6 +9,6 @@ export function ErrorDetails({ error, t }: { error: ErrorInfo; t: ReturnType<typ
       <code>{info.code ? t('ui.error.code', { code: info.code }) : t('ui.error.nocode')}</code></div>
     <p>{t(info.explanation)}</p>
     <p className="error-advice"><strong>{t('ui.error.action')}</strong>{t(info.action)}</p>
-    {error.detail && <details><summary>{t('ui.error.technical')}</summary><pre>{error.detail}</pre></details>}
+    {error.detail && <details><summary><ChevronRight size={14} aria-hidden="true" /><span data-motion-text>{t('ui.error.technical')}</span></summary><pre>{error.detail}</pre></details>}
   </div>
 }

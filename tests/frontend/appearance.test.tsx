@@ -74,6 +74,39 @@ describe('appearance changes', () => {
     unmount()
     expect(document.documentElement.dataset.windowResizing).toBeUndefined()
   })
+  it('keeps detached labels at the opacity of their control until the snapshot is released', async () => {
+    const { getByRole } = render(<div>
+      <button className="text-button" disabled style={{ opacity: .5 }}><span data-motion-text>Restore default</span></button>
+      <button className="text-button" style={{ opacity: 1 }}><span data-motion-text>Browse</span></button>
+    </div>)
+    const disabled = getByRole('button', { name: 'Restore default' })
+    const enabled = getByRole('button', { name: 'Browse' })
+    const { commits, finishes } = transitions()
+    const { result } = renderHook(useAppearanceTransition)
+    act(() => result.current('language', () => { disabled.firstElementChild!.textContent = '恢复默认' }))
+    act(() => commits[0]!())
+    const name = disabled.style.getPropertyValue('view-transition-name')
+    const rules = Array.from(document.styleSheets).flatMap(sheet => Array.from(sheet.cssRules)) as CSSStyleRule[]
+    expect(disabled.style.getPropertyValue('view-transition-group')).toBe('contain')
+    expect(rules.find(rule => rule.selectorText === `::view-transition-group-children(${name})`)?.style.opacity).toBe('0.5')
+    expect(enabled.style.getPropertyValue('view-transition-group')).toBe('')
+    await act(async () => finishes[0]!())
+    expect(disabled.style.getPropertyValue('view-transition-group')).toBe('')
+    expect(disabled.style.opacity).toBe('0.5')
+  })
+  it('extracts visible program labels and leaves fully clipped rows in their viewport', () => {
+    const { container } = render(<div className="program-scroll"><div className="scroll-viewport"><ul className="program-list">
+      {['Above', 'Partial', 'Visible', 'Below'].map(label => <li key={label}><span data-motion-text>{label}</span></li>)}
+    </ul></div></div>)
+    const viewport = container.querySelector('.scroll-viewport')!
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 50, 200, 80))
+    const rows = Array.from(container.querySelectorAll('li'))
+    rows.forEach((row, i) => vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, [10, 40, 80, 130][i], 200, 40)))
+    transitions()
+    const { result } = renderHook(useAppearanceTransition)
+    act(() => result.current('language', () => {}))
+    expect(rows.map(row => !!row.querySelector('span')!.style.getPropertyValue('view-transition-name'))).toEqual([false, true, true, false])
+  })
   it.each(['finish', 'unmount', 'throw'])('restores surface styling and temporary rules after %s', async outcome => {
     const { container } = render(<div className="settings-card" style={{ opacity: 1, backgroundColor: 'rgb(20, 20, 20)', border: '1px solid rgb(60, 60, 60)', borderRadius: 12, transition: 'background-color 150ms ease-out' }}>
       <span data-motion-text>Before</span>

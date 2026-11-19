@@ -5,14 +5,26 @@ import { flushSync } from 'react-dom'
 // This keeps one-pixel borders and rounded corners stable as labels change width.
 function separateLanguageLayers() {
   const clips = '.scroll-viewport, .disclosure-panel'
-  const text = '[data-motion-text], h1, h2, label, .dialog-title, .dialog-description:not(.help-paragraphs), .help-paragraphs > p, .dialog-body > p, .followup p, .field-error, .deployment-status > span:last-child, .menu-item > span, .argument-preview, .notice-title, .notice-description, .notice-detail > p, .error-heading code, .error-guide p, .error-guide summary'
+  const text = '[data-motion-text], h1, h2, label, .dialog-title, .dialog-description:not(.help-paragraphs), .help-paragraphs > p, .dialog-body > p, .followup p, .field-error, .deployment-status > span:last-child, .menu-item > span, .argument-preview, .notice-title, .notice-description, .notice-detail > p, .error-heading code, .error-guide p'
   const boxes = '.appearance-controls, .settings-card, .argument-scroll, .advanced-trigger, .settings-footer, .prototype-bar, .button, .control-button, .icon-button, .text-button, .input-action, .input-wrap input, .segmented, .segment, .switch, .version-badge, .setting-badge, .dialog, .menu-popup, .notice-toast, .error-guide, .program-results, .program-badge'
-  const elements = [...document.querySelectorAll<HTMLElement>(`${clips}, ${boxes}, ${text}`)].filter(element => !element.matches('.appearance-controls .icon-button') && !element.closest('[inert], [hidden]'))
-  const properties = ['view-transition-name', 'view-transition-class', 'background-color', 'border-color', 'box-shadow']
+  // A row scrolled completely out of the list belongs to the viewport bitmap.
+  // Naming its labels can briefly paint them outside the clip during capture.
+  const offscreenRows = new Set<Element>()
+  for (const viewport of document.querySelectorAll('.program-scroll > .scroll-viewport')) {
+    const clip = viewport.getBoundingClientRect()
+    for (const row of viewport.querySelectorAll('.program-list > li')) {
+      const bounds = row.getBoundingClientRect()
+      if (bounds.bottom <= clip.top || bounds.top >= clip.bottom) offscreenRows.add(row)
+    }
+  }
+  const elements = [...document.querySelectorAll<HTMLElement>(`${clips}, ${boxes}, ${text}`)].filter(element => {
+    if (element.matches('.appearance-controls .icon-button') || element.closest('[inert], [hidden]')) return false
+    const row = offscreenRows.size ? element.closest('.program-list > li') : null
+    return !row || !offscreenRows.has(row)
+  })
+  const properties = ['view-transition-name', 'view-transition-class', 'view-transition-group', 'background-color', 'border-color', 'box-shadow']
   const previous = elements.map(element => ({ element, text: element.textContent, values: properties.map(property => [property, element.style.getPropertyValue(property), element.style.getPropertyPriority(property)] as const), transition: [element.style.getPropertyValue('transition'), element.style.getPropertyPriority('transition')] as const, paint: getComputedStyle(element) }))
   const decorations = document.createElement('style')
-  // Named descendants move into the snapshot tree. Reapply each viewport's clip there.
-  decorations.textContent = '::view-transition-group-children(.language-clip) { overflow: clip; border-radius: inherit; }'
   document.head.append(decorations)
   const surfaces: HTMLElement[] = []
   const gutters = [...document.querySelectorAll<HTMLElement>('.scroll-area:not([data-auto-hide]) > .scroll-viewport > .scroll-content')].map(element => ({
@@ -24,7 +36,14 @@ function separateLanguageLayers() {
     element.style.setProperty('transition', 'none', 'important')
     element.style.setProperty('view-transition-name', `language-${index}`)
     element.style.setProperty('view-transition-class', element.matches(clips) ? 'language-clip' : isText ? 'language-text' : element.matches('input') ? 'language-input' : 'language-frame')
-    if (isText || paint.opacity !== '1') return
+    if (paint.opacity && paint.opacity !== '1') {
+      // The parent's own snapshot includes its opacity. Extracted labels need
+      // that opacity on their common group, once, throughout the crossfade.
+      element.style.setProperty('view-transition-group', 'contain')
+      decorations.sheet!.insertRule(`::view-transition-group-children(language-${index}) { opacity: ${paint.opacity}; }`)
+      return
+    }
+    if (isText) return
     const background = paint.backgroundColor, radius = paint.borderRadius, shadow = paint.boxShadow
     const edges = ['top', 'right', 'bottom', 'left'].map(side => ({
       width: parseFloat(paint.getPropertyValue(`border-${side}-width`)),
