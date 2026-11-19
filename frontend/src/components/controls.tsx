@@ -12,12 +12,16 @@ export function Button({ children, ...props }: ComponentProps<typeof BaseButton>
     typeof child === 'string' || typeof child === 'number' ? <span data-motion-text>{child}</span> : child)}</BaseButton>
 }
 
+export function HintPopup({ children }: { children: ReactNode }) {
+  return <Tooltip.Portal><Tooltip.Positioner sideOffset={8} className="tooltip-positioner">
+    <Tooltip.Popup className="tooltip-popup">{children}</Tooltip.Popup>
+  </Tooltip.Positioner></Tooltip.Portal>
+}
+
 export function Hint({ label, children }: { label: string; children: ReactElement }) {
   return <Tooltip.Root>
     <Tooltip.Trigger render={children} delay={500} />
-    <Tooltip.Portal><Tooltip.Positioner sideOffset={8} className="tooltip-positioner">
-      <Tooltip.Popup className="tooltip-popup">{label}</Tooltip.Popup>
-    </Tooltip.Positioner></Tooltip.Portal>
+    <HintPopup>{label}</HintPopup>
   </Tooltip.Root>
 }
 

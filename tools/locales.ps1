@@ -148,7 +148,10 @@ function Write-NativeCatalog([string]$Path, [string[]]$NativeKeys) {
 if ($Generate) {
     $work = Join-Path $ProjectRoot 'work'
     $null = [IO.Directory]::CreateDirectory($work)
-    Write-NativeCatalog (Join-Path $work 'LocalizationData.h') @($keys | Where-Object { !$_.StartsWith('download.') })
+    # React translates ui.* keys, including save results sent by the bridge.
+    # The isolated port detector also formats its source name on the native side.
+    $nativeKeys = @($keys | Where-Object { $_ -notlike 'download.*' -and ($_ -notlike 'ui.*' -or $_ -ceq 'ui.detect.fixture') })
+    Write-NativeCatalog (Join-Path $work 'LocalizationData.h') $nativeKeys
     Write-NativeCatalog (Join-Path $work 'LauncherLocalizationData.h') @($keys | Where-Object { $_ -like 'chain.*' -or $_ -like 'common.*' })
     if ($expectedSetup -cne $setupText) { [IO.File]::WriteAllText($setupPath, $expectedSetup.Replace("`n", "`r`n"), (New-Object Text.UTF8Encoding($false))) }
 }

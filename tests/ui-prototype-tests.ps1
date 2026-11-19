@@ -142,17 +142,32 @@ function Inspect-Preview($Metadata) {
         handles=($samples | Measure-Object handles -Sum).Sum; threads=($samples | Measure-Object threads -Sum).Sum;
         cpuMs=[Math]::Round(($samples | Measure-Object cpuMs -Sum).Sum,2); windowDpi=$dpi}
 }
+function Read-SampledTree($Metadata) {
+    # Windows PowerShell 5.1 emits a JSON array as one object. Unroll its rows on return.
+    $rows=Get-Content -LiteralPath (Join-Path $Metadata.root 'tree.json') -Raw | ConvertFrom-Json
+    $owners=@($rows | Where-Object { $_.id -eq $Metadata.processId -and $_.started -eq $Metadata.started })
+    Require ($owners.Count -eq 1) 'Process snapshot is missing its owner'
+    return $rows
+}
+function Get-LiveSampleIds([object[]]$Rows) {
+    foreach($row in $Rows) {
+        $process=Get-Process -Id ([int]$row.id) -ErrorAction SilentlyContinue
+        if($process) {
+            try { if(!$process.HasExited -and $process.StartTime.ToUniversalTime().Ticks -eq $row.started) { $process.Id } }
+            finally { $process.Dispose() }
+        }
+    }
+}
 function Verify-Closed($Metadata) {
-    $rows=@(Get-Content -LiteralPath (Join-Path $Metadata.root 'tree.json') -Raw | ConvertFrom-Json)
+    $rows=Read-SampledTree $Metadata
     $deadline=[DateTime]::UtcNow.AddSeconds(10)
     do {
-        $remaining=@(foreach($row in $rows) {
-            $process=Get-Process -Id $row.id -ErrorAction SilentlyContinue
-            if($process) { try { if($process.StartTime.ToUniversalTime().Ticks -eq $row.started) { $process.Id } } finally { $process.Dispose() } }
-        })
+        $remaining=@(Get-LiveSampleIds $rows)
         if($remaining.Count) { Start-Sleep -Milliseconds 100 }
     } while($remaining.Count -and [DateTime]::UtcNow -lt $deadline)
     Require ($remaining.Count -eq 0) 'An owned prototype process remained after close'
+    $events=Get-Content -LiteralPath (Join-Path $Metadata.root 'close-events.json') -Raw | ConvertFrom-Json
+    Require ($events.approved -ge 1) 'The page did not approve a normal close'
     if(!$Functional) { Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state' }
     Write-Host 'PASS normal close with no remaining owned process; isolated session'
 }
@@ -184,7 +199,9 @@ switch($Action) {
         for($cycle=1;$cycle -le $Cycles;$cycle++) {
             $metadata=Start-Preview
             $initial=Inspect-Preview $metadata
-            $initialIdentities=(@(Get-Content -LiteralPath (Join-Path $metadata.root 'tree.json') -Raw | ConvertFrom-Json) |
+            $initialTree=@(Read-SampledTree $metadata)
+            Require (@(Get-LiveSampleIds $initialTree) -contains $metadata.processId) 'Live owner was reported as closed'
+            $initialIdentities=($initialTree |
                 Sort-Object id | ForEach-Object { "$($_.id):$($_.started)" }) -join ','
             $seconds=if($cycle -eq 1) { $IdleSeconds } else { 2 }
             Write-Host "Prototype cycle $cycle ready; observing $seconds seconds"
@@ -193,7 +210,7 @@ switch($Action) {
             $metrics=Inspect-Preview $metadata
             $metrics.initialPrivateMiB=$initial.privateMiB
             $metrics.idleSeconds=$seconds
-            $finalIdentities=(@(Get-Content -LiteralPath (Join-Path $metadata.root 'tree.json') -Raw | ConvertFrom-Json) |
+            $finalIdentities=(Read-SampledTree $metadata |
                 Sort-Object id | ForEach-Object { "$($_.id):$($_.started)" }) -join ','
             $metrics.processTreeChanged=$initialIdentities -cne $finalIdentities
             # Lifetime CPU sums are comparable only while the exact process set stays the same.

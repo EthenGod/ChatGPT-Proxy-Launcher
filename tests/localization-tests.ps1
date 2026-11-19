@@ -41,6 +41,7 @@ $french = @{schemaVersion=1;locale='fr-FR';nativeName='Francais';fontFamily='Seg
 & $tool -ProjectRoot $fixture -Generate | Out-Null
 & $tool -ProjectRoot $fixture | Out-Null
 $header = [IO.File]::ReadAllText((Join-Path $fixture 'work\LocalizationData.h'))
+if ($header.Contains('"ui.save.failed"') -or !$header.Contains('"ui.detect.fixture"')) { throw 'Incorrect native and frontend catalog split' }
 if (!$header.Contains('L"Fermer"') -or !$header.Contains('L"fr-FR"')) { throw 'Community language was not generated' }
 $chinese = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $directory 'zh-CN.json')))
 $fallbackText = $chinese.strings.'setup.option.startup'

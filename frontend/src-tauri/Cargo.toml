@@ -21,7 +21,9 @@ cc = "1"
 serde_json = "1"
 
 [dependencies]
-tauri = { version = "=2.12.5", features = [] }
+# The Windows shell uses fixed capabilities. Runtime-added capabilities also keep
+# the full permission manifests in memory after startup.
+tauri = { version = "=2.12.5", default-features = false, features = ["wry", "compression", "common-controls-v6"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }

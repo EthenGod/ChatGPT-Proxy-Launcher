@@ -434,6 +434,22 @@ describe('settings prototype behavior', () => {
     await act(async () => finish({ entries: [], incomplete: false }))
     expect(area.getByText('Notes.lnk')).toBeInTheDocument()
   })
+  it('shows the current program path and arguments as hover moves between rows', async () => {
+    const { user, service } = mount(new MockSetupService('programs', 0), true)
+    const label = (name: string) => screen.findByRole('button', { name: new RegExp(name) })
+    for (const name of ['Quick Notes', 'Meeting Notes and Transcription Archive']) {
+      const row = await label(name)
+      const program = service.programs.find(entry => entry.name.startsWith(name))!
+      await user.hover(row)
+      await waitFor(() => {
+        const popups = document.querySelectorAll('.tooltip-popup[data-open]')
+        expect(popups).toHaveLength(1)
+        expect(popups[0]?.textContent).toBe(program.path + '\n' + program.arguments)
+      })
+    }
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    await waitFor(() => expect(document.querySelector('.tooltip-popup')).toBeNull())
+  })
   it('opens the full program path and arguments from the keyboard and returns to the same row', async () => {
     const { user, service } = mount(new MockSetupService('programs', 0), true)
     const row = await screen.findByRole('button', { name: /Meeting Notes and Transcription Archive/ })

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Tooltip } from '@base-ui/react/tooltip'
 import { AppWindow, BadgeCheck, ChevronRight, CircleAlert, FileCode2, FileJson2, FileSymlink, FileTerminal, Folder, FolderOpen, Plus, RefreshCw } from 'lucide-react'
-import { Button, Hint } from '../../components/controls'
+import { Button, Hint, HintPopup } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
 import type { translator } from '../../i18n'
 import type { ListedProgram, ProgramList, SetupService } from './contract'
@@ -8,6 +9,13 @@ import { nativeIssue, type ErrorInfo } from './errors'
 
 type Translate = ReturnType<typeof translator>
 const fileIcons = new Map([['exe', AppWindow], ['lnk', FileSymlink], ['ps1', FileTerminal], ['cmd', FileTerminal], ['bat', FileTerminal], ['json', FileJson2]])
+
+function ProgramHints({ children }: { children: ReactNode }) {
+  return <Tooltip.Root<ListedProgram>>{({ payload }) => <>
+    {children}
+    <HintPopup>{payload && (payload.arguments ? payload.path + '\n' + payload.arguments : payload.path)}</HintPopup>
+  </>}</Tooltip.Root>
+}
 
 function ProgramIcon({ program }: { program: ListedProgram }) {
   const [failed, setFailed] = useState<string>()
@@ -140,15 +148,14 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
     </div>
     <div ref={results} className="program-results" aria-busy={pending}>
       {entries.length > 0 && <ScrollBox className="program-scroll" label={t('ui.programs')}>
-        <ul className="program-list">{entries.map(program => <li key={program.id} data-program-id={program.id}>
-          <Hint label={[program.path, program.arguments].filter(Boolean).join('\n')}>
+        <ProgramHints><ul className="program-list">{entries.map(program => <li key={program.id} data-program-id={program.id}>
+          <Tooltip.Trigger payload={program} delay={500} render={
             <Button className="program-row" disabled={locked} aria-haspopup="dialog" onClick={() => onDetails(program)}>
               <ProgramIcon program={program} /><span className="program-title"><span className="program-name" dir="auto">{program.name}</span>
                 <AdaptedBadge status={program.status} t={t} /></span>
               <ProgramState status={program.status} t={t} /><ChevronRight className="program-chevron" size={14} aria-hidden="true" />
-            </Button>
-          </Hint>
-        </li>)}</ul>
+            </Button>} />
+        </li>)}</ul></ProgramHints>
       </ScrollBox>}
       {!list && !issue && <div className="program-placeholder" aria-hidden="true">{[0, 1].map(i => <div key={i}>
         <span className="skeleton-bar program-skeleton-icon" /><span className="skeleton-bar skeleton-label" /></div>)}</div>}
