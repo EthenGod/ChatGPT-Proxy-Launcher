@@ -65,6 +65,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const [closed, setClosed] = useState(false)
   const alive = useRef(true)
   const inFlight = useRef(false)
+  const openingLocation = useRef(false)
   const focusAfterSave = useRef(false)
   const detectRevision = useRef(0)
   const loadRevision = useRef(0)
@@ -106,7 +107,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     catch (cause) { if (alive.current) reportFailure('ui.close.failed', cause) }
   }
   closeRequest.current = () => {
-    if (inFlight.current) return
+    if (inFlight.current || openingLocation.current) return
     if (dialogOpen) { if (dialog !== 'discard') setDialogOpen(false); return }
     if (dirty) openDialog('discard')
     else void close()
@@ -129,12 +130,18 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   useEffect(() => {
     alive.current = true
     let disconnect: (() => void) | undefined
+    // Capture also covers Base UI portals and keyboard context-menu requests.
+    const preventBrowserMenu = (event: MouseEvent) => event.preventDefault()
+    window.addEventListener('contextmenu', preventBrowserMenu, true)
     void host.connect(() => closeRequest.current()).then(remove => {
       if (!alive.current) remove()
       else { disconnect = remove; return host.ready() }
     }).catch(cause => { if (alive.current) reportFailure('ui.close.failed', cause) })
     void load()
-    return () => { alive.current = false; ++detectRevision.current; ++loadRevision.current; disconnect?.() }
+    return () => {
+      alive.current = false; ++detectRevision.current; ++loadRevision.current; disconnect?.()
+      window.removeEventListener('contextmenu', preventBrowserMenu, true)
+    }
   }, [host, load])
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
@@ -304,11 +311,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     finally { inFlight.current = false; if (alive.current) { setBusy(false); setAdding(false) } }
   }
   async function openLocation(location: 'startup' | 'deployment' | 'windows') {
-    if (inFlight.current) return
-    inFlight.current = true; setBusy(true); setSelecting(true)
+    if (inFlight.current || openingLocation.current) return
+    openingLocation.current = true
     try { await service.openLocation(location); if (alive.current && !service.native) notify('ui.location.preview') }
     catch (cause) { if (alive.current) reportFailure('setup.error.openfolder', cause) }
-    finally { inFlight.current = false; if (alive.current) { setBusy(false); setSelecting(false) } }
+    finally { openingLocation.current = false }
   }
   const helpButton = (key: keyof typeof helpTitles) => {
     const label = t(helpTitles[key])
