@@ -24,22 +24,12 @@ Both methods open the same setup tool. **Choose one; method 1 is recommended.**
    ```
 
 3. Click the PowerShell window, press **Ctrl+V** to paste, then press **Enter**.
+
+   If PowerShell says WebView2 is missing, type **1** and press **Enter** to install it (recommended). To continue in compatibility mode, type **2** and press **Enter**.
+
 4. PowerShell shows progress while finding the release, downloading, and verifying it. When **ChatGPT Launcher** opens, follow **Configure the launcher** below. Leave PowerShell open; after the setup tool exits, it cleans up the downloads and shows the completion prompt.
 
 If an error appears and the setup tool does not open, use method 2.
-
-The v1.2 configurator uses the new interface by default and requires WebView2. If WebView2 is missing, PowerShell offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Double-clicking the configurator opens compatibility mode automatically in that case. You can also run `ChatGPTLauncherSetup.exe --compatibility` to open the original interface. The standalone launcher and headless commands work without WebView2.
-
-**Try a beta**
-
-The one-line command above downloads stable releases only. To include prereleases, run these two lines in PowerShell.
-
-```powershell
-$setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1'))
-& $setup -Channel Preview
-```
-
-`-Channel Preview` selects the most recently published stable release or prerelease. To limit the search to a branch, append `-Branch master` to the second line and replace `master` with the branch name. To choose a specific release, append a tag such as `-Tag v1.2.1`. The release must already be published on GitHub.
 
 ### Method 2: Download and open manually
 
@@ -48,7 +38,7 @@ $setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/
 1. Click the blue button above, or [open the download page here](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest). Scroll to **Assets**. If the file list is hidden, click **Assets** to expand it.
 2. Click **`ChatGPTLauncherSetup.exe`**. This is the only file you need; you do not need the other EXE or the source ZIP.
 3. After the download finishes, press **Ctrl+J** in your browser. Find `ChatGPTLauncherSetup.exe`, then click its folder icon or **Show in folder**.
-4. Double-click the downloaded file in that folder. When **ChatGPT Launcher** opens, continue below.
+4. Double-click the downloaded file in that folder. When **ChatGPT Launcher** opens, continue below. If your PC is missing WebView2, the configurator opens in compatibility mode automatically.
 
 ### Configure the launcher (same for both methods)
 

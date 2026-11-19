@@ -22,22 +22,12 @@
    ```
 
 3. 点击刚打开的 PowerShell 窗口，按 **Ctrl+V** 粘贴，再按 **Enter（回车）** 运行。
+
+   如果提示缺少 WebView2，输入 **1** 并按回车安装（推荐）。想直接用兼容界面继续设置，可以输入 **2** 并按回车。
+
 4. PowerShell 会显示获取版本、下载和校验的进度。等 **ChatGPT Launcher** 配置窗口出现，继续看下面的 **“打开后怎么设置”**。先别关 PowerShell，退出配置器后会自动清理并关闭。
 
 如果出现报错而没有打开配置器，可以改用方式二。
-
-v1.2 配置器默认使用新界面，需要 WebView2。缺少 WebView2 时，PowerShell 会提示选择 **安装 WebView2（推荐）**、**使用兼容界面** 或 **取消**。直接双击配置器会自动打开兼容界面。也可运行 `ChatGPTLauncherSetup.exe --compatibility` 打开原来的配置界面。独立启动器和后台命令无需 WebView2。
-
-**试用测试版**
-
-上面的一行命令只下载正式版。要把测试版也列入选择，在 PowerShell 运行下面两行。
-
-```powershell
-$setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1'))
-& $setup -Channel Preview
-```
-
-`-Channel Preview` 会选择最近发布的正式版或测试版。要限定分支，在第二行追加 `-Branch master`，把 `master` 换成要测试的分支名。要固定版本，可追加 `-Tag v1.2.1`。目标版本须已在 GitHub 发布。
 
 ### 方式二：手动下载并打开
 
@@ -46,7 +36,7 @@ $setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/
 1. 点击上方蓝色按钮（或[点这里打开下载页](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)）。向下翻到 **Assets（附件）**；如果没看到文件列表，点一下 **Assets** 展开。
 2. 点击 **`ChatGPTLauncherSetup.exe`** 下载。只需这一个文件，不用下载另一个 EXE 或源码 ZIP。
 3. 等下载完成，在浏览器按 **Ctrl+J** 打开下载记录。找到 `ChatGPTLauncherSetup.exe`，点击旁边的文件夹图标或“在文件夹中显示”。
-4. 在打开的文件夹里双击刚下载的文件。看到 **ChatGPT Launcher** 配置窗口后，按下面的步骤设置。
+4. 在打开的文件夹里双击刚下载的文件。看到 **ChatGPT Launcher** 配置窗口后，按下面的步骤设置。缺少 WebView2 的电脑会自动打开兼容界面。
 
 ### 打开后怎么设置（两种方式相同）
 

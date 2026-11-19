@@ -24,22 +24,12 @@ Windows x64 向けの非公式 ChatGPT ランチャーです。ChatGPT 用のプ
    ```
 
 3. PowerShell のウィンドウをクリックし、**Ctrl+V** で貼り付けて **Enter** を押します。
+
+   WebView2 が見つからないと表示されたら、**1** を入力して **Enter** を押すとインストールできます（推奨）。互換モードで設定を続けるには、**2** を入力して **Enter** を押してください。
+
 4. バージョンの取得、ダウンロード、検証の進捗が表示されます。**ChatGPT Launcher** が開いたら、下の **開いた後の設定** へ進んでください。PowerShell は閉じずに残します。設定ツールの終了後、一時ファイルを削除して完了メッセージを表示します。
 
 エラーが出て設定ツールが開かない場合は、方法 2 を使ってください。
-
-v1.2 の設定ツールは標準で新しい画面を使用し、WebView2 が必要です。WebView2 がない場合、PowerShell では **WebView2 をインストール（推奨）**、**互換モードを使用**、**キャンセル** を選べます。設定ツールをダブルクリックすると、自動で互換モードが開きます。`ChatGPTLauncherSetup.exe --compatibility` でも従来の画面を開けます。単体ランチャーとバックグラウンドコマンドは WebView2 がなくても使えます。
-
-**ベータ版を試す**
-
-上の 1 行コマンドは正式版のみを取得します。テスト版も対象に含めるには、次の 2 行を PowerShell で実行してください。
-
-```powershell
-$setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/master/setup.ps1'))
-& $setup -Channel Preview
-```
-
-`-Channel Preview` は正式版とテスト版のうち、最後に公開されたものを選びます。ブランチを絞り込むには、2 行目に `-Branch master` を追加し、`master` を対象のブランチ名に置き換えてください。バージョンを固定するには、たとえば `-Tag v1.2.1` を追加します。GitHub で公開済みのバージョンが対象です。
 
 ### 方法 2：手動でダウンロードして開く
 
@@ -48,7 +38,7 @@ $setup = [scriptblock]::Create((irm 'https://raw.githubusercontent.com/EthenGod/
 1. 上の青いボタン、または[ダウンロードページへのリンク](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest)をクリックします。下へスクロールして **Assets** を探します。ファイル一覧が隠れている場合は **Assets** をクリックしてください。
 2. **`ChatGPTLauncherSetup.exe`** をクリックします。必要なのはこのファイルだけです。もう一方の EXE やソース ZIP は不要です。
 3. ダウンロードが終わったら、ブラウザーで **Ctrl+J** を押します。`ChatGPTLauncherSetup.exe` の横のフォルダーアイコン、または **フォルダーに表示** をクリックします。
-4. 開いたフォルダーでファイルをダブルクリックします。**ChatGPT Launcher** が開いたら、次の手順へ進みます。
+4. 開いたフォルダーでファイルをダブルクリックします。**ChatGPT Launcher** が開いたら、次の手順へ進みます。WebView2 が入っていない場合は、自動で互換モードが開きます。
 
 ### 開いた後の設定（両方の方法で共通）
 
