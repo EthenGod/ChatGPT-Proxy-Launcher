@@ -171,6 +171,8 @@ int main(int argc, char** argv) {
     REQUIRE(Select(found).port == L"12345" && v2.configReads == 1);
     REQUIRE(Select({}).port.empty());
     REQUIRE(Select({{12345, L"Clash Verge Rev"}, {12345, L"Windows"}}).port == L"12345");
+    REQUIRE(Select({{12345, L"Clash Verge Rev"}, {12345, L"Windows"}}).source == L"Clash Verge Rev");
+    REQUIRE(Select({{12345, L"A"}, {23456, L"B"}}).source.empty());
     REQUIRE(Select({{12345, L"Clash Verge Rev"}, {23456, L"FlClash"}}).port.empty());
     REQUIRE(Select({{12345, L"A"}, {23456, L"B"}}).message.find(L"多个") != std::wstring::npos);
     REQUIRE(DetectProxyPort(L"https", L"127.0.0.1").port.empty());

@@ -278,25 +278,6 @@ void LegacyResult(PCWSTR file, DWORD error) {
     legacyResults->array.push_back(Item(L"legacy:" + std::wstring(leaf), error == ERROR_TIMEOUT ? L"skipped-budget" : error ? L"failed" : L"started-unverified", error == ERROR_TIMEOUT ? L"budget-exhausted" : error == ERROR_ALREADY_EXISTS ? L"legacy-entry-conflict" : error ? L"start-failed" : L"", error == ERROR_ALREADY_EXISTS ? 0 : 1));
 }
 bool Succeeded(const Json& item) { return rules::ItemSucceeded(item.At(L"status").String()); }
-struct Policy {
-    DWORD budget = rules::BudgetDefaultMs;
-    bool notify = true;
-};
-Policy ReadPolicy(const std::wstring& root) {
-    const auto path = Join(root, rules::PolicyFile);
-    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        const DWORD error = GetLastError();
-        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return {};
-        throw automation::IoError(error);
-    }
-    const auto json = automation::ParseJson(automation::ReadBytes(path, rules::PolicyBytes), rules::PolicyBytes);
-    json.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
-    if (json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::PolicySchema) throw Invalid("invalid-policy-version");
-    const auto budget = static_cast<DWORD>(json.At(L"budgetMs").Integer(rules::BudgetMinMs, rules::BudgetMaxMs));
-    const auto feedback = json.At(L"feedback").String();
-    if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback");
-    return {budget, feedback == L"notify"};
-}
 }
 std::wstring RootDirectory() {
     PWSTR path = nullptr;
@@ -325,7 +306,7 @@ Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) 
         auto& items = report[L"entries"];
         std::vector<Record> records; std::vector<size_t> order;
         if (policyError.empty()) {
-            try { records = ReadRegistry(options.root); if (!SortEntries(records, order)) policyError = L"invalid-graph"; }
+            try { if (!ReadRegistryOrder(options.root, records, order)) policyError = L"invalid-graph"; }
             catch (const Invalid& ex) { policyError = automation::FromUtf8(ex.what()); }
             catch (...) { policyError = L"registry-read-failed"; }
         }

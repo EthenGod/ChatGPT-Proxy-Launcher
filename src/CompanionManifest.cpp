@@ -22,6 +22,25 @@ bool ValidId(const std::wstring& id) {
     try { automation::FullPath(L"C:\\" + id + L".json"); } catch (...) { return false; }
     return true;
 }
+Policy ReadPolicy(const std::wstring& root) {
+    const auto path = Join(root, rules::PolicyFile);
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return {};
+        throw automation::IoError(error);
+    }
+    const auto json = automation::ParseJson(automation::ReadBytes(path, rules::PolicyBytes), rules::PolicyBytes);
+    json.Fields({L"schemaVersion", L"budgetMs", L"feedback"});
+    if (json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::PolicySchema) throw Invalid("invalid-policy-version");
+    const auto budget = static_cast<DWORD>(json.At(L"budgetMs").Integer(rules::BudgetMinMs, rules::BudgetMaxMs));
+    const auto feedback = json.At(L"feedback").String();
+    if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback");
+    return {budget, feedback == L"notify"};
+}
+bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order, ManifestPathFilter canRead) {
+    records = ReadRegistry(root, canRead);
+    return SortEntries(records, order);
+}
 namespace {
 std::array<unsigned long, 3> Version(const std::wstring& value) {
     if (value.size() > 32) throw Invalid("invalid-version");
@@ -68,16 +87,22 @@ void ApplyOverrides(Entry& e, const Json& overrides) {
 }
 int CompareVersion(const std::wstring& left, const std::wstring& right) { const auto a = Version(left), b = Version(right); return a == b ? 0 : a < b ? -1 : 1; }
 void ValidateOverrides(const Json& overrides) { Entry value; ApplyOverrides(value, overrides); }
-Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides) {
+Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides, ManifestPathFilter canRead) {
     if (overrides.Has(L"enabled") && !overrides.At(L"enabled").Bool()) {
         Entry e; e.id = id; e.manifestPath = automation::FullPath(manifest); ApplyOverrides(e, overrides); return e;
     }
-    auto entry = ReadManifest(manifest, overrides);
+    auto entry = ReadManifest(manifest, overrides, canRead);
     if (entry.id != id) throw Invalid("manifest-id-changed");
     return entry;
 }
-Entry ReadManifest(const std::wstring& file, const Json& overrides) {
-    Entry e; e.manifestPath = automation::FullPath(file);
+Entry ReadManifest(const std::wstring& file, const Json& overrides, ManifestPathFilter canRead) {
+    // Relative entries stay inside the package. Only the manifest and explicit host can select a drive.
+    const auto absolutePath = [canRead](const std::wstring& path) {
+        auto full = automation::FullPath(path);
+        if (canRead && !canRead(full)) throw Invalid("manifest-drive-unavailable");
+        return full;
+    };
+    Entry e; e.manifestPath = absolutePath(file);
     const auto j = automation::ParseJson(automation::ReadBytes(e.manifestPath));
     j.Fields({L"schemaVersion", L"id", L"name", L"version", L"requires", L"entry", L"dependsOn", L"readiness", L"retry", L"config"});
     if (j.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::ManifestSchema) throw Invalid("unsupported-schema-version");
@@ -120,7 +145,7 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides) {
     }
     if (entry.Has(L"hostPath")) {
         if (e.kind == companions::Kind::Exe || e.kind == companions::Kind::Batch) throw Invalid("unexpected-host-path");
-        e.host = automation::FullPath(entry.At(L"hostPath").String()); automation::CheckPlainPath(e.host);
+        e.host = absolutePath(entry.At(L"hostPath").String()); automation::CheckPlainPath(e.host);
         if (companions::FileKind(e.host.c_str()) != companions::Kind::Exe || !companions::HostFile(e.host)) throw Invalid("runtime-missing");
     }
     if (j.Has(L"dependsOn")) {
@@ -155,7 +180,7 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides) {
     if ((e.attempts > 1 && !e.safe) || (e.safe && !capabilities.count(rules::RetryCapability))) throw Invalid("unsafe-retry");
     return e;
 }
-std::vector<Record> ReadRegistry(const std::wstring& root) {
+std::vector<Record> ReadRegistry(const std::wstring& root, ManifestPathFilter canRead) {
     const auto folder = Join(root, rules::RegistryFolder); automation::CheckPlainPath(folder);
     std::vector<Record> records;
     WIN32_FIND_DATAW data{}; HANDLE raw = FindFirstFileW(Join(folder, L"*.json").c_str(), &data);
@@ -173,7 +198,7 @@ std::vector<Record> ReadRegistry(const std::wstring& root) {
             r.json.Fields({L"schemaVersion", L"managedBy", L"id", L"manifestPath", L"overrides"});
             if (r.json.At(L"schemaVersion").Integer(0, MAXDWORD) != rules::RegistrySchema) throw Invalid("unsupported-schema-version");
             if (r.json.At(L"managedBy").String() != rules::ManagedBy || r.json.At(L"id").String() != r.id) throw Invalid("foreign-registration");
-            r.entry = ReadRegisteredEntry(r.id, r.json.At(L"manifestPath").String(), r.json.At(L"overrides"));
+            r.entry = ReadRegisteredEntry(r.id, r.json.At(L"manifestPath").String(), r.json.At(L"overrides"), canRead);
         } catch (const Invalid& ex) { r.error = automation::FromUtf8(ex.what()); }
         catch (const automation::IoError&) { r.error = L"read-failed"; }
         records.push_back(std::move(r));

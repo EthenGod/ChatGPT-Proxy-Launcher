@@ -7,6 +7,7 @@
 #include <shellapi.h>
 #include <uxtheme.h>
 #include <atomic>
+#include <psapi.h>
 static std::atomic<bool> dropCompletionMessages{false};
 static bool failWorkerTimer = false;
 static HANDLE proxyGate = nullptr, proxyEntered = nullptr, saveGate = nullptr, saveEntered = nullptr;
@@ -125,6 +126,7 @@ static BOOL WINAPI TestShellExecute(SHELLEXECUTEINFOW* info) {
 #define wWinMain SetupEntryForTest
 #define ShowWindow TestShowWindow
 #define SetForegroundWindow TestSetForegroundWindow
+#include "../src/SetupUiServices.cpp"
 #include "../src/ChatGPTLauncherSetup.cpp"
 #undef wWinMain
 #undef ShowWindow
@@ -440,6 +442,7 @@ static int LanguageTests(App& app, PCWSTR folder) {
         REQUIRE(storedLanguage == l10n::At(i).tag && !l10n::FollowsSystem() && LanguageMenuSelected(i + 1));
         REQUIRE(app.dirty && app.editRevision == revision && app.Text(Preview) == arguments && app.Text(Directory) == directory);
         REQUIRE(app.Text(Startup) == l10n::Text("setup.option.startup") && app.Text(LanguageButton) == l10n::Current().name);
+        REQUIRE(app.Text(SetupVersion) == l10n::Format("setup.compatibility.version", {{"version", L"" APP_RELEASE_VERSION}}));
         wchar_t tipText[4096]{}; TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = app.body;
         tip.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); tip.lpszText = tipText;
         SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(tipText), reinterpret_cast<LPARAM>(&tip));
@@ -567,6 +570,22 @@ static int LanguageTests(App& app, PCWSTR folder) {
     puts("PASS localization UI: three languages, live captions/tooltips, preserved edits, auto/manual preference, failures, rounded popup frame, mouse/keyboard selection, Escape/Tab/outside cancellation, focus return and busy guards; labels/placeholders/statuses at 100/125/150/175/200 percent in dark/light/contrast");
     return 0;
 }
+static int GuiInstanceTests() {
+    const auto windowClass = L"SetupInstanceTest" + std::to_wstring(GetCurrentProcessId());
+    automation::Handle session, user, secondSession, secondUser;
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), session.value, user.value) == ERROR_SUCCESS && session && user);
+    const auto dialogs = reminderCalls;
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), secondSession.value, secondUser.value) == ERROR_ALREADY_EXISTS);
+    REQUIRE(!secondSession && !secondUser && reminderCalls == dialogs);
+    // A different login sees the user's mutex but has an empty session namespace.
+    session.Reset();
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), secondSession.value, secondUser.value) == ERROR_ALREADY_EXISTS);
+    REQUIRE(!secondSession && !secondUser && reminderCalls == dialogs + 1 && lastDialog == l10n::Text("setup.instance.othersession"));
+    user.Reset();
+    REQUIRE(setup::AcquireGuiInstance(windowClass.c_str(), secondSession.value, secondUser.value) == ERROR_SUCCESS && secondSession && secondUser);
+    puts("PASS GUI instances: duplicate in current session, occupied user guard in a separate session scope, reopen after close");
+    return 0;
+}
 static int RunTests(PCWSTR folder) {
     REQUIRE(ReadCodexEnvPreference());
     envReadResult = ERROR_SUCCESS; storedCodexEnv = 9; REQUIRE(ReadCodexEnvPreference());
@@ -609,7 +628,11 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(EqualRect(&repaint, &paintBufferBounds));
     REQUIRE(PartialSurfaceMatches(app, app.window) && PartialSurfaceMatches(app, app.body));
     REQUIRE(app.preferredDark && (app.contrast || app.dark));
-    REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_VERSION_TEXT);
+    REQUIRE(app.Text(SetupVersion) == L"配置器 v" APP_RELEASE_VERSION);
+    REQUIRE(setup::IsCompatibilityCommand(L"--compatibility"));
+    REQUIRE(setup::IsCompatibilityCommand(L"\"--compatibility\" \t"));
+    for (const auto invalid : {L"", L"--compatibility --headless info", L"--headless info --compatibility",
+        L"--compatibility 中文", L"--compatibility \"\"", L"--compatibilityx"}) REQUIRE(!setup::IsCompatibilityCommand(invalid));
     const auto initialArguments = app.Text(Preview);
     const bool initialDirty = app.dirty;
     app.Theme(1);
@@ -1136,6 +1159,7 @@ static int RunTests(PCWSTR folder) {
         proxyGate = proxyEntered = saveGate = saveEntered = nullptr;
     }
     puts("PASS worker ownership: lost messages, duplicate notifications, timer failure, idle timer cleanup and concurrent save/detection during window teardown");
+    REQUIRE(GuiInstanceTests() == 0);
     printf("PASS UI defaults, button repaint after captions/styles/state and 120 toggles, live preview, secondary page, retained fields, 301 scrolls without relayout (%lld ms), saved-state restore and Settings handoff (mocked)\n", milliseconds);
     puts("PASS dirty-region buffers and pixel-identical partial/full surface painting across themes, scaling and scrolling");
     puts("PASS save focus: successful completion selects Done, failures select Save, Enter closes after success");
@@ -1150,20 +1174,67 @@ static int RunTests(PCWSTR folder) {
     printf("PASS owner-draw synchronous dispatch, preserved style through Tab/default-button changes, Enter/Space, balanced footer at 100/150 percent and short windows\n");
     {
         App localized; localized.instance = app.instance; localized.paths = app.paths;
+        localized.compatibility = true;
         REQUIRE(CreateWindowExW(WS_EX_CONTROLPARENT, L"SetupTestWindow", L"Isolated language test", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             -20000, -20000, 720, 812, nullptr, nullptr, localized.instance, &localized));
         ShowWindow(localized.window, SW_SHOWNOACTIVATE);
         REQUIRE(LanguageTests(localized, folder) == 0);
+        localized.isolatedPreview = true; localized.Refresh(false);
+        const auto beforeTheme = themeWrites;
+        const auto beforeLanguage = languageMenuCalls;
+        localized.Command(ThemeToggle, BN_CLICKED); localized.Command(LanguageButton, BN_CLICKED);
+        localized.Command(ApplyButton, BN_CLICKED); localized.Command(AddProgram, BN_CLICKED);
+        localized.Command(OpenCompanions, BN_CLICKED); localized.DetectPort();
+        REQUIRE(themeWrites == beforeTheme && languageMenuCalls == beforeLanguage && !localized.busy && !localized.detectingPort);
+        REQUIRE(!IsWindowEnabled(localized.Get(ApplyButton)) && !IsWindowEnabled(localized.Get(Port)));
+        puts("PASS compatibility labels/layout in three languages and isolated preview blocks writes/system actions");
     }
     return 0;
 }
+static int RunBaseline(PCWSTR folder) {
+    // Use the same native UI and the existing system-operation substitutes.
+    App app; app.instance = GetModuleHandleW(nullptr);
+    const auto root = setup::Join(folder, L"ui-baseline-" + std::to_wstring(GetCurrentProcessId()));
+    app.paths = {root, setup::Join(root, L"startup.lnk"), setup::Join(root, L"settings.lnk"),
+        setup::Join(root, L"desktop.lnk"), setup::Join(root, L"codex.env"),
+        setup::Join(root, L"legacy-startup.lnk"), setup::Join(root, L"legacy-desktop.lnk")};
+    WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = app.instance;
+    cls.lpfnWndProc = WindowProc; cls.lpszClassName = L"SetupBaselineWindow";
+    REQUIRE(RegisterClassExW(&cls));
+    cls.lpfnWndProc = BodyProc; cls.lpszClassName = L"ChatGPTSetupBody";
+    REQUIRE(RegisterClassExW(&cls));
+    REQUIRE(CreateWindowExW(WS_EX_CONTROLPARENT, L"SetupBaselineWindow", L"Isolated native baseline",
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, -20000, -20000, 640, 600, nullptr, nullptr, app.instance, &app));
+    ShowWindow(app.window, SW_SHOWNOACTIVATE); UpdateWindow(app.window);
+    FILETIME created{}, exited{}, kernel{}, user{}, painted{};
+    REQUIRE(GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user));
+    GetSystemTimeAsFileTime(&painted);
+    auto ticks = [](FILETIME t) { return (static_cast<unsigned long long>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+    const auto ready = (ticks(painted) - ticks(created)) / 10000;
+    const auto deadline = GetTickCount64() + 60000;
+    while (GetTickCount64() < deadline) {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        const auto now = GetTickCount64();
+        if (now < deadline) MsgWaitForMultipleObjects(0, nullptr, FALSE, static_cast<DWORD>(deadline - now), QS_ALLINPUT);
+    }
+    PROCESS_MEMORY_COUNTERS_EX memory{}; memory.cb = sizeof(memory);
+    REQUIRE(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory)));
+    REQUIRE(!app.busy && !app.detectingPort && proxyCalls == 0 && disableCalls == 0 && codexCloseCalls == 0);
+    REQUIRE(!KillTimer(app.window, WorkerTimer));
+    REQUIRE(GetFileAttributesW(root.c_str()) == INVALID_FILE_ATTRIBUTES);
+    DestroyWindow(app.window);
+    printf("{\"readyMs\":%llu,\"idleSeconds\":60,\"workingSetBytes\":%zu,\"privateBytes\":%zu,\"businessTimer\":false}\n",
+        ready, memory.WorkingSetSize, memory.PrivateUsage);
+    return 0;
+}
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && !(argc == 3 && !wcscmp(argv[2], L"--benchmark"))) return 2;
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Gdiplus::GdiplusStartupInput input; ULONG_PTR token = 0;
     if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) return 3;
     BufferedPaintInit();
-    const int result = RunTests(argv[1]);
+    const int result = argc == 3 ? RunBaseline(argv[1]) : RunTests(argv[1]);
     BufferedPaintUnInit(); Gdiplus::GdiplusShutdown(token); CoUninitialize();
     return result;
 }

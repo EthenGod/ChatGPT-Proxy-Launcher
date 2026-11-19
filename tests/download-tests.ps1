@@ -14,12 +14,13 @@ $progressNodeType = if ($hasProgressView) {
 $testFolder = Join-Path $root ('work\download-tests-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testFolder -Force
 $calls = @{launches = 0; browserOpens = 0; waitMs = 0; messages = [Collections.Generic.List[string]]::new(); progressActive = $false; stages = [Collections.Generic.List[string]]::new()}
-$fixture = [Text.Encoding]::ASCII.GetBytes('test setup payload')
+$fixture = [IO.File]::ReadAllBytes((Join-Path $root 'work\ui-native\ChatGPTLauncherSetup.exe'))
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
 function Write-Host($Object, $ForegroundColor) { $calls.messages.Add([string]$Object) }
 function Get-ItemPropertyValue { return 'zh-CN' } # Never read the real language preference.
+function Read-Host { throw 'The generic download fixture must not prompt for WebView2' }
 function Assert-ProgressFits($Activity, $Status, $Percent = -1) {
     if (!$hasProgressView) { return }
     if ($PSStyle.Progress.View -ne 'Classic') { throw 'Progress must use the CJK-safe renderer' }
@@ -52,15 +53,20 @@ function Start-Sleep($Milliseconds) {
 function Invoke-RestMethod($Uri, $TimeoutSec) {
     if (!$calls.progressActive -or $ProgressPreference -ne 'Continue') { throw 'No progress while fetching release' }
     if ($scenario -eq 'offline') { throw 'Offline' }
+    if ($scenario -eq 'ok' -and !$SessionProbe) {
+        if ($Uri -cne 'https://api.github.com/repos/EthenGod/ChatGPT-Proxy-Launcher/releases/tags/v9.8.7-beta.1') { throw 'Wrong tagged API URL' }
+        return @{tag_name='v9.8.7-beta.1'; draft=$false; prerelease=$true}
+    }
     if ($Uri -ne 'https://api.github.com/repos/EthenGod/ChatGPT-Proxy-Launcher/releases/latest') { throw 'Wrong API URL' }
-    @{tag_name = 'v9.8.7'}
+    @{tag_name = 'v9.8.7'; draft=$false; prerelease=$false}
 }
 function Invoke-WebRequest([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec) {
     if (!$calls.progressActive -or $ProgressPreference -ne 'Continue') { throw 'Download progress disabled' }
     Assert-ProgressFits ([regex]::Unescape('\u6b63\u5728\u4e0b\u8f7d\u914d\u7f6e\u5668')) '1048576 / 2097152 bytes' 50
     $calls.folder = Split-Path $OutFile
     $asset = Split-Path $OutFile -Leaf
-    if ($Uri -ne "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v9.8.7/$asset") { throw 'Wrong asset URL' }
+    $expectedTag = if ($scenario -eq 'ok' -and !$SessionProbe) { 'v9.8.7-beta.1' } else { 'v9.8.7' }
+    if ($Uri -ne "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/$expectedTag/$asset") { throw 'Wrong asset URL' }
     if ($asset -eq 'SHA256SUMS.txt') {
         $line = "$hash  ChatGPTLauncherSetup.exe"
         if ($scenario -eq 'missing') { $line = "$hash  Other.exe" }
@@ -117,7 +123,8 @@ try {
         $calls.stages.Clear()
         $before = $calls.launches
         $failed = $false
-        try { & $entry } catch { if ($success) { throw }; $failed = $true }
+        $selection = if ($scenario -eq 'ok') { @{Channel='Preview'; Tag='v9.8.7-beta.1'} } else { @{} }
+        try { & $entry @selection } catch { if ($success) { throw }; $failed = $true }
         if ($calls.progressActive -or !$calls.stages.Count) { throw "Progress not shown or cleared: $scenario" }
         if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Caller progress preference changed' }
         if ($hasProgressView -and $PSStyle.Progress.View -ne $callerView) { throw "Caller progress view not restored: $scenario" }

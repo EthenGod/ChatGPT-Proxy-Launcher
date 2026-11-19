@@ -66,7 +66,7 @@ void Json::Fields(std::initializer_list<const wchar_t*> allowed) const {
         if (std::none_of(allowed.begin(), allowed.end(), [&](const wchar_t* name) { return item.first == name; }))
             throw Invalid("unknown-field");
 }
-std::wstring FromUtf8(const std::string& text) {
+std::wstring FromUtf8(std::string_view text) {
     if (text.empty()) return {};
     if (text.size() > INT_MAX) throw Invalid("text-too-large");
     const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
@@ -85,8 +85,9 @@ std::string Utf8(const std::wstring& text) {
     return out;
 }
 namespace {
+bool IsPlainStringChar(wchar_t c) noexcept { return c >= 32 && c != L'"' && c != L'\\'; }
 class Reader {
-    const std::wstring& s;
+    std::wstring s;
     size_t p = 0;
     wchar_t Peek() const { return p < s.size() ? s[p] : 0; }
     wchar_t Take() { if (p == s.size()) throw Invalid("incomplete-json"); return s[p++]; }
@@ -103,7 +104,12 @@ class Reader {
         return static_cast<wchar_t>(value);
     }
     std::wstring String() {
-        Expect(L'"'); std::wstring out;
+        Expect(L'"');
+        const size_t start = p;
+        while (p < s.size() && IsPlainStringChar(s[p])) ++p;
+        // Escapes only shorten text. Decode into the consumed part of our private UTF-16 buffer.
+        size_t end = p;
+        bool unicodeEscape = false;
         while (Peek() != L'"') {
             wchar_t c = Take();
             if (c < 32) throw Invalid("invalid-json-string");
@@ -113,15 +119,17 @@ class Reader {
                 case L'"': case L'\\': case L'/': break;
                 case L'b': c = L'\b'; break; case L'f': c = L'\f'; break;
                 case L'n': c = L'\n'; break; case L'r': c = L'\r'; break; case L't': c = L'\t'; break;
-                case L'u': c = Hex(); break;
+                case L'u': c = Hex(); unicodeEscape = true; break;
                 default: throw Invalid("invalid-json-escape");
                 }
+                if (!c) throw Invalid("nul-string");
             }
-            if (!c) throw Invalid("nul-string");
-            out += c;
+            s[end++] = c;
         }
         Expect(L'"');
-        // Reject unpaired surrogates, including escaped ones, before using filesystem APIs.
+        auto out = s.substr(start, end - start);
+        // FromUtf8 already checked the literal text. Only \u escapes can introduce lone surrogates.
+        if (!unicodeEscape) return out;
         for (size_t i = 0; i < out.size(); ++i) {
             const unsigned c = out[i];
             if (c >= 0xd800 && c <= 0xdbff) {
@@ -167,12 +175,18 @@ class Reader {
         Json j; j.type = Json::Type::Number; j.text = s.substr(start, p - start); return j;
     }
 public:
-    explicit Reader(const std::wstring& text) : s(text) {}
+    explicit Reader(std::wstring text) : s(std::move(text)) {}
     Json Read() { if (Peek() == 0xfeff) ++p; auto value = Value(0); Space(); if (p != s.size()) throw Invalid("json-trailing-data"); return value; }
 };
 void AppendString(std::wstring& out, const std::wstring& value) {
-    constexpr wchar_t hex[] = L"0123456789abcdef"; out += L'"';
-    for (const auto c : value) {
+    constexpr wchar_t hex[] = L"0123456789abcdef";
+    out.reserve(out.size() + value.size() + 2);
+    out += L'"';
+    size_t i = 0;
+    while (i < value.size() && IsPlainStringChar(value[i])) ++i;
+    out.append(value, 0, i);
+    for (; i < value.size(); ++i) {
+        const auto c = value[i];
         if (c == L'"' || c == L'\\') { out += L'\\'; out += c; }
         else if (c < 32) { out += L"\\u00"; out += hex[(c >> 4) & 15]; out += hex[c & 15]; }
         else out += c;
@@ -195,9 +209,14 @@ void Append(std::wstring& out, const Json& j, unsigned depth) {
     }
 }
 }
-Json ParseJson(const std::string& bytes, size_t maximum) {
+Json ParseJson(std::string_view bytes, size_t maximum) {
     if (bytes.empty() || bytes.size() > maximum) throw Invalid("invalid-json-size");
-    const auto text = FromUtf8(bytes); return Reader(text).Read();
+    return Reader(FromUtf8(bytes)).Read();
 }
-std::string WriteJson(const Json& value) { std::wstring out; Append(out, value, 0); return Utf8(out) + "\n"; }
+std::string WriteJson(const Json& value) {
+    std::wstring out;
+    Append(out, value, 0);
+    out += L'\n';
+    return Utf8(out);
+}
 }

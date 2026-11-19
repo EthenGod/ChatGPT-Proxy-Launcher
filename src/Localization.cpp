@@ -5,7 +5,11 @@
 #include <algorithm>
 #include <atomic>
 #include "Localization.h"
+#ifdef CHATGPT_LAUNCHER_ONLY
+#include "../work/LauncherLocalizationData.h"
+#else
 #include "../work/LocalizationData.h"
+#endif
 
 namespace l10n {
 namespace {

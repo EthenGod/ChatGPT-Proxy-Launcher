@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["vite/client", "node"],
+    "paths": {
+      "vitest": ["./node_modules/vitest"],
+      "@tauri-apps/api/*": ["./node_modules/@tauri-apps/api/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "@testing-library/react": ["./node_modules/@testing-library/react"],
+      "@testing-library/user-event": ["./node_modules/@testing-library/user-event"],
+      "@testing-library/jest-dom/*": ["./node_modules/@testing-library/jest-dom/types/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts", "../tests/frontend"]
+}

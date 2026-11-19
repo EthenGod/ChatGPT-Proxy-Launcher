@@ -2,11 +2,12 @@
 #include "DeploymentDiscovery.h"
 #include "SetupCore.h"
 #include <shlobj.h>
+#include <wrl/client.h>
 #include <set>
 
 namespace automation {
 namespace {
-template<class T> struct ComPtr { T* p = nullptr; ~ComPtr() { if (p) p->Release(); } };
+using Microsoft::WRL::ComPtr;
 bool Missing(DWORD error) { return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND; }
 std::wstring Join(const std::wstring& root, const std::wstring& leaf) {
     if (root.empty()) throw Invalid("empty-directory");
@@ -34,7 +35,7 @@ void ValidateDiscovery(const Json& record, const std::wstring& path, const std::
     }
 }
 }
-std::wstring ReadAppVersion(const std::wstring& path) {
+std::wstring ReadAppVersion(const std::wstring& path, bool includeReleaseLabel) {
     DWORD ignored = 0;
     const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
     if (!size || size > 1024 * 1024) return {};
@@ -47,6 +48,16 @@ std::wstring ReadAppVersion(const std::wstring& path) {
     auto version = std::to_wstring(HIWORD(info.dwFileVersionMS)) + L"." + std::to_wstring(LOWORD(info.dwFileVersionMS))
         + L"." + std::to_wstring(HIWORD(info.dwFileVersionLS));
     if (LOWORD(info.dwFileVersionLS)) version += L"." + std::to_wstring(LOWORD(info.dwFileVersionLS));
+    if (includeReleaseLabel && VerQueryValueW(data.data(), L"\\StringFileInfo\\040904B0\\ProductVersion", &value, &length)
+        && value && length > version.size() + 2 && length <= 128) {
+        const auto* text = static_cast<const wchar_t*>(value);
+        if (text[length - 1] == L'\0') {
+            const std::wstring label(text, length - 1);
+            if (label.compare(0, version.size() + 1, version + L"-") == 0 &&
+                label.find_first_not_of(L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.-", version.size() + 1) == std::wstring::npos)
+                return label;
+        }
+    }
     return version;
 }
 Json CapabilityList(bool launcherOnly) {
@@ -75,15 +86,15 @@ Json ReadDeploymentInfo(const std::wstring& root, const std::wstring& settings) 
         struct Apartment { HRESULT hr; ~Apartment() { if (SUCCEEDED(hr)) CoUninitialize(); } } apartment{com};
         if (FAILED(com) && com != RPC_E_CHANGED_MODE) throw IoError(ERROR_NOT_SUPPORTED);
         ComPtr<IShellLinkW> link; ComPtr<IPersistFile> persist;
-        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p)))
-            || FAILED(link.p->QueryInterface(IID_PPV_ARGS(&persist.p)))) throw IoError(ERROR_NOT_SUPPORTED);
-        const HRESULT loaded = persist.p->Load(settings.c_str(), STGM_READ);
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))
+            || FAILED(link->QueryInterface(IID_PPV_ARGS(&persist)))) throw IoError(ERROR_NOT_SUPPORTED);
+        const HRESULT loaded = persist->Load(settings.c_str(), STGM_READ);
         if (loaded == E_ACCESSDENIED || loaded == STG_E_ACCESSDENIED || loaded == STG_E_SHAREVIOLATION
             || loaded == STG_E_LOCKVIOLATION || loaded == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION)) throw IoError(static_cast<DWORD>(loaded));
         if (FAILED(loaded)) throw Invalid("invalid-settings");
         std::vector<wchar_t> path(32768), marker(256);
-        if (FAILED(link.p->GetPath(path.data(), static_cast<int>(path.size()), nullptr, SLGP_RAWPATH))
-            || FAILED(link.p->GetDescription(marker.data(), static_cast<int>(marker.size()))) || wcscmp(marker.data(), setup::Marker)) throw Invalid("foreign-settings");
+        if (FAILED(link->GetPath(path.data(), static_cast<int>(path.size()), nullptr, SLGP_RAWPATH))
+            || FAILED(link->GetDescription(marker.data(), static_cast<int>(marker.size()))) || wcscmp(marker.data(), setup::Marker)) throw Invalid("foreign-settings");
         const auto target = FullPath(path.data()); CheckPlainPath(target);
         if (!SamePath(Join(ParentPath(target), setup::LauncherName), target)) throw Invalid("invalid-target");
         result[L"launcherPath"] = Json(target);

@@ -1,0 +1,26 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Configure the launcher through bounded native commands for the main window only.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-read-setup-state",
+    "allow-setup-window-ready",
+    "allow-close-setup-window",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-theme",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color",
+    "allow-validate-setup",
+    "allow-detect-setup-port",
+    "allow-save-setup",
+    "allow-choose-setup-directory",
+    "allow-add-setup-program",
+    "allow-list-setup-programs",
+    "allow-open-setup-location",
+    "allow-set-setup-preferences"
+  ]
+}

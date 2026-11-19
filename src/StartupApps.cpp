@@ -2,17 +2,16 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "StartupApps.h"
+#include "NativeMemory.h"
 #include "AutomationContract.h"
 #include <shlobj.h>
+#include <wrl/client.h>
 #include <string>
 #include <vector>
 
 namespace companions {
 namespace {
-template<class T> struct ComPtr {
-    T* p = nullptr;
-    ~ComPtr() { if (p) p->Release(); }
-};
+using Microsoft::WRL::ComPtr;
 struct Search {
     HANDLE h;
     ~Search() { if (h != INVALID_HANDLE_VALUE) FindClose(h); }
@@ -92,16 +91,16 @@ void Dispatch(const std::wstring& folder, PCWSTR chat, Start start, Observe obse
         if (fromShortcut) {
             if (!com.Ready()) continue;
             ComPtr<IShellLinkW> shortcut; ComPtr<IPersistFile> persist;
-            if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shortcut.p)))
-                || FAILED(shortcut.p->QueryInterface(IID_PPV_ARGS(&persist.p)))
-                || FAILED(persist.p->Load(path.c_str(), STGM_READ))) continue;
+            if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shortcut)))
+                || FAILED(shortcut->QueryInterface(IID_PPV_ARGS(&persist)))
+                || FAILED(persist->Load(path.c_str(), STGM_READ))) continue;
             constexpr int capacity = 32768;
             if (buffers.empty()) buffers.resize(3 * capacity);
             auto target = buffers.data(), tail = target + capacity, cwd = tail + capacity;
             *target = *tail = *cwd = 0;
-            if (FAILED(shortcut.p->GetPath(target, capacity, nullptr, 0))
-                || FAILED(shortcut.p->GetArguments(tail, capacity)) || FAILED(shortcut.p->GetWorkingDirectory(cwd, capacity))) continue;
-            if (FAILED(shortcut.p->GetShowCmd(&show))) show = -1;
+            if (FAILED(shortcut->GetPath(target, capacity, nullptr, 0))
+                || FAILED(shortcut->GetArguments(tail, capacity)) || FAILED(shortcut->GetWorkingDirectory(cwd, capacity))) continue;
+            if (FAILED(shortcut->GetShowCmd(&show))) show = -1;
             exe = target; args = tail; directory = *cwd ? cwd : nullptr; kind = FileKind(target);
         }
         if (!_wcsicmp(exe, chat) || !ValidTarget(exe, args, directory ? directory : L"")) continue;
@@ -123,9 +122,11 @@ void RunFolder(const std::wstring& folder, PCWSTR chat, Start start, Observe obs
 }
 void Run(PCWSTR chat, Start start) noexcept {
     try {
-        struct Known { PWSTR p = nullptr; ~Known() { CoTaskMemFree(p); } } local;
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, nullptr, &local.p)))
-            Dispatch(std::wstring(local.p) + L"\\" + Root + L"\\" + Folder, chat, start);
+        PWSTR raw = nullptr;
+        const HRESULT hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, nullptr, &raw);
+        native::TaskPtr<wchar_t> local(raw);
+        if (SUCCEEDED(hr) && local)
+            Dispatch(std::wstring(local.get()) + L"\\" + Root + L"\\" + Folder, chat, start);
     } catch (...) {} // Optional programs never change the outcome of launching ChatGPT.
 }
 }

@@ -28,6 +28,7 @@ struct Paths {
     std::wstring legacyStartupLink{}, legacyDesktopLink{};
 };
 struct Link { std::wstring target, arguments, directory, description; };
+struct LinkIcon { std::wstring path; int index = 0; };
 enum class CommitState { NotStarted, Committed, RolledBack, Incomplete };
 struct Result {
     DWORD code = 0;
@@ -49,6 +50,7 @@ std::wstring Join(const std::wstring& directory, const std::wstring& file);
 // Paths and companion shortcuts (SetupCore.cpp).
 Result GetPaths(Paths& paths);
 Result EnsureCompanionFolder(const Paths& paths, std::wstring& folder);
+std::wstring CompanionShortcutPath(const std::wstring& folder, const std::wstring& program);
 Result AddCompanionProgram(const Paths& paths, const std::wstring& program);
 Result NormalizeDirectory(const std::wstring& input, std::wstring& output);
 
@@ -58,9 +60,9 @@ Result BuildArguments(const Options& options, std::wstring& arguments);
 Result ParseArguments(const std::wstring& arguments, Options& options);
 
 // Deployment owns file validation, commit and rollback (SetupCore.cpp).
-Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = false);
+Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = false, LinkIcon* icon = nullptr);
 Result Load(const Paths& paths, Loaded& loaded);
 Result Apply(const Paths& paths, const Options& options, Payload payload,
-    std::wstring& deployedTarget);
+    std::wstring& deployedTarget, bool isolated = false);
 Result Preflight(const Paths& paths, const Options& options, Payload payload);
 } // namespace setup

@@ -45,7 +45,49 @@ static DWORD WINAPI TestFormat(DWORD, LPCVOID, DWORD, DWORD, LPWSTR output, DWOR
 #define REQUIRE(x) do { if (!(x)) { printf("FAIL memory line %d: %s\n", __LINE__, #x); return 20; } } while (0)
 static_assert(!std::is_copy_constructible_v<memory_test_native::TaskPtr<wchar_t>>);
 static_assert(!std::is_copy_constructible_v<memory_test_native::LocalPtr<wchar_t>>);
+
+static int TextAllocations() {
+    setup::Options options;
+    options.extra = L"\"\" \"中文 参数\"";
+    for (int i = 0; i < 96; ++i) options.extra += L" --synthetic-option=" + std::to_wstring(i);
+    std::wstring command;
+    size_t previewCalls = 0;
+    {
+        memory_fault::Scope count;
+        REQUIRE(setup::BuildArguments(options, command) && command == options.extra);
+        previewCalls = memory_fault::calls;
+    }
+    REQUIRE(previewCalls < 64); // Plain tokens borrow their text. Only quoted tokens need decoding.
+
+    const std::string document = "{\"note\":\"" + std::string(24000, 'x') + "\",\"other\":[\"路径\",\"tail\\\\\",\"\\\"\",\"😀\"]}\n";
+    size_t jsonBytes = 0;
+    {
+        memory_fault::Scope count;
+        REQUIRE(automation::WriteJson(automation::ParseJson(document)) == document);
+        jsonBytes = memory_fault::bytes;
+    }
+    REQUIRE(jsonBytes < document.size() * 13); // Includes both encodings and the parsed tree.
+    std::string escaped = "\"", canonical = "\"";
+    for (int i = 0; i < 300; ++i) {
+        escaped += R"(\t\\\"😀\u4e2d)";
+        canonical += R"(\u0009\\\"😀中)";
+    }
+    escaped += '"';
+    canonical += "\"\n";
+    size_t escapeCalls = 0;
+    {
+        memory_fault::Scope count;
+        REQUIRE(automation::WriteJson(automation::ParseJson(escaped)) == canonical);
+        escapeCalls = memory_fault::calls;
+    }
+    REQUIRE(escapeCalls < 16);
+    printf("PASS text allocations: %zu allocations for argument preview, %zu requested bytes for 24 KB JSON, %zu allocations for dense escapes\n",
+        previewCalls, jsonBytes, escapeCalls);
+    return 0;
+}
+
 int main() {
+    REQUIRE(TextAllocations() == 0);
     unsigned failedPaths = 0, succeededPaths = 0, failedErrors = 0;
     for (int fail = 0; fail < 40; ++fail) {
         setup::Paths paths;

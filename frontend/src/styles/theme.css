@@ -1,0 +1,33 @@
+@import 'tailwindcss' source('../');
+@import '@radix-ui/colors/gray.css';
+@import '@radix-ui/colors/blue.css';
+@import '@radix-ui/colors/red.css';
+@import '@radix-ui/colors/gray-dark.css';
+@import '@radix-ui/colors/blue-dark.css';
+@import '@radix-ui/colors/red-dark.css';
+
+:root { color-scheme: dark; font: 14px/1.5 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif; background: var(--gray-1); color: var(--gray-12); }
+:root.light { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; }
+header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; padding: 28px 28px 8px; }
+h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
+h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+p { margin: 12px 0 0; }
+.small { font-size: 12px; }
+.secondary, dd { color: var(--gray-11); }
+main { flex: 1; padding: 0 28px 24px; }
+dl { margin: 0; }
+dl > div { display: flex; justify-content: space-between; gap: 24px; padding: 10px 0; }
+dd { margin: 0; white-space: nowrap; }
+footer { display: flex; justify-content: space-between; gap: 12px; padding: 18px 28px; border-top: 1px solid var(--gray-6); }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 7px 16px; border-radius: 9px; border: 1px solid var(--gray-7); transition: background-color 150ms ease-out, border-color 150ms ease-out; cursor: pointer; }
+.secondary-button { background: var(--gray-3); color: var(--gray-12); }
+.secondary-button:hover { background: var(--gray-4); }
+.primary-button { background: var(--blue-9); color: white; border-color: transparent; }
+.primary-button:hover { background: var(--blue-10); }
+.button:focus-visible { outline: 2px solid var(--blue-8); outline-offset: 3px; }
+.button:disabled { opacity: .5; cursor: default; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+@media (forced-colors: active) { .button, footer { border-color: ButtonText; } .button { background: ButtonFace; color: ButtonText; } }

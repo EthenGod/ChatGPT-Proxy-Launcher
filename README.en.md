@@ -24,9 +24,23 @@ Both methods open the same setup tool. **Choose one; method 1 is recommended.**
    ```
 
 3. Click the PowerShell window, press **Ctrl+V** to paste, then press **Enter**.
-4. PowerShell shows progress while finding the release, downloading, and verifying it. When **ChatGPT Launcher Setup** opens, follow **Configure the launcher** below. Leave PowerShell open; after the setup tool exits, it cleans up the downloads and shows the completion prompt.
+4. PowerShell shows progress while finding the release, downloading, and verifying it. When **ChatGPT Launcher** opens, follow **Configure the launcher** below. Leave PowerShell open; after the setup tool exits, it cleans up the downloads and shows the completion prompt.
 
 If an error appears and the setup tool does not open, use method 2.
+
+The current source builds the new UI by default and requires WebView2. If it is missing, the download script offers **Install WebView2 (recommended)**, **Use compatibility mode**, or **Cancel**. Compatibility mode keeps the original configuration features and needs no runtime installation. Double-clicking opens compatibility mode automatically when WebView2 is missing; use `ChatGPTLauncherSetup.exe --compatibility` to select it explicitly. The standalone launcher and headless commands do not require WebView2. The instructions below use the v1.2 UI labels.
+
+**Try a beta**
+
+The one-line command above downloads stable releases only. To try a release from `refactor/ui`, paste these three lines into PowerShell.
+
+```powershell
+$branch = 'refactor/ui'
+$setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/ChatGPT-Proxy-Launcher/refs/heads/$branch/setup.ps1"))
+& $setup -Channel Preview -Branch $branch
+```
+
+`-Channel Preview` includes stable releases and prereleases and picks the most recently published one. `-Branch` limits the selection to published tags in that branch’s history. Append `-Tag v1.2.0-beta.3` to the last line to pin this beta. The updated script must be on the remote branch and the release must be published.
 
 ### Method 2: Download and open manually
 
@@ -35,27 +49,29 @@ If an error appears and the setup tool does not open, use method 2.
 1. Click the blue button above, or [open the download page here](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/latest). Scroll to **Assets**. If the file list is hidden, click **Assets** to expand it.
 2. Click **`ChatGPTLauncherSetup.exe`**. This is the only file you need; you do not need the other EXE or the source ZIP.
 3. After the download finishes, press **Ctrl+J** in your browser. Find `ChatGPTLauncherSetup.exe`, then click its folder icon or **Show in folder**.
-4. Double-click the downloaded file in that folder. When **ChatGPT Launcher Setup** opens, continue below.
+4. Double-click the downloaded file in that folder. When **ChatGPT Launcher** opens, continue below.
 
 ### Configure the launcher (same for both methods)
 
 The setup tool follows the Windows display language by default. It supports 简体中文, English, and 日本語, with Chinese as the fallback. Change the language at the top right, or choose **System language**. Your choice is remembered without redeploying.
 
-1. **Choose when to start.** Leave **Start automatically when I sign in to Windows** on if you want ChatGPT to open at sign-in. Turn it off if you prefer to open ChatGPT yourself.
-2. **Add a desktop icon.** Turn on **Create a desktop shortcut** if you want an easy way to open ChatGPT later. Otherwise, leave it off. **Start without showing the main window (unavailable)** is disabled for now; skip it.
+1. **Choose when to start.** Leave **Start at sign-in** on if you want ChatGPT to open at sign-in. Turn it off if you prefer to open ChatGPT yourself.
+2. **Add a desktop icon.** Turn on **Desktop shortcut** if you want an easy way to open ChatGPT later. Otherwise, leave it off. **Silent startup** is disabled for now; skip it.
 3. **Set up a proxy**, if needed:
-   - Open your usual proxy app and leave it running. Return to the setup tool and turn on **Use a specific proxy**.
+   - Open your usual proxy app and leave it running. Return to the setup tool and turn on the switch beside **Proxy**.
    - Select the protocol offered by your proxy app. For example, select **HTTP** for an HTTP port. If the proxy app runs on this computer, keep **Address** set to `127.0.0.1`.
-   - Click the empty **Port** field. If a number appears, check that it matches the port in your proxy app. If it is wrong or the field stays empty, open the proxy app settings, find the port for the selected protocol, and enter it here.
-   - **Also configure Codex .env (recommended)** is on by default. It uses the same protocol, address, and port. Hover over **?** for details, or turn the option off if you do not need it.
-4. **Save.** **Launch options preview** updates automatically; you do not need to type there. For a first setup, you can skip **Advanced** and click **Deploy and save** at the bottom right. If already deployed, the button says **Save changes**.
-5. **If Deployment complete appears:** click **OK** to open Windows **Startup apps** settings. Make sure **ChatGPT** is **Off**, and **ChatGPT Launcher** is **On**, so sign-in startup uses the settings you just saved.
+   - Turning the proxy on detects the port once. You can also click **Detect port** inside the port field. Check the result against your proxy app and correct it if needed. Click the notification at the bottom right to see its source. Detection does not prove connectivity.
+   - **Apply to Codex** is on by default and writes the same proxy to Codex's `.env`. Click **?** for details, or turn it off if you do not need it.
+4. **Save.** **Launch arguments** updates automatically; you do not need to type there. For a first setup, skip **Advanced settings** and click **Deploy and save** at the bottom right. If already deployed, the button says **Save changes**.
+5. **If asked to check sign-in startup after saving:** click **Open startup app settings**. Make sure **ChatGPT** is **Off** and **ChatGPT Launcher** is **On** in Windows. The **Details** button at the bottom reopens this reminder.
 6. **Close the setup tool.** Once it shows **Saved**, click **Done**. There is no need to deploy again. With method 1, PowerShell removes the temporary downloads and shows a Star prompt. Press any key to open this project's page and exit, or wait 10 seconds for it to do so automatically. To exit without opening the page, close the PowerShell window. Download, verification, or cleanup failures leave the window open with an error.
 7. **Try starting ChatGPT.** Saving does not open ChatGPT. If you created a desktop shortcut, double-click **ChatGPT Launcher** on your desktop. If ChatGPT is already running, fully quit it first. If you only enabled sign-in startup, it will try to open ChatGPT the next time you sign in.
 
 Older shortcuts may still be named **ChatGPT Proxy Launcher**. Saving with the updated setup tool migrates the shortcuts it manages to the new name.
 
 **To change settings later:** run method 1 again, or open the downloaded setup tool from method 2. Make your changes and click **Save changes**.
+
+If setup is already open, running it again shows the existing window. If you opened it in another Windows session under the same account, switch back to that session to continue.
 
 **If Codex .env configuration is on:** save your work in ChatGPT and Codex first. After saving, the setup tool tries to quit the entire ChatGPT desktop app and waits up to 10 seconds. Follow the message at the bottom to reopen it. If the tool cannot confirm that ChatGPT has fully quit, close it completely yourself first. The tool updates `all_proxy`, `ALL_PROXY`, `HTTP_PROXY`, and `HTTPS_PROXY` in `%USERPROFILE%\.codex\.env`, adds missing variables, and preserves other content. This configuration is independent of launcher arguments and does not affect Chat. Turning the option off stops future updates; it does not remove existing entries. Save again after changing your proxy port. This may help with Codex reconnecting, but does not guarantee connectivity.
 
@@ -65,10 +81,10 @@ To add or improve a translation, see the [community translation guide](docs/tran
 
 ### Open plugins or other programs after ChatGPT
 
-1. Open the current setup tool, click **Advanced** at the bottom left, and find **Open after ChatGPT starts**.
+1. Open the setup tool and expand **Advanced settings**. **Companion programs** lists entries in the startup folder and registered extensions. **Protocol v1** means the extension has a valid manifest. Click an entry to view its full name, path and launch arguments. Click Refresh after adding or removing files in the folder.
 2. Click **Add program…**, select the file you normally use to start the plugin, and click **Open**. Supported types are listed below. The tool creates a shortcut, or copies the file if it is already a shortcut. It does not move the original or overwrite an existing file of the same name.
-3. When using this feature for the first time or upgrading from an older launcher, click **Back → Deploy and save**, or **Save changes** if already deployed. Programs then open when ChatGPT starts through this tool's desktop shortcut or sign-in startup. Opening ChatGPT from its official icon does not trigger them.
-4. To view or remove an entry, click **Advanced → Open startup folder** and move the entry out of the folder. You may also put supported files there directly. If a plugin needs other files, add a shortcut so its original folder stays intact.
+3. Adding a program takes effect immediately. For first use or an upgrade, also click **Deploy and save** at the bottom, or **Save changes** if already deployed. Programs then open when ChatGPT starts through this tool's desktop shortcut or sign-in startup. Opening ChatGPT from its official icon does not trigger them.
+4. To remove an ordinary program, click the **Open startup folder** icon beside the add button and move the entry out of the folder. You may also put supported files there directly. If a plugin needs other files, add a shortcut so its original folder stays intact. Use the extension’s installer to manage a registered extension.
 
 This folder is `%LOCALAPPDATA%\ChatGPTProxyLauncher\StartupApps`, separate from the Windows Startup folder. Only local programs, scripts, and ordinary shortcuts directly inside it are processed. Each successful creation of a ChatGPT process triggers these entries; the launcher does not wait for ChatGPT's window or check whether a legacy companion is already running.
 
@@ -111,12 +127,23 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 >
 
 **For script and plugin authors:** v1.1.0 adds headless deployment, deployment queries, and companion startup with readiness checks and limited retries. Start with the [developer guide (Chinese)](docs/developer-guide.md) and [automation usage (Chinese)](docs/automation-usage.md). Online commands require the matching script and EXE to be published on GitHub. Other users can follow the setup steps above.
 
-Install the Visual Studio 2022 Build Tools C++ tools and Windows SDK, then run these commands from the project root:
+A full build requires the Visual Studio 2022 Build Tools C++ tools, Windows SDK, Node.js (24.x starting at 24.15, or 26 and later), and a Rust 1.99 or newer MSVC toolchain with Clippy and rustfmt. Install the locked frontend dependencies first:
+
+```powershell
+cd frontend
+npm ci
+cd ..
+```
+
+Then run these commands from the project root. Building only the standalone launcher or old GUI does not require Node.js or Rust. If Rust is not on PATH, see [toolchain configuration (Chinese)](docs/ui-refactor.md#开发命令).
 
 | Command | Purpose |
 | --- | --- |
 | `cmd /c build.cmd` | Builds both EXEs in `outputs/`. |
+| `cmd /c build.cmd native` | Builds the old GUI in `work/ui-native/` without replacing the default setup tool. |
+| `cmd /c build.cmd launcher` | Builds only the standalone launcher in `outputs/`. |
 | `cmd /c tests\test-build.cmd` | Rebuilds and runs isolated tests without starting ChatGPT or changing real startup entries. |
+| `cmd /c tests\analyze.cmd` | Runs C++ static analysis, TypeScript, Rust formatting checks, and Clippy. |
 | `cmd /c release.cmd` | Builds, tests, and creates local upload files in `Releases/v<version>/`. Does not upload to GitHub. |
 
 ## License

@@ -11,11 +11,6 @@
 #include "MemoryFault.h"
 static unsigned notifications = 0, closeSignals = 0, legacyCalls = 0;
 static bool rejectJob = false, rejectJobQuery = false;
-static std::wstring deniedPolicyPath;
-static DWORD WINAPI TestFileAttributes(PCWSTR path) {
-    if (!deniedPolicyPath.empty() && deniedPolicyPath == path) { SetLastError(ERROR_ACCESS_DENIED); return INVALID_FILE_ATTRIBUTES; }
-    return GetFileAttributesW(path);
-}
 static thread_local PCWSTR syntheticEnvironment = nullptr;
 static std::wstring protocolTempRoot;
 static bool measureDispatch = false;
@@ -85,7 +80,6 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #define QueryInformationJobObject TestQueryJob
 #define GetEnvironmentStringsW TestEnvironmentStrings
 #define FreeEnvironmentStringsW TestFreeEnvironment
-#define GetFileAttributesW TestFileAttributes
 #define GetTempPathW TestTempPath
 #define CreateProcessW TestCreateProcess
 #define WaitForSingleObject TestWaitForProcess
@@ -94,7 +88,6 @@ static BOOL WINAPI FakeUserObject(HANDLE, int, PVOID data, DWORD, LPDWORD) { sta
 #undef QueryInformationJobObject
 #undef GetEnvironmentStringsW
 #undef FreeEnvironmentStringsW
-#undef GetFileAttributesW
 #undef GetTempPathW
 #undef CreateProcessW
 #undef WaitForSingleObject
@@ -264,8 +257,12 @@ int wmain(int argc, wchar_t** argv) {
         if (benchmark) { const auto code = Benchmark(base, self); CoUninitialize(); return code; }
         if (contextBenchmark) { const auto code = ContextBenchmark(base, self); CoUninitialize(); return code; }
         Case unreadablePolicy(base, L"unreadable-policy", self, L"task"); unreadablePolicy.Register();
-        deniedPolicyPath = Join(unreadablePolicy.paths.defaultDirectory, L"companion-policy.json");
-        const auto policyFailure = unreadablePolicy.Run(); deniedPolicyPath.clear();
+        const auto policyPath = Join(unreadablePolicy.paths.defaultDirectory, automation::contract::PolicyFile);
+        automation::Handle heldPolicy(CreateFileW(policyPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr));
+        REQUIRE(heldPolicy);
+        automation::WriteBytes(heldPolicy.value, R"({"schemaVersion":1,"budgetMs":30000,"feedback":"quiet"})");
+        const auto policyFailure = unreadablePolicy.Run();
+        heldPolicy.Reset();
         REQUIRE(policyFailure.At(L"exitCode").Integer(0, 255) == 10 && Last(policyFailure).At(L"code").String() == L"invalid-policy");
         REQUIRE(GetFileAttributesW(Join(unreadablePolicy.root, L"capture-1.json").c_str()) == INVALID_FILE_ATTRIBUTES);
         {

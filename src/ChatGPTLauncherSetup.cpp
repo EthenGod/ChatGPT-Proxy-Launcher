@@ -2,6 +2,8 @@
 #include "SetupCore.h"
 #include "Localization.h"
 #include "SetupCommandLine.h"
+#include "SetupNative.h"
+#include "SetupUiServices.h"
 #include "StartupApps.h"
 #include "SetupResources.h"
 #include "StartupIntegration.h"
@@ -84,31 +86,11 @@ PCWSTR ChatGPTCloseMessage(setup::ChatGPTCloseResult result) {
     if (result == setup::ChatGPTCloseResult::NotRunning) return l10n::Text("setup.quit.absent");
     return l10n::Text("setup.quit.manual");
 }
-bool ReadCodexEnvPreference() {
-    DWORD enabled = 1, size = sizeof(enabled);
-    return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"ConfigureCodexEnv", RRF_RT_REG_DWORD,
-        nullptr, &enabled, &size) != ERROR_SUCCESS || enabled != 0;
-}
-bool SaveCodexEnvPreference(bool enabled) {
-    const DWORD value = enabled ? 1 : 0;
-    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"ConfigureCodexEnv", REG_DWORD,
-        &value, sizeof(value)) == ERROR_SUCCESS;
-}
-bool ReadDarkPreference() {
-    DWORD light = 0, size = sizeof(light);
-    return RegGetValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", RRF_RT_REG_DWORD,
-        nullptr, &light, &size) != ERROR_SUCCESS || light != 1;
-}
-bool SaveDarkPreference(bool dark) {
-    const DWORD light = dark ? 0 : 1;
-    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"LightTheme", REG_DWORD,
-        &light, sizeof(light)) == ERROR_SUCCESS;
-}
-bool SaveLanguagePreference() {
-    PCWSTR value = l10n::FollowsSystem() ? L"auto" : l10n::Current().tag;
-    return RegSetKeyValueW(HKEY_CURRENT_USER, AppearanceKey, L"Language", REG_SZ,
-        value, static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
-}
+using setup::ui::ReadCodexEnvPreference;
+using setup::ui::SaveCodexEnvPreference;
+using setup::ui::ReadDarkPreference;
+using setup::ui::SaveDarkPreference;
+using setup::ui::SaveLanguagePreference;
 constexpr UINT LanguageMenuBase = 40000;
 PCWSTR LanguageMenuText(size_t index) { return index == 0 ? l10n::Text("setup.language.system") : l10n::At(index - 1).name; }
 bool LanguageMenuSelected(size_t index) {
@@ -140,6 +122,7 @@ struct App {
     HWND languagePopup = nullptr;
     UINT dpi = 96;
     bool advanced = false, loading = true, dirty = false, busy = false, fatal = false;
+    bool compatibility = false, isolatedPreview = false;
     bool savedThisSession = false, startupReminderShown = false;
     bool dark = false, contrast = false, draggingScroll = false;
     bool preferredDark = true;
@@ -320,7 +303,7 @@ void App::CreateControls() {
     const DWORD label = SS_LEFT | SS_NOPREFIX;
     const DWORD edit = WS_TABSTOP | ES_AUTOHSCROLL;
     add(Title, L"STATIC", l10n::Text("common.launcher"), label, 2);
-    add(SetupVersion, L"STATIC", l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}).c_str(), label, 3);
+    add(SetupVersion, L"STATIC", l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_RELEASE_VERSION}}).c_str(), label, 3);
     add(LanguageButton, L"BUTTON", l10n::Current().name, WS_TABSTOP | BS_OWNERDRAW);
     add(ThemeToggle, L"BUTTON", l10n::Text("setup.theme.light"), WS_TABSTOP | BS_OWNERDRAW);
     add(State, L"STATIC", l10n::Text("setup.state.initial"), label, 3);
@@ -625,9 +608,9 @@ void App::TranslateControls() {
     for (const auto& label : labels) Set(label.id, l10n::Text(label.key));
     Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
     Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced"));
-    Set(SetupVersion, l10n::Format("setup.version", {{"version", L"" APP_VERSION_TEXT}}));
+    Set(SetupVersion, l10n::Format(compatibility ? "setup.compatibility.version" : "setup.version", {{"version", L"" APP_RELEASE_VERSION}}));
     Set(LanguageButton, l10n::Current().name);
-    SetWindowTextW(window, l10n::Text("setup.window")); SetWindowTextW(body, l10n::Text("setup.body"));
+    SetWindowTextW(window, l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window")); SetWindowTextW(body, l10n::Text("setup.body"));
     SendMessageW(Get(Port), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.port")));
     SendMessageW(Get(Bypass), EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(l10n::Text("setup.placeholder.bypass")));
     // A single read on explicit switching refreshes localized deployment warnings, never the form.
@@ -813,9 +796,14 @@ void App::Refresh(bool edited) {
     }
     Set(ApplyButton, busy ? l10n::Text("setup.status.saving") : savedThisSession && !dirty ? l10n::Text("setup.action.saved") : savedTarget.empty() ? l10n::Text("setup.action.deploy") : l10n::Text("setup.action.save"));
     Set(CloseButton, savedThisSession && !dirty ? l10n::Text("common.done") : l10n::Text("common.close"));
+    if (isolatedPreview) {
+        for (int id : {Startup, Silent, Desktop, Proxy, CodexEnv, Protocol, ProtocolHttps,
+            ProtocolSocks, Host, Port, Directory, Browse, Reset, Bypass, Extra, AddProgram,
+            OpenCompanions, ApplyButton, ThemeToggle, LanguageButton}) EnableWindow(Get(id), FALSE);
+    }
 }
 void App::DetectPort() {
-    if (closing || loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
+    if (isolatedPreview || closing || loading || busy || fatal || detectingPort || !Checked(Proxy) || !Text(Port).empty()) return;
     const auto options = Options();
     detectingPort = true; detectionRevision = editRevision;
     EnableWindow(Get(LanguageButton), FALSE);
@@ -900,6 +888,7 @@ void App::UpdateState(const setup::Loaded& loaded) {
 }
 void App::Command(int id, int notification) {
     if (loading || busy) return;
+    if (isolatedPreview && id != Advanced && id != CloseButton && !IsHelp(id)) return;
     if (id == LanguageButton && notification == BN_CLICKED) { LanguageMenu(); return; }
     if (IsHelp(id) && notification == BN_CLICKED) {
         MessageBoxW(window, HelpText(id), id == CodexEnvHelp ? l10n::Text("setup.dialog.codex") : l10n::Text("setup.dialog.proxy"), MB_OK | MB_ICONINFORMATION); return;
@@ -937,52 +926,16 @@ void App::Command(int id, int notification) {
     }
     if ((id == Browse || id == AddProgram) && notification == BN_CLICKED) {
         const bool selectProgram = id == AddProgram;
-        IFileOpenDialog* dialog = nullptr;
-        HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
-        native::ComPtr<IFileOpenDialog> ownedDialog(dialog);
-        if (SUCCEEDED(hr)) {
-            DWORD flags = 0;
-            hr = dialog->GetOptions(&flags);
-            if (SUCCEEDED(hr)) hr = dialog->SetOptions(flags | (selectProgram ? FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS : FOS_PICKFOLDERS) | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-            std::wstring supported;
-            if (selectProgram) for (const auto& format : companions::Formats) {
-                if (!supported.empty()) supported += L';';
-                supported += L'*'; supported += format.ext;
-            }
-            const COMDLG_FILTERSPEC filters[] = {
-                {l10n::Text("setup.filter.supported"), supported.c_str()},
-                {l10n::Text("setup.filter.shortcuts"), L"*.lnk"}, {l10n::Text("setup.filter.batch"), L"*.bat;*.cmd"},
-                {l10n::Text("setup.filter.powershell"), L"*.ps1"}, {l10n::Text("setup.filter.windows"), L"*.vbs;*.js;*.wsf"},
-                {l10n::Text("setup.filter.python"), L"*.py;*.pyw"}, {l10n::Text("setup.filter.node"), L"*.cjs;*.mjs"},
-                {l10n::Text("setup.filter.java"), L"*.jar"}, {l10n::Text("setup.filter.apps"), L"*.exe"}
-            };
-            if (SUCCEEDED(hr) && selectProgram) hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
-            dialog->SetTitle(selectProgram ? l10n::Text("setup.dialog.program") : l10n::Text("setup.dialog.directory"));
-            IShellItem* initial = nullptr;
-            if (!selectProgram && SUCCEEDED(SHCreateItemFromParsingName(Text(Directory).c_str(), nullptr, IID_PPV_ARGS(&initial)))) {
-                dialog->SetFolder(initial); initial->Release();
-            }
-            if (SUCCEEDED(hr)) hr = dialog->Show(window);
-            if (SUCCEEDED(hr)) {
-                IShellItem* item = nullptr;
-                hr = dialog->GetResult(&item);
-                if (SUCCEEDED(hr)) {
-                    native::ComPtr<IShellItem> ownedItem(item);
-                    PWSTR path = nullptr; hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
-                    native::TaskPtr<wchar_t> ownedPath(path);
-                    if (SUCCEEDED(hr)) {
-                        if (selectProgram) {
-                            const auto added = setup::AddCompanionProgram(paths, path);
-                            if (!added) ShowSetupError(window, added, l10n::Text("setup.error.add"));
-                            else Set(Footer, savedThisSession ? l10n::Text("setup.status.added")
-                                : l10n::Text("setup.status.addeddeploy"));
-                        } else Set(Directory, path);
-                    }
-                }
-            }
+        std::wstring path;
+        const auto selected = setup::ui::ChoosePath(window, selectProgram, selectProgram ? L"" : Text(Directory), path);
+        if (!selected) ShowSetupError(window, selected, l10n::Text(selectProgram ? "setup.error.program" : "setup.error.directory"));
+        else if (!path.empty()) {
+            if (selectProgram) {
+                const auto added = setup::AddCompanionProgram(paths, path);
+                if (!added) ShowSetupError(window, added, l10n::Text("setup.error.add"));
+                else Set(Footer, savedThisSession ? l10n::Text("setup.status.added") : l10n::Text("setup.status.addeddeploy"));
+            } else Set(Directory, path);
         }
-        if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED))
-            MessageBoxW(window, setup::ErrorText(static_cast<DWORD>(hr)).c_str(), selectProgram ? l10n::Text("setup.error.program") : l10n::Text("setup.error.directory"), MB_OK | MB_ICONERROR);
         return;
     }
     if (id == CloseButton && notification == BN_CLICKED) { SendMessageW(window, WM_CLOSE, 0, 0); return; }
@@ -1028,14 +981,8 @@ void App::BeginSave() {
                     completion->result.code = ERROR_NOT_ENOUGH_MEMORY;
                     completion->result.message.swap(failureMessage);
                 }
-                if (completion->result && completion->checkStartup) {
-                    try { completion->startupReport = setup::TryDisableOfficialStartup(); }
-                    catch (...) { completion->startupReport.error = ERROR_NOT_ENOUGH_MEMORY; }
-                }
-                if (completion->result && completion->wroteCodexEnv) {
-                    try { completion->closeResult = setup::TryCloseChatGPT(); }
-                    catch (...) { completion->closeResult = setup::ChatGPTCloseResult::NeedsManualExit; }
-                }
+                if (completion->result) setup::ui::CompleteSave(completion->checkStartup, completion->wroteCodexEnv,
+                    completion->startupReport, completion->closeResult);
                 CoUninitialize();
             }
             saveFinished.store(true, std::memory_order_release);
@@ -1546,28 +1493,54 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 } // namespace
 
-int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int show) {
-    l10n::Initialize();
-    // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
-    if (arguments && *arguments) return setup::RunSetupCommandLine(instance, arguments);
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\Community.ChatGPTLauncherSetup.v1");
-    if (!mutex) return static_cast<int>(GetLastError());
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND existing = FindWindowW(L"ChatGPTLauncherSetup", nullptr);
-        if (existing) { ShowWindow(existing, SW_RESTORE); SetForegroundWindow(existing); }
-        CloseHandle(mutex); return 0;
+DWORD setup::AcquireGuiInstance(PCWSTR windowClass, HANDLE& session, HANDLE& user) noexcept try {
+    session = user = nullptr;
+    const auto name = std::wstring(L"Local\\Community.") + windowClass + L".v1";
+    automation::Handle local(CreateMutexW(nullptr, FALSE, name.c_str()));
+    const DWORD status = GetLastError();
+    if (!local) return status;
+    if (status == ERROR_ALREADY_EXISTS) {
+        if (const HWND existing = FindWindowW(windowClass, nullptr)) {
+            if (IsIconic(existing)) ShowWindowAsync(existing, SW_RESTORE);
+            else if (!IsWindowVisible(existing)) ShowWindowAsync(existing, SW_SHOW);
+            SetForegroundWindow(existing);
+        }
+        return ERROR_ALREADY_EXISTS;
     }
+    automation::Handle global;
+    const DWORD error = automation::OpenUserMutex(std::wstring(L"Gui.") + windowClass, global.value);
+    if (error == ERROR_ALREADY_EXISTS) {
+        // A notification must not prolong either lock after the active editor exits.
+        global.Reset();
+        local.Reset();
+        MessageBoxW(nullptr, l10n::Text("setup.instance.othersession"), l10n::Text("setup.window"), MB_OK | MB_ICONINFORMATION);
+        return error;
+    }
+    if (error) return error;
+    session = local.value;
+    user = global.value;
+    local.value = global.value = nullptr;
+    return ERROR_SUCCESS;
+} catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
+catch (...) { return ERROR_INVALID_DATA; }
+
+int setup::RunNativeSetup(HINSTANCE instance, int show, bool compatibility, PCWSTR windowClass, const Paths* isolatedPaths) noexcept try {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(com)) { CloseHandle(mutex); return static_cast<int>(com); }
+    if (FAILED(com)) return static_cast<int>(com);
+    struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
     int exitCode = 0;
     Gdiplus::GdiplusStartupInput graphicsInput;
     ULONG_PTR graphicsToken = 0;
     if (Gdiplus::GdiplusStartup(&graphicsToken, &graphicsInput, nullptr) != Gdiplus::Ok) {
-        CoUninitialize(); CloseHandle(mutex); return ERROR_NOT_ENOUGH_MEMORY;
+        return ERROR_NOT_ENOUGH_MEMORY;
     }
+    struct Graphics { ULONG_PTR token; ~Graphics() { BufferedPaintUnInit(); Gdiplus::GdiplusShutdown(token); } } graphics{graphicsToken};
     BufferedPaintInit();
     {
         App app; app.instance = instance;
+        app.compatibility = compatibility;
+        app.isolatedPreview = isolatedPaths != nullptr;
+        if (isolatedPaths) app.paths = *isolatedPaths;
         HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_LAUNCHER), RT_RCDATA);
         HGLOBAL loaded = resource ? LoadResource(instance, resource) : nullptr;
         app.payload = { loaded ? static_cast<const BYTE*>(LockResource(loaded)) : nullptr,
@@ -1582,13 +1555,13 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
                 GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
             cls.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_CHATGPT), IMAGE_ICON,
                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
-            cls.lpfnWndProc = WindowProc; cls.lpszClassName = L"ChatGPTLauncherSetup"; RegisterClassExW(&cls);
+            cls.lpfnWndProc = WindowProc; cls.lpszClassName = windowClass; RegisterClassExW(&cls);
             cls.lpfnWndProc = BodyProc; cls.lpszClassName = L"ChatGPTSetupBody"; RegisterClassExW(&cls);
             const UINT dpi = GetDpiForSystem();
             RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
             const int width = MulDiv(700, static_cast<int>(dpi), 96);
             const int height = std::min(MulDiv(812, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
-            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", l10n::Text("setup.window"),
+            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, windowClass, l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left + (work.right - work.left - width) / 2,
                 work.top + (work.bottom - work.top - height) / 2, width, height, nullptr, nullptr, instance, &app);
             if (!window) exitCode = static_cast<int>(GetLastError());
@@ -1617,6 +1590,20 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
             }
         }
     }
-    BufferedPaintUnInit(); Gdiplus::GdiplusShutdown(graphicsToken);
-    CoUninitialize(); CloseHandle(mutex); return exitCode;
+    return exitCode;
+} catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
+catch (...) { return ERROR_INVALID_DATA; }
+
+#ifndef SETUP_UI_EMBEDDED
+int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _In_ int show) {
+    l10n::Initialize();
+    const bool compatibility = arguments && setup::IsCompatibilityCommand(arguments);
+    // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
+    if (arguments && *arguments && !compatibility) return setup::RunSetupCommandLine(instance, arguments);
+    constexpr auto windowClass = L"ChatGPTLauncherSetup";
+    automation::Handle session, user;
+    const auto error = setup::AcquireGuiInstance(windowClass, session.value, user.value);
+    if (error) return error == ERROR_ALREADY_EXISTS ? 0 : static_cast<int>(error);
+    return setup::RunNativeSetup(instance, show, compatibility, windowClass);
 }
+#endif

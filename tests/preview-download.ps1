@@ -10,8 +10,13 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, 
 if ($parseErrors.Count) { throw 'Could not parse setup.ps1' }
 $wrapper = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-SetupProgress' }, $true)
 $settings = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$progress' }, $true)
-if (!$wrapper -or !$settings) { throw 'Setup progress implementation was not found' }
+$catalog = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$setupLocales' }, $true)
+$formatter = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-SetupText' }, $true)
+if (!$wrapper -or !$settings -or !$catalog -or !$formatter) { throw 'Setup progress implementation was not found' }
 # Load only the production progress helper and caption, never the deployment/download entry point.
+Invoke-Expression $catalog.Extent.Text
+Invoke-Expression $formatter.Extent.Text
+$setupLanguage = 'zh-CN'
 Invoke-Expression $settings.Extent.Text
 Invoke-Expression $wrapper.Extent.Text
 

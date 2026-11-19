@@ -62,4 +62,4 @@ cmd /c tests\analyze.cmd
 
 手順、制限、ボタン名、リンクを原文と揃えます。ボタン名は該当言語のカタログに合わせます。コマンド、引数、環境変数、ファイル名は変更しません。リンクは同じ言語の文書を優先し、未翻訳の開発者文書には「中国語」と明記します。リリースノートは GitHub Release の本文にコピーするため、先頭の言語リンクには完全な GitHub URL を使います。バージョン番号とダウンロード先も揃えてください。
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File tests/documentation-tests.ps1` で言語リンク、ローカルリンク、コマンド例を確認します。文書の翻訳を追加するときは、そのテストの文書グループと言語サフィックスを更新し、`release.ps1` のソース一覧にファイルを追加します。画面の言語を追加するだけなら、全文書の翻訳は不要です。`AGENTS.md`、`HANDOFF.md` などの内部作業記録は翻訳しません。
+`powershell -NoProfile -ExecutionPolicy Bypass -File tests/documentation-tests.ps1` で言語リンク、ローカルリンク、コマンド例を確認します。文書の翻訳を追加するときは、そのテストの文書グループと言語サフィックスを更新し、`tools/release-sources.ps1` のソース一覧にファイルを追加します。画面の言語を追加するだけなら、全文書の翻訳は不要です。`AGENTS.md`、`HANDOFF.md` などの内部作業記録は翻訳しません。

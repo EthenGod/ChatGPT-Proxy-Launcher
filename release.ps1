@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Build, test, and prepare local upload files. Does not publish or change user startup.
+param([switch]$TestPackage)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.IO.Compression
@@ -9,13 +10,10 @@ $projectRoot = $PSScriptRoot
 & (Join-Path $projectRoot 'tools\locales.ps1') -Generate -ProjectRoot $projectRoot
 
 function Get-Sha256([string]$Path) {
-    $stream = [IO.File]::OpenRead($Path)
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
-    finally { $sha.Dispose(); $stream.Dispose() }
+    (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-function Write-VerifiedZip([string]$Path, [System.Collections.IDictionary]$Files) {
+function Write-SourceZip([string]$Path, [System.Collections.IDictionary]$Files) {
     $zip = [IO.Compression.ZipFile]::Open($Path, [IO.Compression.ZipArchiveMode]::Create)
     try {
         foreach ($name in $Files.Keys) {
@@ -23,71 +21,21 @@ function Write-VerifiedZip([string]$Path, [System.Collections.IDictionary]$Files
                 [IO.Compression.CompressionLevel]::Optimal) | Out-Null
         }
     } finally { $zip.Dispose() }
-    $zip = [IO.Compression.ZipFile]::OpenRead($Path)
-    try {
-        if ($zip.Entries.Count -ne $Files.Count) { throw 'ZIP entry count mismatch.' }
-        foreach ($entry in $zip.Entries) {
-            if (!$Files.Contains($entry.FullName)) { throw 'Unexpected ZIP entry.' }
-            $stream = $entry.Open()
-            $sha = [Security.Cryptography.SHA256]::Create()
-            try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
-            finally { $sha.Dispose(); $stream.Dispose() }
-            if ($actual -ne (Get-Sha256 $Files[$entry.FullName])) { throw ('ZIP content mismatch: ' + $entry.FullName) }
-        }
-    } finally { $zip.Dispose() }
 }
 
-# Explicit list: never sweep the repository, work directory, Git data or private files.
-$sourceNames = @(
-    '.editorconfig', '.gitattributes', '.gitignore', 'AGENTS.md', 'HANDOFF.md', 'LICENSE', 'README.md', 'README.en.md', 'README.ja.md', 'build.cmd', 'release.cmd', 'release.ps1', 'setup.ps1',
-    'tools/msvc-env.cmd', 'tools/locales.ps1', 'locales/languages.json', 'locales/catalog.schema.json',
-    'assets/ChatGPT.ico', 'assets/README.md', 'assets/README.en.md', 'assets/README.ja.md',
-    'docs/launcher-review.md', 'docs/maintainability-review.md', 'docs/performance-review.md', 'docs/release-upload.md', 'docs/setup-design.md', 'docs/taskbar-repair.md',
-    'docs/automation-design.md', 'docs/automation-usage.md', 'docs/automation-review.md', 'docs/companion-protocol-v1.md',
-    'docs/developer-guide.md', 'docs/automation-maintenance.md',
-    'docs/memory-thread-review.md', 'docs/localization-design.md', 'docs/translating.md',
-    'docs/translating.en.md', 'docs/translating.ja.md', 'docs/taskbar-repair.en.md', 'docs/taskbar-repair.ja.md',
-    'docs/release-upload.en.md', 'docs/release-upload.ja.md',
-    'docs/schemas/deploy-v1.schema.json', 'docs/schemas/companion-v1.schema.json',
-    'docs/schemas/companion-config-v1.schema.json', 'docs/schemas/companion-policy-v1.schema.json', 'docs/schemas/companion-reply-v1.schema.json',
-    'docs/examples/deploy-v1.json', 'docs/examples/deploy-minimal-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-context.ps1',
-    'docs/examples/companion-config-v1.json', 'docs/examples/companion-task-v1.json',
-    'src/AppIcon.h', 'src/AppVersion.h', 'src/ChatGPTLauncherSetup.cpp', 'src/ChatGPTProxyLauncher.cpp',
-    'src/AutomationJson.cpp', 'src/AutomationJson.h', 'src/AutomationIO.cpp', 'src/AutomationIO.h',
-    'src/AutomationContract.h', 'src/DeploymentDiscovery.cpp', 'src/DeploymentDiscovery.h',
-    'src/SetupCommandLine.cpp', 'src/SetupCommandLine.h',
-    'src/CompanionManifest.cpp', 'src/CompanionManifest.h', 'src/CompanionRegistry.cpp',
-    'src/CompanionProtocol.cpp', 'src/CompanionProtocol.h',
-    'src/CompanionRunner.cpp', 'src/CompanionRunner.h', 'src/LauncherAutomation.cpp', 'src/LauncherAutomation.h', 'src/Launcher.manifest',
-    'src/CodexClose.cpp', 'src/CodexClose.h',
-    'src/CodexEnv.cpp', 'src/CodexEnv.h',
-    'src/NativeMemory.h', 'src/Localization.cpp', 'src/Localization.h',
-    'src/LauncherResources.rc', 'src/ProxyDetection.cpp', 'src/ProxyDetection.h',
-    'src/Setup.manifest', 'src/SetupArguments.cpp', 'src/SetupCore.cpp', 'src/SetupCore.h',
-    'src/SetupResources.h', 'src/SetupResources.rc', 'src/StartupApps.cpp', 'src/StartupApps.h',
-    'src/StartupIntegration.cpp', 'src/StartupIntegration.h', 'src/TaskbarShortcut.cpp', 'src/TaskbarShortcut.h',
-    'tests/analyze.cmd', 'tests/codex-close-tests.cpp', 'tests/companion-tests.cpp', 'tests/download-tests.ps1',
-    'tests/automation-tests.cpp', 'tests/chain-tests.cpp', 'tests/headless-download-tests.ps1', 'tests/protocol-example-tests.ps1',
-    'tests/contract-tests.cpp', 'tests/localization-tests.cpp', 'tests/localization-tests.ps1', 'tests/documentation-tests.ps1',
-    'tests/memory-tests.cpp', 'tests/MemoryFault.h', 'tests/file-tests.cpp',
-    'tests/launcher-tests.cpp', 'tests/preview-download.ps1', 'tests/proxy-tests.cpp',
-    'tests/setup-tests.cpp', 'tests/setup-ui-tests.cpp', 'tests/startup-tests.cpp',
-    'tests/taskbar-tests.cpp', 'tests/test-build.cmd'
-)
-# Only explicitly registered catalogs enter the source package; never sweep arbitrary JSON files.
-$languages = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $projectRoot 'locales\languages.json')))
-foreach ($language in $languages.languages) { $sourceNames += 'locales/' + $language.tag + '.json' }
+$sourceNames = @(& (Join-Path $projectRoot 'tools/release-sources.ps1') -ProjectRoot $projectRoot)
 $sources = [ordered]@{}
 $sourceHashes = @{}
 foreach ($name in $sourceNames) {
     $path = Join-Path $projectRoot $name
-    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw ('Missing release source: ' + $name) }
-    $sources['ChatGPTLauncher-source/' + $name] = $path
+    $sources.Add('ChatGPTLauncher-source/' + $name, $path)
     $sourceHashes[$name] = Get-Sha256 $path
 }
 
 Push-Location $projectRoot
 try {
+    & $env:ComSpec /d /c tests\analyze.cmd
+    if ($LASTEXITCODE -ne 0) { throw ('Static analysis failed with exit code ' + $LASTEXITCODE + '. No release files updated.') }
     & $env:ComSpec /d /c tests\test-build.cmd
     if ($LASTEXITCODE -ne 0) { throw ('Build/tests failed with exit code ' + $LASTEXITCODE + '. No release files updated.') }
     foreach ($name in $sourceNames) {
@@ -101,8 +49,8 @@ try {
     [IO.Directory]::CreateDirectory($stage) | Out-Null
     $setupPath = Join-Path $projectRoot 'outputs\ChatGPTLauncherSetup.exe'
     $releaseVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($setupPath).FileVersion
-    if (!$releaseVersion -or $releaseVersion -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-        throw 'The built setup executable must have a numeric release version.'
+    if ($releaseVersion -cnotmatch '\A[0-9]+(?:\.[0-9]+){2,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z') {
+        throw 'The built setup executable has an invalid release version.'
     }
     $releaseDir = Join-Path (Join-Path $projectRoot 'Releases') ('v' + $releaseVersion)
     $binaryNames = @('ChatGPTLauncherSetup.exe', 'ChatGPTProxyLauncher.exe')
@@ -114,7 +62,7 @@ try {
         [IO.File]::Copy($built, $staged, $false)
         if ((Get-Sha256 $built) -ne (Get-Sha256 $staged)) { throw 'Staged binary mismatch.' }
     }
-    Write-VerifiedZip (Join-Path $stage 'ChatGPTLauncher-source.zip') $sources
+    Write-SourceZip (Join-Path $stage 'ChatGPTLauncher-source.zip') $sources
     foreach ($name in $sourceNames) {
         if ((Get-Sha256 (Join-Path $projectRoot $name)) -ne $sourceHashes[$name]) { throw 'Source changed while packaging.' }
     }
@@ -122,6 +70,11 @@ try {
     $uploads = @('ChatGPTLauncherSetup.exe', 'ChatGPTProxyLauncher.exe', 'ChatGPTLauncher-source.zip')
     $checksums = foreach ($name in $uploads) { (Get-Sha256 (Join-Path $stage $name)) + '  ' + $name }
     [IO.File]::WriteAllLines((Join-Path $stage 'SHA256SUMS.txt'), [string[]]$checksums, [Text.Encoding]::ASCII)
+    & (Join-Path $projectRoot 'tests\delivery-tests.ps1') -PackageDirectory $stage -SourceHashes $sourceHashes
+    if ($TestPackage) {
+        Write-Host ('Local test package: ' + $stage + '. Existing releases were not changed. Nothing was uploaded.')
+        return
+    }
     [IO.Directory]::CreateDirectory($releaseDir) | Out-Null
     foreach ($name in ($uploads + @('SHA256SUMS.txt'))) {
         $source = Join-Path $stage $name
@@ -129,6 +82,7 @@ try {
         [IO.File]::Copy($source, $destination, $true)
         if ((Get-Sha256 $source) -ne (Get-Sha256 $destination)) { throw ('Release copy mismatch: ' + $name) }
     }
-    [IO.File]::Copy((Join-Path $projectRoot 'docs\release-upload.md'), (Join-Path $projectRoot 'Releases\README.md'), $true)
+    $notes = if ($releaseVersion.Contains('-')) { "Releases\v$releaseVersion.md" } else { 'Releases\README.md' }
+    [IO.File]::Copy((Join-Path $projectRoot 'docs\release-upload.md'), (Join-Path $projectRoot $notes), $true)
     Write-Host ('Release files are ready in Releases\v' + $releaseVersion + '. Nothing was uploaded.')
 } finally { Pop-Location }

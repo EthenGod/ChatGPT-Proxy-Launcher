@@ -16,16 +16,25 @@ function Invoke-RestMethod($Uri, $TimeoutSec) {
     $calls.requests++
     if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Headless progress enabled' }
     if ($scenario -eq 'offline') { throw 'offline' }
-    return @{tag_name='v1.1.0'}
+    if ($scenario -eq 'beta') {
+        if ($Uri -cnotlike '*/releases/tags/v1.2.0-beta.1') { throw 'Expected exact beta tag' }
+        return @{tag_name='v1.2.0-beta.1'; draft=$false; prerelease=$true}
+    }
+    return @{tag_name='v1.1.0'; draft=$false; prerelease=$false}
 }
 function Invoke-WebRequest([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec) {
     $calls.folder = Split-Path $OutFile
-    if ($Uri -notlike 'https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.1.0/*') { throw 'Tag changed' }
+    $expectedTag = if ($scenario -eq 'beta') { 'v1.2.0-beta.1' } else { 'v1.1.0' }
+    if ($Uri -notlike "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/$expectedTag/*") { throw 'Tag changed' }
     if ($OutFile.EndsWith('.txt')) { [IO.File]::WriteAllText($OutFile, "$hash  ChatGPTLauncherSetup.exe") }
     else { [IO.File]::WriteAllBytes($OutFile, $fixture); if ($scenario -eq 'checksum') { [IO.File]::AppendAllText($OutFile, 'wrong') } }
 }
 function Get-Item($LiteralPath) {
-    if ($LiteralPath.EndsWith('ChatGPTLauncherSetup.exe')) { return [pscustomobject]@{VersionInfo=@{FileVersion=$calls.version}} }
+    if ($LiteralPath.EndsWith('ChatGPTLauncherSetup.exe')) {
+        $fixed = [version]'0.0'
+        if (![version]::TryParse(($calls.version -split '-')[0], [ref]$fixed)) { $fixed = [version]'0.0' }
+        return [pscustomobject]@{VersionInfo=@{FileVersion=$calls.version; FileMajorPart=$fixed.Major; FileMinorPart=$fixed.Minor}}
+    }
     Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath
 }
 function Start-Process($FilePath, $WorkingDirectory, $ArgumentList, $WindowStyle, [switch]$PassThru) {
@@ -66,6 +75,24 @@ try {
             if ($scenario -eq 'keep') {
                 if (![IO.File]::Exists((Join-Path $calls.folder 'unrelated.txt')) -or [IO.File]::Exists((Join-Path $calls.folder 'ChatGPTLauncherSetup.exe'))) { throw 'Cleanup removed foreign content' }
             } elseif ([IO.Directory]::Exists($calls.folder)) { throw 'Temporary files remain' }
+        }
+    }
+    $scenario = 'beta'; $calls.version = '1.2.0-beta.1'
+    $before = $calls.launch
+    $value = & $entry -Headless -Operation info -Result (Join-Path $testRoot 'beta.json') -Channel Preview -Tag v1.2.0-beta.1
+    if ($value.exitCode -ne 0 -or $value.transport.releaseTag -cne 'v1.2.0-beta.1' -or $calls.launch -ne $before+1) { throw 'Beta headless launch failed' }
+    $value = & $entry -Headless -Operation info -Result (Join-Path $testRoot 'stable-only.json') -Tag v1.2.0-beta.1
+    if ($value.exitCode -ne 71 -or $value.committed -ne $false -or $calls.launch -ne $before+1) { throw 'Stable channel launched a beta' }
+    $before = $calls.requests
+    foreach ($name in 'Branch','Tag') {
+        foreach ($inputValue in @('','bad..filter')) {
+            $filter = @{$name=$inputValue}
+            $resultPath = Join-Path $testRoot ("filter-$name-$($inputValue.Length).json")
+            $value = & $entry -Headless -Operation info -Result $resultPath @filter
+            $written = [IO.File]::ReadAllText($resultPath) | ConvertFrom-Json
+            if ($value.exitCode -ne 20 -or $written.code -ne 'invalid-request' -or $written.stage -ne 'parse' -or $calls.requests -ne $before) {
+                throw 'Invalid release filter was not rejected before network access'
+            }
         }
     }
     # Each operation uses the native CLI spelling and preserves literal file paths.

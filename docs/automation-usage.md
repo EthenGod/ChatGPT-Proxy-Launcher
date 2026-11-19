@@ -4,6 +4,26 @@
 
 原生 EXE 至少为 v1.1.0。本次新增的四个 PowerShell 扩展管理操作需要更新后的 `setup.ps1`；线上地址只有在脚本发布后才具备这些参数。本地 `setup.ps1` 也会从 GitHub 下载 EXE，不会使用 `outputs/` 中的构建。
 
+## 选择下载版本
+
+图形和后台命令共用三个可选参数。
+
+| 参数 | 用法 |
+|---|---|
+| `-Channel Stable` | 默认。仅选择正式版。 |
+| `-Channel Preview` | 包含正式版和测试版。按发布时间选择最新一个。 |
+| `-Branch <名称>` | 仅接受指定分支提交历史中的已发布标签。分支从正式版切出时，共同祖先上的正式版也可能入选。 |
+| `-Tag <标签>` | 固定一个已发布版本。仍检查通道和分支。下载测试版须同时传 `-Channel Preview`。 |
+
+例如，在项目根目录查询指定 Beta 的部署状态。结果路径须是新文件。
+
+```powershell
+$result = Join-Path $env:TEMP ('cgl-' + [guid]::NewGuid() + '.json')
+& .\setup.ps1 -Headless -Operation info -Result $result -Channel Preview -Branch refactor/ui -Tag v1.2.0-beta.3
+```
+
+下载器只使用已发布 Release 的附件。它先固定标签，再从同一标签下载校验清单和配置器。后台结果的 `transport.releaseTag` 给出选中的实际标签。
+
 ## 通过 PowerShell 完成首次接入
 
 以下代码块按顺序使用。Windows PowerShell 5.1、PowerShell 7 均可。由你的安装流程先取得用户授权，后台接口不另外弹窗。

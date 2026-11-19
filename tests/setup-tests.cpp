@@ -17,7 +17,7 @@ static unsigned throwMoveAt = 0, exhaustMemoryAfterMove = 0;
 static PCWSTR collisionTarget = nullptr;
 static PCWSTR redirectedPath = nullptr;
 static PCWSTR failDeletePath = nullptr, replaceOnDeleteFailure = nullptr;
-static PCWSTR changeShortcutPath = nullptr, changeShortcutTrigger = nullptr;
+static PCWSTR fileToChange = nullptr, changeAfterTarget = nullptr;
 struct ShellNotice {
     LONG event;
     UINT flags;
@@ -80,8 +80,8 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
         if (!ok || written != 7) return FALSE;
     }
     const BOOL moved = MoveFileExW(from, to, flags);
-    if (moved && changeShortcutPath && !_wcsicmp(to, changeShortcutTrigger)) {
-        ReplaceFixture(changeShortcutPath); changeShortcutPath = nullptr;
+    if (moved && fileToChange && !_wcsicmp(to, changeAfterTarget)) {
+        ReplaceFixture(fileToChange); fileToChange = nullptr;
     }
     if (moved && moveCalls == exhaustMemoryAfterMove) memory_fault::remaining = 0;
     return moved;
@@ -197,7 +197,7 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
         if (scenario == 4 || scenario == 7) failDeletePath = old.desktopLink.c_str();
         if (scenario == 7) replaceOnDeleteFailure = old.startupLink.c_str();
         if (scenario == 5) { options.directory = Join(base, L"new-target"); moveCalls = 0; failMoveAt = 5; }
-        if (scenario == 6) { changeShortcutPath = old.startupLink.c_str(); changeShortcutTrigger = paths.desktopLink.c_str(); }
+        if (scenario == 6) { fileToChange = old.startupLink.c_str(); changeAfterTarget = paths.desktopLink.c_str(); }
         if (scenario == 8) {
             redirectedPath = old.startupLink.c_str();
             REQUIRE(!Preflight(paths, options, payload)); redirectedPath = nullptr;
@@ -212,7 +212,7 @@ static int ShortcutMigrationTests(const std::wstring& root, setup::Payload paylo
         }
         shellNoticeCount = 0;
         const auto saved = Apply(paths, options, payload, target);
-        failDeletePath = replaceOnDeleteFailure = changeShortcutPath = changeShortcutTrigger = nullptr; failMoveAt = 0;
+        failDeletePath = replaceOnDeleteFailure = fileToChange = changeAfterTarget = nullptr; failMoveAt = 0;
         if (scenario >= 4 && scenario <= 7) {
             REQUIRE(!saved && saved.commit == (scenario == 7 ? CommitState::Incomplete : CommitState::RolledBack));
             REQUIRE(shellNoticeCount == 1 && NoticeIs(0, SHCNE_UPDATEDIR, Parent(paths.desktopLink)));
@@ -257,7 +257,7 @@ static int ShortcutRemovalTests(const std::wstring& root, setup::Payload payload
         options.startup = options.desktop = false;
         const auto& changed = scenario == 0 || scenario == 2 ? paths.startupLink : paths.desktopLink;
         if (scenario < 2) {
-            changeShortcutPath = changed.c_str(); changeShortcutTrigger = paths.settingsLink.c_str();
+            fileToChange = changed.c_str(); changeAfterTarget = paths.settingsLink.c_str();
         } else {
             if (scenario == 3) {
                 paths.legacyDesktopLink = Join(base, L"legacy-desktop.lnk");
@@ -267,7 +267,7 @@ static int ShortcutRemovalTests(const std::wstring& root, setup::Payload payload
             replaceOnDeleteFailure = changed.c_str();
         }
         const auto saved = Apply(paths, options, payload, target);
-        failDeletePath = replaceOnDeleteFailure = changeShortcutPath = changeShortcutTrigger = nullptr;
+        failDeletePath = replaceOnDeleteFailure = fileToChange = changeAfterTarget = nullptr;
         REQUIRE(!saved && saved.commit == (scenario < 2 ? CommitState::RolledBack : CommitState::Incomplete));
         REQUIRE(saved.code == static_cast<DWORD>(scenario < 2 ? ERROR_RETRY : ERROR_ACCESS_DENIED));
         REQUIRE(ReadFileBytes(changed, current) && current.exists && current.data == foreign);
@@ -373,6 +373,11 @@ static int ParameterTests() {
     options.extra = L"--proxy-server=http://127.0.0.1:80"; options.proxy = true; options.port = L"81";
     REQUIRE(!BuildArguments(options, args));
     options = {}; options.extra = L"--launcher-check-extra"; REQUIRE(BuildArguments(options, args));
+    options.extra = L"\"--launcher-check\""; REQUIRE(!BuildArguments(options, args));
+    options.extra = L"\"--\" --launcher-check"; REQUIRE(BuildArguments(options, args));
+    const std::wstring mixed = L"C:\\jobs\\plain\\\t\"\"\t\"中文\\\"尾\"";
+    REQUIRE(ParseArguments(L"\"--no-startup-window\" " + mixed, parsed));
+    REQUIRE(parsed.silent && parsed.extra == mixed);
     REQUIRE(ParseArguments(L"--unknown=\"中文 \\\"引号\\\"\" \"\"", parsed));
     REQUIRE(BuildArguments(parsed, args) && args == L"--unknown=\"中文 \\\"引号\\\"\" \"\"");
     REQUIRE(ParseArguments(L"--proxy-server=custom-route --no-startup-window", parsed));
@@ -388,6 +393,57 @@ static int ParameterTests() {
         REQUIRE(!NormalizeDirectory(bad, directory));
     REQUIRE(!NormalizeDirectory(L"C:\\" + std::wstring(250, L'x'), directory));
     printf("PASS parameter generation, import, quoting (500 randomized cases), validation and paths\n");
+    return 0;
+}
+
+static int PayloadMemoryTests(const std::wstring& root, setup::Payload launcher) {
+    using namespace setup;
+    const auto folder = Join(root, L"payload-memory");
+    const Paths paths{folder, Join(folder, L"startup.lnk"), Join(folder, L"settings.lnk"), Join(folder, L"desktop.lnk"), {}};
+    Options options;
+    options.directory = folder;
+    options.startup = options.desktop = options.proxy = options.codexEnv = false;
+    std::vector<BYTE> image(launcher.data, launcher.data + launcher.size);
+    image.resize(4 * 1024 * 1024 + 37, 0x5a);
+    const Payload payload{image.data(), image.size()};
+    std::wstring target;
+    size_t first, preview, repeated;
+    {
+        memory_fault::Scope count;
+        REQUIRE(Apply(paths, options, payload, target));
+        first = memory_fault::bytes;
+    }
+    {
+        memory_fault::Scope count;
+        REQUIRE(Preflight(paths, options, payload));
+        preview = memory_fault::bytes;
+    }
+    {
+        memory_fault::Scope count;
+        REQUIRE(Apply(paths, options, payload, target));
+        repeated = memory_fault::bytes;
+    }
+    printf("Payload heap requests: first=%zu preflight=%zu repeated=%zu for %zu bytes\n", first, preview, repeated, image.size());
+    REQUIRE(first < image.size() / 2 && preview < image.size() / 2 && repeated < image.size() / 2);
+    // Same size, mismatch in the final partial chunk. A later write fails after replacing the EXE.
+    image.back() ^= 0xff;
+    moveCalls = 0; failMoveAt = 2;
+    const auto failed = Apply(paths, options, payload, target);
+    failMoveAt = 0;
+    REQUIRE(!failed && failed.commit == CommitState::RolledBack);
+    const auto path = Join(folder, LauncherName);
+    Snapshot restored;
+    REQUIRE(ReadFileBytes(path, restored) && restored.exists);
+    image.back() ^= 0xff;
+    REQUIRE(restored.data == image);
+    // Corruption immediately after the replacement must be caught by the disk readback.
+    image.back() ^= 0xff;
+    fileToChange = changeAfterTarget = path.c_str();
+    const auto corrupt = Apply(paths, options, payload, target);
+    fileToChange = changeAfterTarget = nullptr;
+    REQUIRE(!corrupt && corrupt.code == ERROR_CRC && corrupt.commit == CommitState::RolledBack);
+    image.back() ^= 0xff;
+    REQUIRE(ReadFileBytes(path, restored) && restored.exists && restored.data == image);
     return 0;
 }
 
@@ -407,6 +463,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     const Payload payload{ payloadBytes.data.data(), payloadBytes.data.size() };
     const std::wstring root = Join(rootArg, L"setup-tests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     REQUIRE(EnsureDirectory(root));
+    REQUIRE(PayloadMemoryTests(root, payload) == 0);
     REQUIRE(DesktopNotificationTests(root, payload) == 0);
     REQUIRE(ShortcutRemovalTests(root, payload) == 0);
     REQUIRE(ShortcutMigrationTests(root, payload) == 0);
@@ -422,7 +479,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         Loaded installed;
         REQUIRE(Load(versionPaths, installed) && !installed.deployed && installed.deployedVersion.empty());
         REQUIRE(WriteLink(versionPaths.settingsLink, {file, L"", base, Marker}));
-        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion == current);
+        REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion == L"" APP_RELEASE_VERSION);
         // Give the isolated EXE a different numeric version, leaving its text version unchanged.
         HMODULE image = LoadLibraryExW(file.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
         REQUIRE(image);
@@ -449,7 +506,7 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
         Options fresh; fresh.directory = base;
         std::wstring savedTarget;
         REQUIRE(Apply(versionPaths, fresh, payload, savedTarget));
-        REQUIRE(Load(versionPaths, installed) && installed.deployedVersion == current);
+        REQUIRE(Load(versionPaths, installed) && installed.deployedVersion == L"" APP_RELEASE_VERSION);
         REQUIRE(WriteAtomic(file, {1, 2, 3, 4}));
         REQUIRE(Load(versionPaths, installed) && installed.deployed && installed.deployedVersion.empty());
         REQUIRE(DeleteFileW(file.c_str()));
@@ -641,9 +698,9 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     REQUIRE(state.options.desktop);
     REQUIRE(ReadLink(paths.desktopLink, link) && link.arguments == arguments && link.target == target && link.directory == options.directory);
     {
-        Com<IShellLinkW> shell; Com<IPersistFile> persist;
-        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell.p))));
-        REQUIRE(SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist.p))));
+        ComPtr<IShellLinkW> shell; ComPtr<IPersistFile> persist;
+        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell))));
+        REQUIRE(SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist))));
         REQUIRE(SUCCEEDED(persist->Load(paths.desktopLink.c_str(), STGM_READ)));
         wchar_t icon[MAX_PATH]{}; int index = -1;
         REQUIRE(SUCCEEDED(shell->GetIconLocation(icon, MAX_PATH, &index)) && target == icon && index == 0);

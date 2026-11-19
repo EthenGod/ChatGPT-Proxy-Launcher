@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ChatGPT Launcher",
+  "mainBinaryName": "ChatGPTLauncherSetup",
+  "version": "1.2.0-beta.3",
+  "identifier": "io.github.ethengod.chatgpt-launcher-setup",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "removeUnusedCommands": true,
+    "windows": {
+      "staticVCRuntime": true
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ChatGPT Launcher",
+        "theme": "Dark",
+        "width": 640,
+        "height": 760,
+        "minWidth": 480,
+        "minHeight": 400,
+        "preventOverflow": { "width": 32, "height": 48 },
+        "center": true,
+        "visible": true,
+        "create": false,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#111111"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",
+      "capabilities": [
+        "main-window"
+      ]
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../assets/ChatGPT.ico"
+    ]
+  }
+}

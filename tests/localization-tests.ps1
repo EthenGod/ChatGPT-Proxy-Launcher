@@ -41,11 +41,20 @@ $french = @{schemaVersion=1;locale='fr-FR';nativeName='Francais';fontFamily='Seg
 & $tool -ProjectRoot $fixture -Generate | Out-Null
 & $tool -ProjectRoot $fixture | Out-Null
 $header = [IO.File]::ReadAllText((Join-Path $fixture 'work\LocalizationData.h'))
+if ($header.Contains('"ui.save.failed"') -or !$header.Contains('"ui.detect.fixture"')) { throw 'Incorrect native and frontend catalog split' }
 if (!$header.Contains('L"Fermer"') -or !$header.Contains('L"fr-FR"')) { throw 'Community language was not generated' }
 $chinese = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $directory 'zh-CN.json')))
 $fallbackText = $chinese.strings.'setup.option.startup'
 $frenchTable = [regex]::Match($header, '(?s)const wchar_t\* Text3\[\] = \{(.*?)\};').Groups[1].Value
 if (!$frenchTable.Contains($fallbackText)) { throw 'Native Chinese fallback missing' }
+$launcher = [IO.File]::ReadAllText((Join-Path $fixture 'work\LauncherLocalizationData.h'))
+$launcherKeys = @([regex]::Matches($launcher, '(?m)^    "([^"]+)",') | ForEach-Object { $_.Groups[1].Value })
+$expectedKeys = @($chinese.strings.PSObject.Properties.Name | Where-Object { $_ -like 'common.*' -or $_ -like 'chain.*' })
+if (Compare-Object $expectedKeys $launcherKeys) { throw 'Unexpected launcher catalog keys' }
+$launcherFrench = [regex]::Match($launcher, '(?s)const wchar_t\* Text3\[\] = \{(.*?)\};').Groups[1].Value
+if (!$launcherFrench.Contains('L"Fermer"') -or !$launcherFrench.Contains($chinese.strings.'chain.timeout')) {
+    throw 'Launcher community translation or Chinese fallback missing'
+}
 
 # Execute just the generated data and pure language helpers; never download, launch or change user settings.
 $tokens = $null; $errors = $null

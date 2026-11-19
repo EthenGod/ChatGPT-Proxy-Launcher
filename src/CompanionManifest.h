@@ -18,14 +18,21 @@ struct Entry {
     std::vector<DWORD> exitCodes{0};
 };
 struct Record { std::wstring id, path, error; Entry entry; Json json; };
+struct Policy {
+    DWORD budget = automation::contract::BudgetDefaultMs;
+    bool notify = true;
+};
+Policy ReadPolicy(const std::wstring& root);
+using ManifestPathFilter = bool (*)(const std::wstring&);
+bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order, ManifestPathFilter canRead = nullptr);
 std::wstring Join(const std::wstring& directory, const std::wstring& leaf);
 bool ValidId(const std::wstring& id);
 int CompareVersion(const std::wstring& left, const std::wstring& right);
-Entry ReadManifest(const std::wstring& file, const Json& overrides = Json::Object());
+Entry ReadManifest(const std::wstring& file, const Json& overrides = Json::Object(), ManifestPathFilter canRead = nullptr);
 void ValidateOverrides(const Json& overrides);
 // Disabled registrations remain manageable even when their package is unavailable.
-Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides);
-std::vector<Record> ReadRegistry(const std::wstring& root);
+Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides, ManifestPathFilter canRead = nullptr);
+std::vector<Record> ReadRegistry(const std::wstring& root, ManifestPathFilter canRead = nullptr);
 bool SortEntries(const std::vector<Record>& records, std::vector<size_t>& order);
 Json RegistryCommand(const std::wstring& operation, const setup::Paths& paths, const std::wstring& manifest,
     const std::wstring& id, const Json& request, bool replace, bool& committed, Json& warnings);

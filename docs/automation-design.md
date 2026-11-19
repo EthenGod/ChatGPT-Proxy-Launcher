@@ -178,6 +178,6 @@ JSON 解析器统一检查大小、重复键、编码、深度和整数精度。
 
 ## 6. 修改与验证
 
-接口变更同步规范、Schema、示例、契约测试和 `release.ps1`。字段或既有语义不兼容时升级相应格式版本；扩展私有设置放 `config`。
+接口变更同步规范、Schema、示例、契约测试和 `tools/release-sources.ps1`。字段或既有语义不兼容时升级相应格式版本；扩展私有设置放 `config`。
 
 运行 `cmd /c tests\test-build.cmd`，修改原生代码后再运行 `cmd /c tests\analyze.cmd`。测试使用隔离文件、替身系统调用和测试子进程。历史结果见[维护记录](automation-maintenance.md)，性能方法见[性能审查](performance-review.md)；通过测试不代表实际登录自启或第三方插件互操作成功。

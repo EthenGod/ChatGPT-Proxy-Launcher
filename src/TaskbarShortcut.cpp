@@ -2,20 +2,18 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "TaskbarShortcut.h"
+#include "NativeMemory.h"
 #include <appmodel.h>
 #include <shlobj.h>
 #include <propkey.h>
+#include <wrl/client.h>
 #include <string>
 #include <vector>
 
 namespace taskbar {
 constexpr wchar_t AppId[] = L"com.openai.codex";
 constexpr size_t Capacity = 32768;
-template<class T> struct Com {
-    T* p = nullptr;
-    ~Com() { if (p) p->Release(); }
-    T* operator->() const { return p; }
-};
+using Microsoft::WRL::ComPtr;
 struct Apartment {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ~Apartment() { if (SUCCEEDED(hr)) CoUninitialize(); }
@@ -65,15 +63,15 @@ bool PackageTarget(const std::wstring& target, const std::wstring& application) 
     return id->name && id->publisherId && id->resourceId && !*id->resourceId
         && wcscmp(id->name, L"OpenAI.Codex") == 0 && wcscmp(id->publisherId, L"2p2nqsd0c76g0") == 0;
 }
-HRESULT Load(const std::wstring& path, Com<IShellLinkW>& link, Com<IPersistFile>& persist) {
-    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
-    if (SUCCEEDED(hr)) hr = link->QueryInterface(IID_PPV_ARGS(&persist.p));
+HRESULT Load(const std::wstring& path, ComPtr<IShellLinkW>& link, ComPtr<IPersistFile>& persist) {
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link));
+    if (SUCCEEDED(hr)) hr = link->QueryInterface(IID_PPV_ARGS(&persist));
     if (SUCCEEDED(hr)) hr = persist->Load(path.c_str(), STGM_READ);
     return hr;
 }
 bool CorrectId(IShellLinkW* link) {
-    Com<IPropertyStore> properties;
-    if (FAILED(link->QueryInterface(IID_PPV_ARGS(&properties.p)))) return false;
+    ComPtr<IPropertyStore> properties;
+    if (FAILED(link->QueryInterface(IID_PPV_ARGS(&properties)))) return false;
     PROPVARIANT value{};
     const HRESULT hr = properties->GetValue(PKEY_AppUserModel_ID, &value);
     const bool same = SUCCEEDED(hr) && value.vt == VT_LPWSTR && value.pwszVal
@@ -119,13 +117,13 @@ HRESULT RepairLink(const std::wstring& path, const std::wstring& backup,
     if (original.h == INVALID_HANDLE_VALUE) return LastErrorHr();
     Apartment apartment;
     if (FAILED(apartment.hr)) return apartment.hr;
-    Com<IShellLinkW> link;
-    Com<IPersistFile> persist;
+    ComPtr<IShellLinkW> link;
+    ComPtr<IPersistFile> persist;
     HRESULT hr = Load(path, link, persist);
     if (FAILED(hr)) return hr;
-    if (!CorrectId(link.p)) return S_FALSE;
+    if (!CorrectId(link.Get())) return S_FALSE;
     Values before;
-    hr = Read(link.p, before);
+    hr = Read(link.Get(), before);
     if (FAILED(hr)) return hr;
     if (!Same(before.target, launcher) && !PackageTarget(before.target, application)) return S_FALSE;
     if (Stable(before, launcher)) return S_FALSE;
@@ -136,12 +134,12 @@ HRESULT RepairLink(const std::wstring& path, const std::wstring& backup,
     TempFile temp;
     if (!GetTempFileNameW(Parent(path).c_str(), L"cgt", 0, temp.path)) return LastErrorHr();
     if (FAILED(hr = persist->Save(temp.path, FALSE))) return hr;
-    Com<IShellLinkW> verify;
-    Com<IPersistFile> verifyPersist;
+    ComPtr<IShellLinkW> verify;
+    ComPtr<IPersistFile> verifyPersist;
     if (FAILED(hr = Load(temp.path, verify, verifyPersist))) return hr;
     Values after;
-    if (FAILED(hr = Read(verify.p, after))) return hr;
-    if (!CorrectId(verify.p) || !Stable(after, launcher) || after.arguments != before.arguments)
+    if (FAILED(hr = Read(verify.Get(), after))) return hr;
+    if (!CorrectId(verify.Get()) || !Stable(after, launcher) || after.arguments != before.arguments)
         return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
     // Keep the first original outside the Start menu. Never overwrite this backup.
     const DWORD attributes = GetFileAttributesW(backup.c_str());
@@ -158,11 +156,11 @@ HRESULT RepairLink(const std::wstring& path, const std::wstring& backup,
         *backupTemp.path = L'\0';
     } else {
         if (!PlainFile(backup)) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-        Com<IShellLinkW> saved; Com<IPersistFile> savedPersist;
+        ComPtr<IShellLinkW> saved; ComPtr<IPersistFile> savedPersist;
         Values savedValues;
         if (FAILED(hr = Load(backup, saved, savedPersist))) return hr;
-        if (!CorrectId(saved.p)) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-        if (FAILED(hr = Read(saved.p, savedValues))) return hr;
+        if (!CorrectId(saved.Get())) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+        if (FAILED(hr = Read(saved.Get(), savedValues))) return hr;
         if (!Same(savedValues.target, launcher) && !PackageTarget(savedValues.target, application))
             return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
     }
@@ -176,10 +174,9 @@ HRESULT RepairLink(const std::wstring& path, const std::wstring& backup,
 }
 std::wstring Folder(REFKNOWNFOLDERID id) {
     PWSTR value = nullptr;
-    if (FAILED(SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, nullptr, &value))) return L"";
-    // Free the COM allocation even if constructing the string throws.
-    struct Free { PWSTR p; ~Free() { CoTaskMemFree(p); } } free{ value };
-    return value;
+    const HRESULT hr = SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, nullptr, &value);
+    native::TaskPtr<wchar_t> folder(value);
+    return SUCCEEDED(hr) && folder ? folder.get() : L"";
 }
 } // namespace taskbar
 

@@ -337,7 +337,7 @@ ProxyDetection Select(const std::vector<Candidate>& candidates) {
     const auto& first = candidates.front();
     for (const auto& item : candidates) if (item.port != first.port)
         return {L"", l10n::Text("proxy.multiple")};
-    return {std::to_wstring(first.port), l10n::Format("proxy.detected", {{"source", first.source}})};
+    return {std::to_wstring(first.port), l10n::Format("proxy.detected", {{"source", first.source}}), first.source};
 }
 }
 ProxyDetection DetectProxyPort(const std::wstring& protocol, const std::wstring& host) {
