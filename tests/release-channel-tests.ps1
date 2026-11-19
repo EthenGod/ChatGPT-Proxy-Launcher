@@ -64,15 +64,23 @@ $routes[$betaCompare] = @{status='identical'}
 Check 'v1.2.0-beta.1' Preview 'refactor/ui'
 Check 'v1.1.3' Stable 'refactor/ui'
 $beta2 = Release 'v1.2.0-beta.2' '2026-11-03T09:00:00Z' $true 14
-$routes[$page1] += $beta2
-$routes['/releases/tags/v1.2.0-beta.2'] = $beta2
-$beta2Compare = '/compare/v1.2.0-beta.2...' + $tip + '?per_page=1'
-$routes[$beta2Compare] = @{status='identical'}
-Check 'v1.2.0-beta.2' Preview 'refactor/ui'
+$beta3 = Release 'v1.2.0-beta.3' '2026-11-04T09:00:00Z' $true 15
+foreach ($candidate in @($beta2, $beta3)) {
+    $tagName = $candidate.tag_name
+    $routes[$page1] += $candidate
+    $routes['/releases/tags/' + $tagName] = $candidate
+    $routes['/compare/' + $tagName + '...' + $tip + '?per_page=1'] = @{status='identical'}
+    Check $tagName Preview 'refactor/ui'
+    Check $tagName Preview 'refactor/ui' $tagName
+    Reject 'download.norelease' Stable 'refactor/ui' $tagName
+}
 Check 'v1.2.0-beta.2' Preview 'refactor/ui' 'v1.2.0-beta.2'
 Check 'v1.2.0-beta.1' Preview 'refactor/ui' 'v1.2.0-beta.1'
 Check 'v1.1.3' Stable 'refactor/ui'
-$routes[$beta2Compare] = @{status='diverged'}
+$routes['/compare/v1.2.0-beta.3...' + $tip + '?per_page=1'] = @{status='diverged'}
+Check 'v1.2.0-beta.2' Preview 'refactor/ui'
+Reject 'download.norelease' Preview 'refactor/ui' 'v1.2.0-beta.3'
+$routes['/compare/v1.2.0-beta.2...' + $tip + '?per_page=1'] = @{status='diverged'}
 Check 'v1.2.0-beta.1' Preview 'refactor/ui'
 foreach ($status in 'behind','diverged') {
     $routes[$betaCompare] = @{status=$status}

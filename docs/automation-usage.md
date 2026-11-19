@@ -19,7 +19,7 @@
 
 ```powershell
 $result = Join-Path $env:TEMP ('cgl-' + [guid]::NewGuid() + '.json')
-& .\setup.ps1 -Headless -Operation info -Result $result -Channel Preview -Branch refactor/ui -Tag v1.2.0-beta.2
+& .\setup.ps1 -Headless -Operation info -Result $result -Channel Preview -Branch refactor/ui -Tag v1.2.0-beta.3
 ```
 
 下载器只使用已发布 Release 的附件。它先固定标签，再从同一标签下载校验清单和配置器。后台结果的 `transport.releaseTag` 给出选中的实际标签。
