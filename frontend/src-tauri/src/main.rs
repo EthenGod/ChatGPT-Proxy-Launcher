@@ -7,6 +7,7 @@ mod bridge;
 mod embedded_assets;
 #[cfg(feature = "test-harness")]
 mod harness;
+mod jobs;
 mod model;
 
 use model::{
@@ -14,57 +15,12 @@ use model::{
     Snapshot, Validation,
 };
 use serde::de::DeserializeOwned;
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc, Mutex,
-};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_BUSY, ERROR_INVALID_DATA, ERROR_INVALID_HANDLE,
-};
+use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
 
-// Closing and task admission share one total order across both atomics.
-struct NativeState {
-    pending: Arc<AtomicUsize>,
-    serial: Arc<Mutex<()>>,
-    closing: Arc<AtomicBool>,
-    paths: Option<Vec<u8>>,
-}
-struct JobGuard(Arc<AtomicUsize>);
-impl Drop for JobGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-async fn run<R, F>(state: &NativeState, work: F) -> Result<R, BridgeError>
-where
-    R: Send + 'static,
-    F: FnOnce(Option<&[u8]>) -> Result<R, BridgeError> + Send + 'static,
-{
-    if state.closing.load(Ordering::SeqCst) {
-        return Err(BridgeError::native(ERROR_BUSY));
-    }
-    state.pending.fetch_add(1, Ordering::SeqCst);
-    let guard = JobGuard(state.pending.clone());
-    if state.closing.load(Ordering::SeqCst) {
-        return Err(BridgeError::native(ERROR_BUSY));
-    }
-    let serial = state.serial.clone();
-    let paths = state.paths.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let _pending = guard;
-        let _serial = serial
-            .lock()
-            .map_err(|_| BridgeError::native(ERROR_INVALID_DATA))?;
-        work(paths.as_deref())
-    })
-    .await
-    .map_err(|_| BridgeError {
-        native_error: ERROR_INVALID_DATA,
-        message: String::new(),
-        commit: "unknown".into(),
-    })?
-}
+type NativeState = Arc<jobs::NativeJobs>;
+
 async fn action<T: DeserializeOwned + Send + 'static>(
     state: &NativeState,
     command: Action,
@@ -75,25 +31,27 @@ async fn action<T: DeserializeOwned + Send + 'static>(
     if cfg!(feature = "ui-prototype") {
         return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
-    run(state, move |paths| {
-        #[cfg(feature = "test-harness")]
-        harness::record_action(command);
-        bridge::action(command, &request, paths, owner).1
-    })
-    .await
+    state
+        .run(move |paths| {
+            #[cfg(feature = "test-harness")]
+            harness::record_action(command);
+            bridge::action(command, &request, paths, owner).1
+        })
+        .await
 }
 #[tauri::command]
 async fn read_setup_state(state: tauri::State<'_, NativeState>) -> Result<Snapshot, BridgeError> {
     if cfg!(feature = "program-sample") {
         return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
-    run(&state, |paths| {
-        let snapshot = bridge::read_state(paths)?;
-        #[cfg(feature = "test-harness")]
-        harness::record_read(&snapshot);
-        Ok(snapshot)
-    })
-    .await
+    state
+        .run(|paths| {
+            let snapshot = bridge::read_state(paths)?;
+            #[cfg(feature = "test-harness")]
+            harness::record_read(&snapshot);
+            Ok(snapshot)
+        })
+        .await
 }
 #[tauri::command]
 async fn validate_setup(
@@ -124,12 +82,13 @@ async fn save_setup(
     if cfg!(feature = "ui-prototype") {
         return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
-    run(&state, move |paths| {
-        #[cfg(feature = "test-harness")]
-        harness::record_action(Action::Save);
-        Ok(bridge::save(options, paths))
-    })
-    .await
+    state
+        .run(move |paths| {
+            #[cfg(feature = "test-harness")]
+            harness::record_action(Action::Save);
+            Ok(bridge::save(options, paths))
+        })
+        .await
 }
 fn owner(window: &tauri::WebviewWindow) -> Result<usize, BridgeError> {
     if window.label() != "main" {
@@ -222,15 +181,13 @@ async fn close_setup_window(
     if window.label() != "main" {
         return Err("unexpected-window".into());
     }
-    state.closing.store(true, Ordering::SeqCst);
-    if state.pending.load(Ordering::SeqCst) != 0 {
-        state.closing.store(false, Ordering::SeqCst);
+    if !state.try_close() {
         return Err("busy".into());
     }
     #[cfg(feature = "test-harness")]
     harness::record_close(true);
     if let Err(error) = window.close() {
-        state.closing.store(false, Ordering::SeqCst);
+        state.reopen();
         return Err(error.to_string());
     }
     Ok(())
@@ -268,14 +225,19 @@ fn main() {
     }
     #[cfg(feature = "test-harness")]
     harness::mark("gui-entered");
+    // Native operations are serialized. Two async workers can serve IPC without scaling with CPU count.
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    else {
+        bridge::bootstrap_error(false);
+        std::process::exit(1);
+    };
+    tauri::async_runtime::set(runtime.handle().clone());
     let context = tauri::generate_context!();
     let result = tauri::Builder::default()
-        .manage(NativeState {
-            pending: Arc::new(AtomicUsize::new(0)),
-            serial: Arc::new(Mutex::new(())),
-            closing: Arc::new(AtomicBool::new(false)),
-            paths,
-        })
+        .manage(Arc::new(jobs::NativeJobs::new(paths)))
         .setup(|app| {
             let config = &app.config().app.windows[0];
             #[cfg(feature = "ui-prototype")]
@@ -322,9 +284,7 @@ fn main() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<NativeState>();
-                if state.pending.load(Ordering::SeqCst) != 0
-                    || !state.closing.load(Ordering::SeqCst)
-                {
+                if !state.is_closing() {
                     api.prevent_close();
                     #[cfg(feature = "test-harness")]
                     harness::record_close(false);

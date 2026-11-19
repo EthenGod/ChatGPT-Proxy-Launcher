@@ -12,6 +12,7 @@ extern "C" {
 
 // Internal, statically linked ABI. Buffers are owned and freed by C++ only.
 // A nonzero status can have no JSON, including during allocation failure.
+// The desktop caller serializes read_state and action, including preference changes.
 typedef struct SetupBridgeBuffer {
     uint8_t* data;
     size_t length;

@@ -135,6 +135,7 @@ $files = @(
     'frontend/src-tauri/src/bootstrap.rs'
     'frontend/src-tauri/src/bridge.rs'
     'frontend/src-tauri/src/harness.rs'
+    'frontend/src-tauri/src/jobs.rs'
     'frontend/src-tauri/src/main.rs'
     'frontend/src-tauri/src/model.rs'
     'frontend/src-tauri/tauri.conf.json'

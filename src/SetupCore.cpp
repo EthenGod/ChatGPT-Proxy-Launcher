@@ -9,6 +9,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <utility>
 #include <new>
 
@@ -17,6 +18,9 @@ namespace {
 using Microsoft::WRL::ComPtr;
 struct Handle {
     HANDLE h = INVALID_HANDLE_VALUE;
+    Handle() = default;
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
     ~Handle() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); }
 };
 Result Fail(DWORD code, const std::wstring& what) {
@@ -50,9 +54,7 @@ Result EnsureDirectory(const std::wstring& path) {
 }
 struct Snapshot { bool exists = false; std::vector<BYTE> data; };
 
-Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
-    file = {};
-    Handle handle;
+Result OpenSnapshot(const std::wstring& path, Handle& handle, DWORD& length) {
     handle.h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle.h == INVALID_HANDLE_VALUE) {
@@ -63,13 +65,64 @@ Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
     if (!GetFileSizeEx(handle.h, &size)) return Fail(GetLastError(), l10n::Text("error.files.size"));
     if (size.QuadPart < 0 || size.QuadPart > 32 * 1024 * 1024)
         return Fail(ERROR_FILE_TOO_LARGE, l10n::Format("error.files.toolarge", {{"path", path}}));
-    file.data.resize(static_cast<size_t>(size.QuadPart));
-    DWORD count = 0;
-    if (!ReadFile(handle.h, file.data.data(), static_cast<DWORD>(file.data.size()), &count, nullptr))
-        return Fail(GetLastError(), l10n::Format("error.files.contents", {{"path", path}}));
-    if (count != file.data.size()) return Fail(ERROR_READ_FAULT, l10n::Format("error.files.incomplete", {{"path", path}}));
-    file.exists = true;
+    length = static_cast<DWORD>(size.QuadPart);
     return {};
+}
+Result ReadExact(HANDLE handle, const std::wstring& path, BYTE* buffer, DWORD length) {
+    DWORD count = 0;
+    if (!ReadFile(handle, buffer, length, &count, nullptr)) {
+        const DWORD error = GetLastError();
+        return Fail(error, l10n::Format("error.files.contents", {{"path", path}}));
+    }
+    if (count != length) return Fail(ERROR_READ_FAULT, l10n::Format("error.files.incomplete", {{"path", path}}));
+    return {};
+}
+Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
+    file = {};
+    Handle handle;
+    DWORD length = 0;
+    Result result = OpenSnapshot(path, handle, length);
+    if (!result || handle.h == INVALID_HANDLE_VALUE) return result;
+    file.data.resize(length);
+    result = ReadExact(handle.h, path, file.data.data(), length);
+    if (result) file.exists = true;
+    return result;
+}
+
+enum class FileMatch { Missing, Different, Identical };
+Result CompareLauncher(const std::wstring& path, Payload payload, FileMatch& match, Snapshot* backup = nullptr) {
+    match = FileMatch::Missing;
+    Handle handle;
+    DWORD length = 0;
+    Result result = OpenSnapshot(path, handle, length);
+    if (!result || handle.h == INVALID_HANDLE_VALUE) return result;
+    match = FileMatch::Different;
+    if (length == payload.size) {
+        BYTE block[8 * 1024];
+        DWORD offset = 0;
+        while (offset < length) {
+            const DWORD count = (std::min)(length - offset, static_cast<DWORD>(sizeof(block)));
+            result = ReadExact(handle.h, path, block, count);
+            if (!result) return result;
+            if (memcmp(block, payload.data + offset, count) != 0) break;
+            offset += count;
+        }
+        if (offset == length) {
+            match = FileMatch::Identical;
+            return {};
+        }
+        if (backup && !SetFilePointerEx(handle.h, {}, nullptr, FILE_BEGIN)) {
+            const DWORD error = GetLastError();
+            return Fail(error, l10n::Format("error.files.read", {{"path", path}}));
+        }
+    }
+    // Use the same read handle so the rollback copy belongs to the file just compared.
+    if (backup) {
+        backup->data.resize(length);
+        result = ReadExact(handle.h, path, backup->data.data(), length);
+        if (result) backup->exists = true;
+    }
+    return result;
 }
 // Each temporary object owns exactly one newly-created, explicit file path.
 struct TempFile {
@@ -420,7 +473,10 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         result = ReadFileBytes(paths.codexEnvFile, oldEnv); if (!result) return result;
         result = MergeCodexEnv(oldEnv.data, options, envBytes); if (!result) return result;
     }
-    result = ReadFileBytes(target, oldExe); if (!result) return result;
+    const bool managedTarget = Same(target, previous.managedTarget);
+    FileMatch existingExe;
+    result = CompareLauncher(target, payload, existingExe, managedTarget && !preflight ? &oldExe : nullptr);
+    if (!result) return result;
     result = ReadFileBytes(paths.settingsLink, oldSettings); if (!result) return result;
     result = ReadFileBytes(paths.startupLink, oldStartup); if (!result) return result;
     if (touchDesktop) {
@@ -433,11 +489,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
                 return Conflict(l10n::Text("error.desktop.conflict"), Parent(paths.desktopLink));
         }
     }
-    const auto matchesPayload = [&](const Snapshot& file) {
-        return file.exists && file.data.size() == payload.size && !memcmp(file.data.data(), payload.data, payload.size);
-    };
-    const bool exeMatches = matchesPayload(oldExe);
-    if (oldExe.exists && !Same(target, previous.managedTarget) && !exeMatches)
+    if (existingExe == FileMatch::Different && !managedTarget)
         return Conflict(l10n::Text("error.deployment.conflict"), directory);
     if (oldStartup.exists) {
         Link existing;
@@ -522,14 +574,14 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         return {};
     };
     try {
-        if (!exeMatches) {
+        if (existingExe != FileMatch::Identical) {
             result = WriteAtomicBytes(target, payload.data, payload.size, oldExe.exists); if (!result) return rollback(std::move(result));
             exeChanged = true;
         }
-        Snapshot check;
-        result = ReadFileBytes(target, check);
+        FileMatch written;
+        result = CompareLauncher(target, payload, written);
         if (!result) return rollback(std::move(result));
-        if (!matchesPayload(check)) return rollback(Fail(ERROR_CRC, l10n::Text("error.deployment.verify")));
+        if (written != FileMatch::Identical) return rollback(Fail(ERROR_CRC, l10n::Text("error.deployment.verify")));
         result = WriteLink(paths.settingsLink, value, oldSettings.exists); if (!result) return rollback(std::move(result));
         settingsChanged = true;
         if (options.startup) {
@@ -556,6 +608,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         if (!verify.deployed || verify.options.startup != options.startup || verify.options.desktop != options.desktop
             || !Same(verify.managedTarget, target))
             return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.settings.verify")));
+        Snapshot check;
         if (touchEnv && (!oldEnv.exists || oldEnv.data != envBytes)) {
             result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(std::move(result));
             if (check.exists != oldEnv.exists || check.data != oldEnv.data)

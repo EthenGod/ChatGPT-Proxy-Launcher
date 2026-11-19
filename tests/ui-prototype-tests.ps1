@@ -133,8 +133,11 @@ function Inspect-Preview($Metadata) {
             handles=$process.HandleCount; threads=$process.Threads.Count; cpuMs=$process.TotalProcessorTime.TotalMilliseconds} }
         finally { $process.Dispose() }
     })
+    $hostSample=$samples | Where-Object { $_.id -eq $Metadata.processId -and $_.started -eq $Metadata.started }
+    Require ($null -ne $hostSample) 'Preview owner changed while sampling'
     [IO.File]::WriteAllText((Join-Path $Metadata.root 'tree.json'),(ConvertTo-Json -InputObject $samples))
     return @{processes=$samples.Count; privateMiB=[Math]::Round(($samples | Measure-Object private -Sum).Sum/1MB,2);
+        hostPrivateMiB=[Math]::Round($hostSample.private/1MB,2); hostThreads=$hostSample.threads;
         workingMiB=[Math]::Round(($samples | Measure-Object working -Sum).Sum/1MB,2); readyMs=[Math]::Round($Metadata.readyMs,2);
         handles=($samples | Measure-Object handles -Sum).Sum; threads=($samples | Measure-Object threads -Sum).Sum;
         cpuMs=[Math]::Round(($samples | Measure-Object cpuMs -Sum).Sum,2); windowDpi=$dpi}

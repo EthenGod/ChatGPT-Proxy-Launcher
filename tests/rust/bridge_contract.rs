@@ -1,9 +1,112 @@
 #[allow(dead_code)]
 #[path = "../../frontend/src-tauri/src/bootstrap.rs"]
 mod bootstrap;
+#[path = "../../frontend/src-tauri/src/jobs.rs"]
+mod jobs;
 #[allow(dead_code)]
 #[path = "../../frontend/src-tauri/src/model.rs"]
 mod model;
+
+#[test]
+fn only_one_close_can_be_admitted_and_failure_reopens_the_queue() {
+    use std::sync::{Arc, Barrier};
+
+    let jobs = Arc::new(jobs::NativeJobs::new(None));
+    let start = Arc::new(Barrier::new(2));
+    let attempts = [0, 1].map(|_| {
+        let (jobs, start) = (Arc::clone(&jobs), Arc::clone(&start));
+        std::thread::spawn(move || {
+            start.wait();
+            jobs.try_close()
+        })
+    });
+    let [first, second] = attempts.map(|thread| thread.join().unwrap());
+    assert_ne!(first, second);
+    assert!(jobs.is_closing());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let error = jobs.run(|_| Ok(())).await.unwrap_err();
+        assert_eq!(
+            error.native_error,
+            windows_sys::Win32::Foundation::ERROR_BUSY
+        );
+        jobs.reopen();
+        jobs.run(|_| Ok(())).await.unwrap();
+        assert!(jobs.try_close());
+    });
+}
+
+#[test]
+fn cancelled_waiters_leave_but_running_work_still_blocks_close() {
+    use std::future::Future;
+    use std::sync::{mpsc, Arc};
+    use std::task::{Context, Waker};
+    use std::time::Duration;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let jobs = Arc::new(jobs::NativeJobs::new(Some(vec![42])));
+        let (started, running) = tokio::sync::oneshot::channel();
+        let (release, wait) = mpsc::channel();
+        let active = Arc::clone(&jobs);
+        let caller = tokio::spawn(async move {
+            active
+                .run(move |paths| {
+                    assert_eq!(paths, Some([42u8].as_slice()));
+                    started.send(()).unwrap();
+                    wait.recv_timeout(Duration::from_secs(10)).unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        running.await.unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        assert!(!jobs.try_close());
+
+        let (unexpected, observer) = mpsc::channel();
+        let mut cancelled = Box::pin(jobs.run(move |_| {
+            unexpected.send(()).unwrap();
+            Ok(())
+        }));
+        assert!(cancelled
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        drop(cancelled);
+        assert_eq!(observer.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+
+        let mut next = Box::pin(jobs.run(|_| Ok(42)));
+        assert!(next
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        release.send(()).unwrap();
+        assert_eq!(next.await.unwrap(), 42);
+        assert!(jobs.try_close());
+    });
+}
+
+#[test]
+fn failed_worker_releases_both_guards_and_keeps_commit_unknown() {
+    let jobs = std::sync::Arc::new(jobs::NativeJobs::new(None));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let error = jobs
+            .run::<(), _>(|_| panic!("test worker"))
+            .await
+            .unwrap_err();
+        assert_eq!(error.commit, "unknown");
+        jobs.run(|_| Ok(())).await.unwrap();
+        assert!(jobs.try_close());
+    });
+}
 
 #[test]
 fn native_action_ids_match_the_cpp_contract() {

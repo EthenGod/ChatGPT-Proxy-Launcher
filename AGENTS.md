@@ -3,7 +3,7 @@
 ## 项目与命令
 - 这是 Windows x64 原生 C++ ChatGPT 启动器，不是 OpenAI 官方产品。
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法，英语和日语对应 `README.en.md`、`README.ja.md`。
-- 默认图形配置工具入口为 `frontend/src-tauri/src/main.rs`，旧原生界面为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
+- 默认图形配置工具入口为 `frontend/src-tauri/src/main.rs`。`frontend/src-tauri/src/jobs.rs` 管理原生任务排队和关闭许可。旧原生界面为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`。构建时内嵌同次生成的启动器。
 - 新 UI 位于 `frontend/src/`。正式入口 `main.tsx` 和模拟入口 `prototype.tsx` 共用 `features/setup/SetupPage.tsx`。共用控件在 `components/`，真实接口在 `platform/setup-service.ts`，模拟接口在 `platform/mock.ts`。Rust 外壳在 `frontend/src-tauri/`，C ABI 连接层为 `src/SetupBridge.*`。`src/SetupUiServices.*` 供新旧界面共用偏好、原生选择器和保存后处理。阶段约定与验证见 `docs/ui-refactor.md`。
 - `components/ScrollBox.tsx` 统一正文和弹层滚动。`useAppearanceTransition.ts` 处理语言和主题过渡。正式页与原型共用 `platform/desktop.ts` 管理窗口就绪、外观和关闭。权限仅授予主窗口。
 - `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。

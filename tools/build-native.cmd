@@ -17,7 +17,7 @@ if errorlevel 1 (
     exit /b 1
 )
 popd
-cl /nologo @tools\msvc-common.rsp /O1 /GL /MT /Fo:work\ /Fe:outputs\ChatGPTProxyLauncher.exe src\Localization.cpp src\ChatGPTProxyLauncher.cpp src\TaskbarShortcut.cpp src\StartupApps.cpp src\AutomationJson.cpp src\AutomationIO.cpp src\DeploymentDiscovery.cpp src\CompanionManifest.cpp src\CompanionProtocol.cpp src\CompanionRunner.cpp src\LauncherAutomation.cpp work\LauncherResources.res /link /LTCG /MANIFEST:EMBED /MANIFESTINPUT:src\Launcher.manifest /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib bcrypt.lib version.lib comctl32.lib user32.lib
+cl /nologo @tools\msvc-common.rsp /DCHATGPT_LAUNCHER_ONLY /O1 /GL /MT /Fo:work\ /Fe:outputs\ChatGPTProxyLauncher.exe src\Localization.cpp src\ChatGPTProxyLauncher.cpp src\TaskbarShortcut.cpp src\StartupApps.cpp src\AutomationJson.cpp src\AutomationIO.cpp src\DeploymentDiscovery.cpp src\CompanionManifest.cpp src\CompanionProtocol.cpp src\CompanionRunner.cpp src\LauncherAutomation.cpp work\LauncherResources.res /link /LTCG /MANIFEST:EMBED /MANIFESTINPUT:src\Launcher.manifest /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT kernel32.lib shell32.lib ole32.lib uuid.lib advapi32.lib bcrypt.lib version.lib comctl32.lib user32.lib
 if errorlevel 1 exit /b %errorlevel%
 if /i "%~1"=="launcher" exit /b 0
 if not exist work\ui-native mkdir work\ui-native
