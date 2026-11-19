@@ -171,8 +171,11 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(badFlags(L"--headless plan --result C:\\test.json --clear-extra --extra-arg x"));
         REQUIRE(badFlags(L"--headless plan --result C:\\test.json --extra-arg"));
         {
+            // A production setup operation must still contend with an older binary's settings lock.
             UserLock lock; REQUIRE(lock.Acquire(p.settingsLink) == 0);
-            DWORD childResult = 0; std::thread other([&] { UserLock second; childResult = second.Acquire(p.settingsLink, 25); }); other.join();
+            DWORD childResult = 0;
+            std::thread other([&] { UserLock second; childResult = second.AcquireForSetup(p, false, 25); });
+            other.join();
             REQUIRE(childResult == ERROR_BUSY);
         }
         // Real EXE error path: it must exit without creating a GUI or running a deployment.

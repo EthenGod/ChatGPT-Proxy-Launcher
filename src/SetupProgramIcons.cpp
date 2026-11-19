@@ -66,12 +66,10 @@ std::wstring LocalResource(const std::wstring& input, const std::wstring& item, 
     if (PathIsRelativeW(path.c_str())) path = Join(automation::ParentPath(item), path);
     try {
         path = automation::FullPath(path);
-        if (!isolatedRoot.empty() && (path.size() <= isolatedRoot.size() || path[isolatedRoot.size()] != L'\\' ||
-            CompareStringOrdinal(path.data(), static_cast<int>(isolatedRoot.size()), isolatedRoot.data(),
-                static_cast<int>(isolatedRoot.size()), TRUE) != CSTR_EQUAL)) return {};
         const auto drive = GetDriveTypeW(path.substr(0, 3).c_str());
         if (drive != DRIVE_FIXED && drive != DRIVE_REMOVABLE && drive != DRIVE_RAMDISK && drive != DRIVE_CDROM) return {};
-        automation::CheckPlainPath(path);
+        if (isolatedRoot.empty()) automation::CheckPlainPath(path);
+        else automation::CheckPathUnderRoot(path, isolatedRoot);
     } catch (const automation::Invalid&) { return {}; }
       catch (const automation::IoError&) { return {}; }
     const DWORD attrs = GetFileAttributesW(path.c_str());

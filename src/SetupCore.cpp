@@ -638,9 +638,9 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     deployedTarget.swap(target); // Publishing a committed result must not allocate.
     Result success; success.commit = CommitState::Committed; return success;
 }
-Result Apply(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget) {
+Result Apply(const Paths& paths, const Options& options, Payload payload, std::wstring& deployedTarget, bool isolated) {
     automation::UserLock lock;
-    const DWORD error = lock.Acquire(paths.settingsLink);
+    const DWORD error = lock.AcquireForSetup(paths, isolated);
     if (error) return Fail(error, l10n::Text("error.busy"));
     return ApplyFiles(paths, options, payload, deployedTarget, false);
 }

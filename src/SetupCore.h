@@ -63,6 +63,6 @@ Result ParseArguments(const std::wstring& arguments, Options& options);
 Result ReadLink(const std::wstring& path, Link& link, bool expandedTarget = false, LinkIcon* icon = nullptr);
 Result Load(const Paths& paths, Loaded& loaded);
 Result Apply(const Paths& paths, const Options& options, Payload payload,
-    std::wstring& deployedTarget);
+    std::wstring& deployedTarget, bool isolated = false);
 Result Preflight(const Paths& paths, const Options& options, Payload payload);
 } // namespace setup

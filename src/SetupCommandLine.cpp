@@ -7,7 +7,6 @@
 #include "DeploymentDiscovery.h"
 #include <shellapi.h>
 #include <objbase.h>
-#include <cstring>
 #include <set>
 
 namespace setup {
@@ -15,29 +14,8 @@ using automation::Json;
 using automation::Invalid;
 namespace rules = automation::contract;
 
-namespace {
-bool SameRootDirectory(const std::wstring& root, const std::wstring& candidate) {
-    constexpr DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
-    constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    automation::Handle first(CreateFileW(root.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, flags, nullptr));
-    automation::Handle second(CreateFileW(candidate.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, flags, nullptr));
-    FILE_ID_INFO a{}, b{};
-    return first && second
-        && GetFileInformationByHandleEx(first.value, FileIdInfo, &a, sizeof(a))
-        && GetFileInformationByHandleEx(second.value, FileIdInfo, &b, sizeof(b))
-        && a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof(a.FileId)) == 0;
-}
-}
 void CheckIsolatedPath(const Paths& paths, const std::wstring& path) {
-    const auto root = automation::ParentPath(paths.defaultDirectory);
-    const auto prefix = Join(root, L"");
-    const auto full = automation::FullPath(path);
-    if (full.size() <= prefix.size() || full[prefix.size() - 1] != L'\\') throw Invalid("outside-test-root");
-    if (full.compare(0, prefix.size(), prefix) != 0) {
-        const auto candidate = full.substr(0, root.size());
-        if (!automation::SamePath(root, candidate) || !SameRootDirectory(root, candidate)) throw Invalid("outside-test-root");
-    }
-    automation::CheckPlainPath(full);
+    automation::CheckPathUnderRoot(path, automation::ParentPath(paths.defaultDirectory));
 }
 namespace {
 Json NewResult(const std::wstring& operation) {
@@ -235,7 +213,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
         auto request = command.request;
         if (!command.requestPath.empty()) request = automation::ParseJson(automation::ReadBytes(command.requestPath));
         if (command.operation.find(L"companion-") == 0 || command.operation == L"info") {
-            automation::UserLock lock; const DWORD error = lock.Acquire(paths.settingsLink);
+            automation::UserLock lock; const DWORD error = lock.AcquireForSetup(paths, isolated);
             if (error) { Failure(result, error == ERROR_BUSY ? 31 : 50, L"busy", error); result[L"stage"] = Json(L"lock"); }
             else {
                 result[L"data"] = command.operation == L"info"
@@ -256,7 +234,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
         if (!initial.managedTarget.empty() && automation::SamePath(command.resultPath, automation::FullPath(initial.managedTarget))) throw Invalid("result-is-installed-launcher");
         if (status) {
             automation::UserLock lock;
-            const DWORD locked = lock.Acquire(paths.settingsLink);
+            const DWORD locked = lock.AcquireForSetup(paths, isolated);
             if (locked) { Failure(result, locked == ERROR_BUSY ? 31 : 50, L"busy", locked); result[L"stage"] = Json(L"lock"); }
             else {
                 Loaded loaded; status = Load(paths, loaded);
@@ -269,7 +247,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
                     else if (command.operation == L"plan") result[L"data"] = PlanData(options, paths, request);
                     else {
                         result[L"stage"] = Json(L"commit"); applying = true;
-                        std::wstring target; status = Apply(paths, options, payload, target); applying = false;
+                        std::wstring target; status = Apply(paths, options, payload, target, isolated); applying = false;
                         if (!status) FromCore(result, status);
                         else {
                             result[L"committed"] = Json(true); result[L"code"] = Json(L"deployed");

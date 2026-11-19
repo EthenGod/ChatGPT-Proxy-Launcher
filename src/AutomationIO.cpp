@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "AutomationIO.h"
 #include "NativeMemory.h"
+#include "SetupCore.h"
 #include <sddl.h>
 #include <cwctype>
 #include <algorithm>
 #include <string_view>
 #include <cstring>
+#include <utility>
 
 namespace automation {
 std::wstring Quote(const std::wstring& value) {
@@ -55,8 +57,20 @@ std::wstring FullPath(const std::wstring& input) {
     }
     return full;
 }
-void CheckPlainPath(const std::wstring& path) {
-    auto full = FullPath(path);
+namespace {
+Handle OpenDirectory(const std::wstring& path) {
+    return Handle(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+}
+bool SameRootDirectory(const std::wstring& root, const std::wstring& candidate) {
+    const auto first = OpenDirectory(root), second = OpenDirectory(candidate);
+    FILE_ID_INFO a{}, b{};
+    return first && second
+        && GetFileInformationByHandleEx(first.value, FileIdInfo, &a, sizeof(a))
+        && GetFileInformationByHandleEx(second.value, FileIdInfo, &b, sizeof(b))
+        && a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof(a.FileId)) == 0;
+}
+void CheckPlainComponents(std::wstring full) {
     for (size_t p = 3;;) {
         const auto end = full.find(L'\\', p);
         // Temporarily terminate each prefix instead of allocating a copy for every ancestor.
@@ -70,6 +84,19 @@ void CheckPlainPath(const std::wstring& path) {
         if (end == full.npos) break;
         p = end + 1;
     }
+}
+}
+void CheckPlainPath(const std::wstring& path) { CheckPlainComponents(FullPath(path)); }
+void CheckPathUnderRoot(const std::wstring& path, const std::wstring& root) {
+    auto full = FullPath(path);
+    if (root.empty()) throw Invalid("outside-test-root");
+    const auto separator = root.back() == L'\\' ? root.size() - 1 : root.size();
+    if (full.size() <= separator + 1 || full[separator] != L'\\') throw Invalid("outside-test-root");
+    if (full.compare(0, root.size(), root) != 0) {
+        const auto candidate = full.substr(0, root.size());
+        if (!SamePath(root, candidate) || !SameRootDirectory(root, candidate)) throw Invalid("outside-test-root");
+    }
+    CheckPlainComponents(std::move(full));
 }
 std::string ReadBytes(const std::wstring& path, size_t maximum) {
     CheckPlainPath(path);
@@ -144,11 +171,37 @@ DWORD OpenUserMutex(const std::wstring& suffix, HANDLE& mutex) {
 }
 DWORD UserLock::Acquire(const std::wstring& identity, DWORD waitMs) {
     if (owned) return ERROR_SUCCESS;
-    mutex.Reset();
     // Preserve the deployed writer lock's per-user/per-root name.
     unsigned long long hash = 14695981039346656037ull;
     for (auto c : identity) { hash ^= static_cast<unsigned>(towupper(c)); hash *= 1099511628211ull; }
-    const DWORD error = OpenUserMutex(std::to_wstring(hash), mutex.value);
+    return AcquireNamed(std::to_wstring(hash), waitMs);
+}
+DWORD UserLock::AcquireForSetup(const setup::Paths& paths, bool isolated, DWORD waitMs) {
+    if (!isolated) return Acquire(paths.settingsLink, waitMs);
+    if (owned) return ERROR_SUCCESS;
+    // The fixture root exists even on the first run, before state/settings.lnk is created.
+    const auto rootPath = ParentPath(paths.defaultDirectory);
+    const auto root = OpenDirectory(rootPath);
+    if (!root) return GetLastError();
+    FILE_ID_INFO id{};
+    if (!GetFileInformationByHandleEx(root.value, FileIdInfo, &id, sizeof(id))) {
+        const DWORD error = GetLastError();
+        // Keep the previous locking behavior on filesystems without volume/file IDs.
+        if (error == ERROR_INVALID_PARAMETER || error == ERROR_INVALID_FUNCTION || error == ERROR_NOT_SUPPORTED)
+            return Acquire(paths.settingsLink, waitMs);
+        return error;
+    }
+    auto name = L"Fixture." + std::to_wstring(id.VolumeSerialNumber) + L".";
+    constexpr wchar_t hex[] = L"0123456789abcdef";
+    for (const BYTE byte : id.FileId.Identifier) {
+        name.push_back(hex[byte >> 4]);
+        name.push_back(hex[byte & 15]);
+    }
+    return AcquireNamed(name, waitMs);
+}
+DWORD UserLock::AcquireNamed(const std::wstring& name, DWORD waitMs) {
+    mutex.Reset();
+    const DWORD error = OpenUserMutex(name, mutex.value);
     if (!mutex) return error;
     const DWORD result = WaitForSingleObject(mutex.value, waitMs);
     if (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED) { owned = true; return ERROR_SUCCESS; }

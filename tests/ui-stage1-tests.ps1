@@ -166,6 +166,14 @@ $rootAlias = Join-Path $testRoot 'CLI SPACE 中文'
 if ([IO.Directory]::Exists($rootAlias)) {
     $null = Compare-Cli $cliRoot ('--headless plan --directory ' + (Quote-Argument $rootAlias)) 0
 }
+$bridgeActions = Join-Path $ProjectRoot 'work\setup-bridge-actions-tests.exe'
+$aliasOwner = Join-Path $testRoot 'GuiAlias'
+$null = [IO.Directory]::CreateDirectory($aliasOwner)
+$aliasPeer = Join-Path $testRoot 'guialias'
+if (![IO.Directory]::Exists($aliasPeer)) { $aliasPeer = $aliasOwner }
+& $bridgeActions '--check-root-alias' $aliasOwner $aliasPeer $launcher
+Require ($LASTEXITCODE -eq 0) 'Same-root GUI selection, icon loading or shared GUI/headless write lock failed'
+Write-Host 'PASS same root: direct GUI deployment, custom and EXE icons, shared GUI/headless write lock'
 $caseParent = Join-Path $testRoot 'case-sensitive'
 $null = [IO.Directory]::CreateDirectory($caseParent)
 # Only change the newly created, empty fixture directory. Verify actual name resolution.
@@ -176,6 +184,9 @@ $null = [IO.Directory]::CreateDirectory($upper)
 $caseSensitive = ![IO.Directory]::Exists($lower)
 if ($caseSensitive) {
     $null = [IO.Directory]::CreateDirectory($lower)
+    & $bridgeActions '--check-root-siblings' $upper $lower $launcher
+    Require ($LASTEXITCODE -eq 0) 'Case-only sibling GUI boundary, icon fallback or concurrent deployment failed'
+    Write-Host 'PASS case-only siblings: GUI boundary and icon fallback, independent concurrent GUI and headless writes'
     $casePlan = Compare-Cli $upper ('--headless plan --directory ' + (Quote-Argument $lower)) 20
     Require ($casePlan.code -eq 'outside-test-root' -and !$casePlan.committed) 'Plan accepted a different case-sensitive root'
     $otherResult = Join-Path $lower 'result.json'
@@ -194,7 +205,7 @@ $null = [IO.Directory]::CreateDirectory($importRoot)
 $null = [IO.Directory]::CreateDirectory($importTarget)
 $null = New-Item -ItemType Junction -Path (Join-Path $importRoot 'state') -Target $importTarget
 [IO.File]::WriteAllText((Join-Path $importRoot 'sample.exe'), '')
-& (Join-Path $ProjectRoot 'work\setup-bridge-actions-tests.exe') '--check-redirected-import' $importRoot
+& $bridgeActions '--check-redirected-import' $importRoot
 Require ($LASTEXITCODE -eq 0 -and [IO.Directory]::GetFileSystemEntries($importTarget).Count -eq 0) 'Import touched a redirected destination'
 Write-Host 'PASS companion import: redirected parent rejected before creating the shortcut folder'
 $null = Compare-Cli $cliRoot '--headless invalid' 20

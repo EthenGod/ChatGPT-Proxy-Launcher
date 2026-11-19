@@ -4,20 +4,26 @@
 #include "../src/SetupCommandLine.h"
 #include "../src/SetupBridge.h"
 #include <shlobj.h>
+#include <wrl/client.h>
 #include <thread>
 #include <cstdio>
 
 static int syntheticCommit = -1;
 static bool failAfterCommit = false;
+static HANDLE saveEntered = nullptr, continueSave = nullptr;
 namespace setup {
 Result UnexpectedSystemPaths(Paths&) { return {ERROR_PATH_NOT_FOUND, L"System folders unavailable"}; }
-Result BridgeTestApply(const Paths& paths, const Options& options, Payload payload, std::wstring& target) {
+Result BridgeTestApply(const Paths& paths, const Options& options, Payload payload, std::wstring& target, bool isolated) {
+    if (saveEntered) {
+        SetEvent(saveEntered);
+        if (WaitForSingleObject(continueSave, 30000) != WAIT_OBJECT_0) return {ERROR_TIMEOUT, L"Test save timed out"};
+    }
     if (syntheticCommit >= 0) {
         Result result{ERROR_WRITE_FAULT, L"Synthetic write failure"};
         result.commit = static_cast<CommitState>(syntheticCommit);
         return result;
     }
-    auto result = Apply(paths, options, payload, target);
+    auto result = Apply(paths, options, payload, target, isolated);
     if (result && failAfterCommit) { memory_fault::armed = true; memory_fault::remaining = 0; }
     return result;
 }
@@ -46,6 +52,94 @@ static void PutTestIcon(const std::wstring& path) {
     bytes.append(maskBytes, '\0');
     Put(path, bytes);
 }
+static bool SaveTestLink(const std::wstring& path, const std::wstring& target, const std::wstring& icon,
+    const std::wstring& arguments = {}, const std::wstring& directory = {}) {
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    return SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))
+        && SUCCEEDED(link->SetPath(target.c_str())) && SUCCEEDED(link->SetArguments(arguments.c_str()))
+        && SUCCEEDED(link->SetWorkingDirectory(directory.c_str()))
+        && (icon.empty() || SUCCEEDED(link->SetIconLocation(icon.c_str(), 0)))
+        && SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(path.c_str(), TRUE));
+}
+static uint32_t CallAction(uint32_t action, const Json& request, const std::string* paths, Json& reply, uint32_t& commit) {
+    const auto input = automation::WriteJson(request);
+    SetupBridgeBuffer buffer{};
+    const auto code = setup_bridge_action(action, reinterpret_cast<const uint8_t*>(input.data()), input.size(),
+        paths ? reinterpret_cast<const uint8_t*>(paths->data()) : nullptr, paths ? paths->size() : 0, 0, &buffer, &commit);
+    memory_fault::armed = false;
+    reply = buffer.data ? automation::ParseJson({reinterpret_cast<char*>(buffer.data), buffer.length}, MaxResponseBytes) : Json{};
+    memory_fault::watchedAllocation = buffer.data; memory_fault::watchedReleased = false;
+    const bool hadBuffer = buffer.data != nullptr;
+    setup_bridge_free(&buffer);
+    if (hadBuffer && !memory_fault::watchedReleased) throw automation::Invalid("response-leak");
+    return code;
+}
+static int CheckRootIcons(const setup::Paths& paths, const std::wstring& other, bool same, PCWSTR payload) {
+    std::wstring folder;
+    REQUIRE(setup::EnsureCompanionFolder(paths, folder));
+    const auto script = setup::Join(folder, L"plain.ps1");
+    const auto icon = setup::Join(other, L"test.ico"), exe = setup::Join(other, L"icon-source.exe");
+    Put(script, "# never executed"); Put(setup::Join(folder, L"type.exe"), "");
+    PutTestIcon(icon);
+    REQUIRE(CopyFileW(payload, exe.c_str(), TRUE));
+    REQUIRE(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)));
+    const bool linked = SaveTestLink(setup::Join(folder, L"custom.lnk"), script, icon)
+        && SaveTestLink(setup::Join(folder, L"target.lnk"), exe, L"");
+    CoUninitialize();
+    REQUIRE(linked);
+    const auto locations = BridgeTestPathJson(paths);
+    Json list; uint32_t commit = 0;
+    REQUIRE(CallAction(SETUP_LIST_PROGRAMS, Json::Object(), &locations, list, commit) == 0 && !commit);
+    std::map<std::wstring, long long> icons;
+    for (const auto& row : list.At(L"entries").array) {
+        REQUIRE(row.At(L"status").text == L"ordinary");
+        icons.emplace(row.At(L"name").text, row.At(L"icon").Integer(0, 1024));
+    }
+    // Within the root, both resources load. Outside it, each row reuses its file-type icon.
+    REQUIRE((icons.at(L"custom.lnk") != icons.at(L"plain.ps1")) == same);
+    REQUIRE((icons.at(L"target.lnk") != icons.at(L"type.exe")) == same);
+    return 0;
+}
+static int CheckRootPair(const std::wstring& root, const std::wstring& other, bool same, PCWSTR payload) {
+    const auto paths = BridgeTestPaths(root), peer = BridgeTestPaths(other);
+    REQUIRE(CheckRootIcons(paths, other, same, payload) == 0);
+    const auto locations = BridgeTestPathJson(paths);
+    auto pick = Json::Object(); pick[L"testSelection"] = Json(other);
+    Json reply; uint32_t commit = 0;
+    const uint32_t selectionCode = same ? ERROR_SUCCESS : ERROR_INVALID_DATA;
+    REQUIRE(CallAction(SETUP_DIRECTORY, pick, &locations, reply, commit) == selectionCode);
+    if (same) REQUIRE(reply.At(L"path").text == other);
+    setup::Options options;
+    options.directory = other; options.codexEnv = false;
+    if (!same) {
+        REQUIRE(CallAction(SETUP_SAVE, Options(options), &locations, reply, commit) == ERROR_INVALID_DATA && !commit);
+        REQUIRE(GetFileAttributesW(setup::Join(other, setup::LauncherName).c_str()) == INVALID_FILE_ATTRIBUTES);
+        options.directory = root;
+    }
+    // Hold a real GUI save at the entry to Apply while the headless entry attempts a deployment.
+    const auto request = Options(options);
+    const auto resultPath = setup::Join(other, L"concurrent-result.json");
+    const auto tail = L"--headless deploy --base defaults --startup off --desktop off --codex-env leave --official-startup leave --directory "
+        + automation::Quote(other) + L" --result " + automation::Quote(resultPath);
+    automation::Handle entered(CreateEventW(nullptr, TRUE, FALSE, nullptr)), resume(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    REQUIRE(entered && resume);
+    saveEntered = entered.value; continueSave = resume.value;
+    uint32_t saved = ERROR_GEN_FAILURE;
+    std::thread writer([&] {
+        try { saved = CallAction(SETUP_SAVE, request, &locations, reply, commit); }
+        catch (...) { saved = ERROR_INVALID_DATA; }
+    });
+    const bool ready = WaitForSingleObject(entered.value, 10000) == WAIT_OBJECT_0;
+    const int exitCode = ready ? setup::RunSetupCommandLine(GetModuleHandleW(nullptr), tail, &peer, IsolatedStartup) : -1;
+    SetEvent(resume.value); writer.join(); saveEntered = continueSave = nullptr;
+    REQUIRE(ready && saved == 0 && commit == 1 && exitCode == (same ? 31 : 0));
+    const auto result = automation::ParseJson(automation::ReadBytes(resultPath));
+    REQUIRE(result.At(L"code").text == (same ? L"busy" : L"deployed") && result.At(L"committed").Bool() == !same);
+    REQUIRE(GetFileAttributesW(setup::Join(root, setup::LauncherName).c_str()) != INVALID_FILE_ATTRIBUTES);
+    REQUIRE(GetFileAttributesW(setup::Join(other, setup::LauncherName).c_str()) != INVALID_FILE_ATTRIBUTES);
+    return 0;
+}
 static int CheckRedirectedImport(PCWSTR root) {
     const auto paths = BridgeTestPaths(root);
     const auto attributes = GetFileAttributesW(paths.defaultDirectory.c_str());
@@ -64,9 +158,11 @@ static int CheckRedirectedImport(PCWSTR root) {
     return 0;
 }
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 3) return 2;
     try {
         l10n::Select(L"zh-CN");
+        if (argc == 5 && !wcscmp(argv[1], L"--check-root-alias")) return CheckRootPair(argv[2], argv[3], true, argv[4]);
+        if (argc == 5 && !wcscmp(argv[1], L"--check-root-siblings")) return CheckRootPair(argv[2], argv[3], false, argv[4]);
+        if (argc != 3) return 2;
         if (!wcscmp(argv[1], L"--check-redirected-import")) return CheckRedirectedImport(argv[2]);
         const auto root = setup::Join(argv[1], L"bridge-actions-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         REQUIRE(CreateDirectoryW(root.c_str(), nullptr));
@@ -77,18 +173,7 @@ int wmain(int argc, wchar_t** argv) {
         Json reply;
         uint32_t commit = 0;
         auto call = [&](uint32_t action, const Json& request, bool useSystemPaths = false) {
-            const auto input = automation::WriteJson(request);
-            SetupBridgeBuffer buffer{};
-            const auto code = setup_bridge_action(action, reinterpret_cast<const uint8_t*>(input.data()), input.size(),
-                useSystemPaths ? nullptr : reinterpret_cast<const uint8_t*>(pathJson.data()),
-                useSystemPaths ? 0 : pathJson.size(), 0, &buffer, &commit);
-            memory_fault::armed = false;
-            reply = buffer.data ? automation::ParseJson({reinterpret_cast<char*>(buffer.data), buffer.length}, MaxResponseBytes) : Json{};
-            memory_fault::watchedAllocation = buffer.data; memory_fault::watchedReleased = false;
-            const bool hadBuffer = buffer.data != nullptr;
-            setup_bridge_free(&buffer);
-            if (hadBuffer && !memory_fault::watchedReleased) throw automation::Invalid("response-leak");
-            return code;
+            return CallAction(action, request, useSystemPaths ? nullptr : &pathJson, reply, commit);
         };
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && commit == 0);
         REQUIRE(reply.At(L"entries").array.empty() && !reply.At(L"incomplete").Bool());
@@ -143,7 +228,7 @@ int wmain(int argc, wchar_t** argv) {
         // Hold the same user lock on another thread. No write may enter while it is held.
         HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr), release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         REQUIRE(entered && release);
-        std::thread holder([&] { automation::UserLock lock; lock.Acquire(paths.settingsLink); SetEvent(entered); WaitForSingleObject(release, 10000); });
+        std::thread holder([&] { automation::UserLock lock; lock.AcquireForSetup(paths, true); SetEvent(entered); WaitForSingleObject(release, 10000); });
         WaitForSingleObject(entered, 10000);
         const auto blocked = call(SETUP_SAVE, Options(options));
         SetEvent(release); holder.join(); CloseHandle(entered); CloseHandle(release);
@@ -152,14 +237,10 @@ int wmain(int argc, wchar_t** argv) {
         const auto target = setup::Join(root, L"tool.exe"), shortcut = setup::Join(root, L"工具.lnk");
         REQUIRE(CopyFileW(argv[2], target.c_str(), TRUE));
         REQUIRE(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)));
-        IShellLinkW* link = nullptr;
-        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))));
         const auto iconPath = setup::Join(root, L"custom.ico");
         PutTestIcon(iconPath);
-        REQUIRE(SUCCEEDED(link->SetIconLocation(iconPath.c_str(), 0)));
-        link->SetPath(target.c_str()); link->SetArguments(options.extra.c_str()); link->SetWorkingDirectory(root.c_str());
-        IPersistFile* persist = nullptr; REQUIRE(SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&persist))));
-        REQUIRE(SUCCEEDED(persist->Save(shortcut.c_str(), TRUE))); persist->Release(); link->Release(); CoUninitialize();
+        REQUIRE(SaveTestLink(shortcut, target, iconPath, options.extra, root));
+        CoUninitialize();
         auto pick = Json::Object(); pick[L"testSelection"] = Json(shortcut);
         REQUIRE(call(SETUP_ADD_PROGRAM, pick) == 0 && commit == 1);
         REQUIRE(reply.At(L"entry").At(L"path").String() == shortcut);

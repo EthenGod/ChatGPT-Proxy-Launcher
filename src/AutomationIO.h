@@ -10,6 +10,8 @@
 #include "AutomationJson.h"
 #include <string_view>
 
+namespace setup { struct Paths; }
+
 namespace automation {
 struct Handle {
     HANDLE value = INVALID_HANDLE_VALUE;
@@ -26,7 +28,8 @@ bool SamePath(const std::wstring& a, const std::wstring& b);
 std::wstring FullPath(const std::wstring& path);
 std::wstring ParentPath(const std::wstring& path);
 std::wstring Quote(const std::wstring& value);
-void CheckPlainPath(const std::wstring& path); // Check existing path components; no writes.
+void CheckPlainPath(const std::wstring& path); // Reject existing reparse points; no writes.
+void CheckPathUnderRoot(const std::wstring& path, const std::wstring& root); // Strict descendant, with the same reparse checks.
 std::string ReadBytes(const std::wstring& path, size_t maximum = contract::JsonBytes);
 void WriteBytes(HANDLE file, const std::string& bytes);
 // On success or ERROR_ALREADY_EXISTS the caller owns the open, unowned mutex handle.
@@ -43,8 +46,10 @@ public:
 class UserLock {
     Handle mutex;
     bool owned = false;
+    DWORD AcquireNamed(const std::wstring& name, DWORD waitMs);
 public:
     ~UserLock() { if (owned) ReleaseMutex(mutex.value); }
     DWORD Acquire(const std::wstring& identity, DWORD waitMs = contract::LockWaitMs);
+    DWORD AcquireForSetup(const setup::Paths& paths, bool isolated, DWORD waitMs = contract::LockWaitMs);
 };
 }

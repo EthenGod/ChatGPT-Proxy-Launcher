@@ -218,8 +218,9 @@ extern "C" uint32_t setup_bridge_read_state(const uint8_t* pathBytes, size_t siz
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(com)) return static_cast<uint32_t>(com);
         struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
+        const bool isolated = pathBytes != nullptr;
         automation::UserLock operation;
-        const DWORD locked = operation.Acquire(paths.settingsLink);
+        const DWORD locked = operation.AcquireForSetup(paths, isolated);
         if (locked) return locked;
         setup::Loaded loaded;
         const auto status = setup::Load(paths, loaded);
@@ -232,7 +233,6 @@ extern "C" uint32_t setup_bridge_read_state(const uint8_t* pathBytes, size_t siz
             return status.code;
         }
         // Test paths imply deterministic preferences; production never supplies them.
-        const bool isolated = pathBytes != nullptr;
         loaded.options.codexEnv = isolated ? isolatedCodexEnv : setup::ui::ReadCodexEnvPreference();
         auto state = Json::Object();
         state[L"schemaVersion"] = Json::Number(1);
@@ -298,9 +298,9 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             response[L"port"] = Json(found.port); response[L"message"] = Json(found.message); response[L"source"] = Json(found.source);
         } else if (action == SETUP_SAVE) {
             auto options = ParseOptions(request);
-            if (isolated) setup::CheckIsolatedPath(paths, options.directory);
+            if (isolated) setup::CheckIsolatedPath(paths, setup::Join(options.directory, setup::LauncherName));
             automation::UserLock operation;
-            const DWORD locked = operation.Acquire(paths.settingsLink);
+            const DWORD locked = operation.AcquireForSetup(paths, isolated);
             if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
             setup::Loaded previous;
             Require(setup::Load(paths, previous));
@@ -314,7 +314,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             Require(setup::NormalizeDirectory(options.directory, normalized));
             options.directory.swap(normalized);
             std::wstring target;
-            const auto result = setup::Apply(paths, options, {static_cast<const BYTE*>(payload), SizeofResource(module, resource)}, target);
+            const auto result = setup::Apply(paths, options, {static_cast<const BYTE*>(payload), SizeofResource(module, resource)}, target, isolated);
             const auto outcome = DescribeCommit(result.commit);
             *commit = outcome.code; // No allocation between Apply and publishing its outcome.
             auto tasks = Json::Array();
@@ -359,12 +359,14 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
                 if (!isolated) throw automation::Invalid("test-selection-disabled");
                 selected = request.At(L"testSelection").String();
             } else Require(setup::ui::ChoosePath(reinterpret_cast<HWND>(owner), program, initial, selected));
-            if (isolated && !selected.empty()) setup::CheckIsolatedPath(paths, selected);
+            if (isolated && !selected.empty()) {
+                setup::CheckIsolatedPath(paths, program ? selected : setup::Join(selected, setup::LauncherName));
+            }
             if (program && !selected.empty()) {
                 response[L"entry"] = Program(selected);
                 response[L"path"] = Json(selected);
                 automation::UserLock operation;
-                const DWORD locked = operation.Acquire(paths.settingsLink);
+                const DWORD locked = operation.AcquireForSetup(paths, isolated);
                 if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
                 if (isolated) {
                     const auto folder = setup::Join(paths.defaultDirectory, companions::Folder);
