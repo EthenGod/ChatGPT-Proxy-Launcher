@@ -81,6 +81,7 @@
     "ui.load.failed": "无法读取现有设置，请重试",
     "ui.close.failed": "窗口操作失败，请重试",
     "ui.retry": "重试",
+    "ui.openconflictfolder": "打开冲突文件所在文件夹",
     "ui.details": "查看详情",
     "ui.input.review": "查看输入问题",
     "ui.preferences.unsaved": "未能保存语言和外观偏好。",

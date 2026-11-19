@@ -12,13 +12,16 @@
 static int syntheticCommit = -1;
 static bool failAfterCommit = false;
 static HANDLE saveEntered = nullptr, continueSave = nullptr;
-static std::wstring remoteTarget;
-static unsigned remoteProbes = 0;
+static std::wstring unprobedTarget;
+static setup::ui::ProgramDrive simulatedDrive = setup::ui::ProgramDrive::Unverified;
+static unsigned targetProbes = 0;
 namespace setup::ui {
-bool TestProgramDrive(const std::wstring& path) { return path != remoteTarget && LocalProgramDrive(path); }
+ProgramDrive TestProgramDrive(const std::wstring& path) {
+    return path == unprobedTarget ? simulatedDrive : ClassifyProgramDrive(path);
+}
 }
 static DWORD WINAPI ObservedAttributes(PCWSTR path) {
-    if (!remoteTarget.empty() && remoteTarget == path) ++remoteProbes;
+    if (!unprobedTarget.empty() && unprobedTarget == path) ++targetProbes;
     return GetFileAttributesW(path);
 }
 namespace setup {
@@ -40,11 +43,11 @@ Result BridgeTestApply(const Paths& paths, const Options& options, Payload paylo
 }
 #define Apply BridgeTestApply
 #define GetPaths UnexpectedSystemPaths
-#define LocalProgramDrive TestProgramDrive
+#define ClassifyProgramDrive TestProgramDrive
 #define GetFileAttributesW ObservedAttributes
 #include "../src/SetupBridge.cpp"
 #undef GetFileAttributesW
-#undef LocalProgramDrive
+#undef ClassifyProgramDrive
 #undef GetPaths
 #undef Apply
 
@@ -298,10 +301,12 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(exeImage.find(L"iVBORw0KGgo") == 0 && typeImage.find(L"iVBORw0KGgo") == 0 && exeImage != typeImage);
         const auto policy = setup::Join(paths.defaultDirectory, automation::contract::PolicyFile);
         Put(policy, "invalid policy");
-        remoteTarget = target;
+        unprobedTarget = target;
         REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool());
-        REQUIRE(listed(L"工具.lnk", L"ordinary") && listed(L"Example Tool", L"invalid") && !remoteProbes);
-        remoteTarget.clear();
+        REQUIRE(listed(L"工具.lnk", L"ordinary") && listed(L"Example Tool", L"invalid") && !targetProbes);
+        simulatedDrive = setup::ui::ProgramDrive::Missing;
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"工具.lnk", L"unavailable") && !targetProbes);
+        unprobedTarget.clear();
         Put(policy, R"({"schemaVersion":1,"budgetMs":30000,"feedback":"quiet"})");
         auto second = spec, other = record;
         second[L"id"] = Json(L"org.example.other"); second[L"name"] = Json(L"Other Tool");
@@ -342,6 +347,18 @@ int wmain(int argc, wchar_t** argv) {
         auto location = Json::Object(); location[L"location"] = Json(L"windows");
         REQUIRE(call(SETUP_OPEN_LOCATION, location) == 0); // No real Settings process.
         location[L"location"] = Json(L"cmd.exe"); REQUIRE(call(SETUP_OPEN_LOCATION, location) != 0);
+        location[L"location"] = Json(L"conflict");
+        REQUIRE(call(SETUP_OPEN_LOCATION, location) == ERROR_NOT_FOUND);
+        REQUIRE(CopyFileW(shortcut.c_str(), paths.settingsLink.c_str(), FALSE));
+        SetupBridgeBuffer conflict{};
+        REQUIRE(setup_bridge_read_state(reinterpret_cast<const uint8_t*>(pathJson.data()), pathJson.size(), &conflict) == ERROR_ALREADY_EXISTS);
+        const auto error = automation::ParseJson({reinterpret_cast<char*>(conflict.data), conflict.length});
+        setup_bridge_free(&conflict);
+        REQUIRE(error.At(L"nativeError").Integer(0, MAXDWORD) == ERROR_ALREADY_EXISTS
+            && error.At(L"conflictDirectory").String() == paths.defaultDirectory && !error.At(L"message").String().empty());
+        REQUIRE(call(SETUP_OPEN_LOCATION, location) == 0 && !commit);
+        location[L"path"] = Json(root);
+        REQUIRE(call(SETUP_OPEN_LOCATION, location) == ERROR_INVALID_DATA);
         puts("PASS bridge actions: native validation, commit states, committed response OOM, isolated save/env preservation, user lock, original shortcut import, cancellation, preferences and fixed locations");
         return 0;
     } catch (...) { memory_fault::armed = false; puts("FAIL bridge action exception"); return 50; }

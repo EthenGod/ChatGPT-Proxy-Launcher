@@ -243,6 +243,19 @@ fn window_navigation_matches_the_build_boundary() {
 }
 
 #[test]
+fn load_errors_preserve_the_native_conflict_directory() {
+    let mut error =
+        serde_json::json!({"nativeError":183, "message":"conflict", "commit":"not-started"});
+    assert!(serde_json::from_value::<model::BridgeError>(error.clone())
+        .unwrap()
+        .conflict_directory
+        .is_none());
+    error["conflictDirectory"] = "C:\\Example".into();
+    let decoded: model::BridgeError = serde_json::from_value(error.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), error);
+}
+
+#[test]
 fn response_failure_preserves_the_independent_native_commit() {
     for (code, expected) in [
         (0, "not-started"),

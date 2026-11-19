@@ -3,10 +3,12 @@ use crate::model::Action;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use windows_sys::Win32::Storage::FileSystem::{
+    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
@@ -62,25 +64,88 @@ fn unused_path(parent: &Path, prefix: &str) -> PathBuf {
     parent.join(format!("{prefix}-{}-{sequence}", std::process::id()))
 }
 
-pub fn webview_profile() -> io::Result<PathBuf> {
-    static PROFILE: OnceLock<File> = OnceLock::new();
-    let (parent, prefix) = if standalone_sample() {
-        (std::env::temp_dir(), "ChatGPTLauncherSetup-CompanionSample")
-    } else {
-        (root().to_owned(), "webview")
-    };
+fn plain_profile_tree(directory: &Path, depth: usize) -> io::Result<bool> {
+    if depth > 64 {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        let handle = OpenOptions::new()
+            .access_mode(0)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Ok(false);
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            // Keep this checked directory in place for the entire walk below it.
+            if !plain_profile_tree(&path, depth + 1)? {
+                return Ok(false);
+            }
+        } else if info.nNumberOfLinks != 1 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn sample_profile(parent: &Path) -> io::Result<(PathBuf, File)> {
+    // Ignore occupied names. Only reuse a marked cache without redirected files or directories.
+    for slot in 0..16 {
+        let path = parent.join(format!("ChatGPTLauncherSetup-CompanionSample-Cache-{slot}"));
+        let created = match fs::create_dir(&path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+            Err(error) => return Err(error),
+        };
+        let directory = match hold_directory(&path) {
+            Ok(handle) => handle,
+            Err(_) if !created => continue,
+            Err(error) => return Err(error),
+        };
+        let marker = path.join(".chatgpt-launcher-sample-v1");
+        if created {
+            File::create_new(&marker)?;
+        } else if !fs::symlink_metadata(&marker).is_ok_and(|m| m.is_file() && m.len() == 0) {
+            continue;
+        }
+        match plain_profile_tree(&path, 0) {
+            Ok(true) => return Ok((path, directory)),
+            Err(error) if created => return Err(error),
+            _ => continue,
+        }
+    }
+    Err(io::Error::other("no safe sample profile available"))
+}
+
+fn fresh_profile(parent: &Path) -> io::Result<(PathBuf, File)> {
     loop {
-        let path = unused_path(&parent, prefix);
+        let path = unused_path(parent, "webview");
         match fs::create_dir(&path) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             result => result?,
         }
         let handle = hold_directory(&path)?;
-        PROFILE
-            .set(handle)
-            .map_err(|_| io::Error::other("profile already assigned"))?;
-        return Ok(path);
+        return Ok((path, handle));
     }
+}
+
+pub fn webview_profile() -> io::Result<PathBuf> {
+    static PROFILE: OnceLock<File> = OnceLock::new();
+    let (path, handle) = if standalone_sample() {
+        sample_profile(&std::env::temp_dir())?
+    } else {
+        fresh_profile(root())?
+    };
+    PROFILE
+        .set(handle)
+        .map_err(|_| io::Error::other("profile already assigned"))?;
+    Ok(path)
 }
 
 pub fn write_report(directory: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
@@ -131,6 +196,11 @@ pub fn window_class() -> String {
     // root() resolves the directory on disk; case-only siblings can be distinct.
     root().hash(&mut hash);
     format!("ChatGPTLauncherSetupPreview{:016x}", hash.finish())
+}
+pub fn mark_ready() {
+    if !standalone_sample() && !root().join("ui-ready.json").exists() {
+        mark("ui-ready");
+    }
 }
 pub fn mark(name: &str) {
     if standalone_sample() {

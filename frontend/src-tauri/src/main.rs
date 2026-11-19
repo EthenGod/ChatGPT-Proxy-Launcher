@@ -171,9 +171,7 @@ fn setup_window_ready(
     }
     state.set_close_listener_ready(true);
     #[cfg(feature = "test-harness")]
-    if !harness::root().join("ui-ready.json").exists() {
-        harness::mark("ui-ready");
-    }
+    harness::mark_ready();
     Ok(())
 }
 #[tauri::command]

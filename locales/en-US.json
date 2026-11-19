@@ -81,6 +81,7 @@
     "ui.load.failed": "Could not read existing settings. Try again.",
     "ui.close.failed": "Window action failed. Try again.",
     "ui.retry": "Retry",
+    "ui.openconflictfolder": "Open folder containing the conflicting file",
     "ui.details": "Details",
     "ui.input.review": "Review input",
     "ui.preferences.unsaved": "Language and appearance preferences could not be saved.",

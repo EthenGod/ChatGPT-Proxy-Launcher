@@ -10,11 +10,22 @@
 #include <memory>
 
 namespace setup::ui {
-bool LocalProgramDrive(const std::wstring& path) {
-    if (path.size() < 3 || path[1] != L':' || path[2] != L'\\') return false;
+ProgramDrive ClassifyProgramDrive(const std::wstring& path) {
+    if (path.size() < 3 || path[1] != L':' || path[2] != L'\\') return ProgramDrive::Unverified;
     const wchar_t root[] = {path[0], L':', L'\\', L'\0'};
     const auto drive = GetDriveTypeW(root);
-    return drive == DRIVE_FIXED || drive == DRIVE_REMOVABLE || drive == DRIVE_RAMDISK || drive == DRIVE_CDROM;
+    if (drive == DRIVE_FIXED || drive == DRIVE_REMOVABLE || drive == DRIVE_RAMDISK || drive == DRIVE_CDROM)
+        return ProgramDrive::Local;
+    if (drive == DRIVE_NO_ROOT_DIR) {
+        // A remembered network drive can have no root while disconnected. Query only the local mapping.
+        std::wstring mapping = L"Network\\";
+        mapping += path[0];
+        HKEY key = nullptr;
+        const auto error = RegOpenKeyExW(HKEY_CURRENT_USER, mapping.c_str(), 0, KEY_QUERY_VALUE, &key);
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return ProgramDrive::Missing;
+        if (error == ERROR_SUCCESS) RegCloseKey(key);
+    }
+    return ProgramDrive::Unverified;
 }
 namespace {
 using automation::Json;
@@ -72,7 +83,7 @@ std::wstring LocalResource(const std::wstring& input, const std::wstring& item, 
     if (PathIsRelativeW(path.c_str())) path = Join(automation::ParentPath(item), path);
     try {
         path = automation::FullPath(path);
-        if (!LocalProgramDrive(path)) return {};
+        if (ClassifyProgramDrive(path) != ProgramDrive::Local) return {};
         if (isolatedRoot.empty()) automation::CheckPlainPath(path);
         else automation::CheckPathUnderRoot(path, isolatedRoot);
     } catch (const automation::Invalid&) { return {}; }

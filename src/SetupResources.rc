@@ -3,7 +3,11 @@
 #include "SetupResources.h"
 #include "AppVersion.h"
 IDI_CHATGPT ICON "../assets/ChatGPT.ico"
+#ifdef SETUP_STANDALONE_NATIVE
+IDR_LAUNCHER RCDATA "../work/ui-native/ChatGPTProxyLauncher.exe"
+#else
 IDR_LAUNCHER RCDATA "../outputs/ChatGPTProxyLauncher.exe"
+#endif
 1 RT_MANIFEST "Setup.manifest"
 1 VERSIONINFO
  FILEVERSION APP_VERSION_NUMBER

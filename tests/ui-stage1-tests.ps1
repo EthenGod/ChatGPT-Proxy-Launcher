@@ -2,6 +2,7 @@
 param(
     [string]$ProjectRoot = (Split-Path $PSScriptRoot),
     [switch]$SkipGui,
+    [switch]$BuildHarness,
     [ValidateRange(1, 120)][int]$IdleSeconds = 60
 )
 $ErrorActionPreference = 'Stop'
@@ -11,6 +12,18 @@ $null = [IO.Directory]::CreateDirectory($testRoot)
 $native = Join-Path $ProjectRoot 'work\setup-bridge-runner.exe'
 $desktop = Join-Path $ProjectRoot 'work\ui-stage1-test\ChatGPTLauncherSetup.exe'
 $production = Join-Path $ProjectRoot 'outputs\ChatGPTLauncherSetup.exe'
+if ($BuildHarness) {
+    $official = @($production, (Join-Path $ProjectRoot 'outputs\ChatGPTProxyLauncher.exe'),
+        (Join-Path $ProjectRoot 'work\ui-build.json'), (Join-Path $ProjectRoot 'work\SetupResources.res'))
+    function Get-OfficialBuildStamp($Path) {
+        (Get-FileHash -LiteralPath $Path).Hash + '/' + [IO.File]::GetLastWriteTimeUtc($Path).Ticks
+    }
+    $before = @($official | ForEach-Object { Get-OfficialBuildStamp $_ })
+    & (Join-Path $ProjectRoot 'frontend\desktop.ps1') -Command harness
+    for ($i = 0; $i -lt $official.Count; $i++) {
+        if ((Get-OfficialBuildStamp $official[$i]) -ne $before[$i]) { throw "Test build changed official file: $($official[$i])" }
+    }
+}
 foreach ($file in @($native, $desktop, $production)) {
     if (![IO.File]::Exists($file)) { throw "Build the bridge runner, normal UI and test harness first: $file" }
 }
@@ -105,6 +118,23 @@ function Quote-Argument([string]$Value) {
     return '"' + $escaped + '"'
 }
 . (Join-Path $PSScriptRoot 'ui-process-job.ps1')
+$failedRoot = Join-Path $testRoot 'nonzero-exit'
+$null = [IO.Directory]::CreateDirectory($failedRoot)
+$failedInfo = [Diagnostics.ProcessStartInfo]::new()
+$failedInfo.FileName = (Get-Command powershell.exe).Source
+$failedInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $PSScriptRoot 'ui-process-job.ps1') + '" -WaitForReleaseFixture -FixtureExitCode 23'
+$failedInfo.UseShellExecute = $false; $failedInfo.WorkingDirectory = $failedRoot; $failedInfo.CreateNoWindow = $true
+$failedProcess = Start-UiTrackedProcess $failedInfo
+try {
+    $started = $failedProcess.StartTime.ToUniversalTime().Ticks
+    Write-UiTestReport (Join-Path $failedRoot 'release-child') '{}'
+    Require ($failedProcess.WaitForExit(15000) -and $failedProcess.ExitCode -eq 23) 'Nonzero-exit fixture did not finish as expected'
+    $rejected = $false
+    try { Assert-UiJobExited $failedRoot $failedProcess.Id $started }
+    catch { if ($_.Exception.Message -notlike '*exit code: 23*') { throw }; $rejected = $true }
+    Require $rejected 'An empty Job hid the failed root process'
+} finally { $failedProcess.Dispose() }
+Write-Host 'PASS Job verification rejects a failed root after all its processes exit'
 if (!$SkipGui) {
     $fixture = Join-Path $testRoot 'late-child'
     $null = [IO.Directory]::CreateDirectory($fixture)

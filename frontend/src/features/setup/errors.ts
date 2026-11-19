@@ -1,12 +1,13 @@
 import type { MessageKey } from '../../i18n'
 
-export interface ErrorInfo { nativeError?: number; detail?: string }
+export interface ErrorInfo { nativeError?: number; detail?: string; conflictDirectory?: string }
 export function nativeIssue(value: unknown): ErrorInfo {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   const code = record.nativeError
   return {
     nativeError: typeof code === 'number' && Number.isInteger(code) && code > 0 && code <= 0xffffffff ? code : undefined,
     detail: typeof record.message === 'string' ? record.message : typeof value === 'string' ? value : '',
+    conflictDirectory: typeof record.conflictDirectory === 'string' ? record.conflictDirectory : undefined,
   }
 }
 

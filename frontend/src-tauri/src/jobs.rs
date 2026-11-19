@@ -85,9 +85,8 @@ impl NativeJobs {
         })
         .await
         .map_err(|_| BridgeError {
-            native_error: ERROR_INVALID_DATA,
-            message: String::new(),
             commit: "unknown".into(),
+            ..BridgeError::native(ERROR_INVALID_DATA)
         })?
     }
 }

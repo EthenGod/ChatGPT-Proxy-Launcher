@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot
 $previous = @{}
-foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache', 'CHATGPT_UI_DIST', 'CHATGPT_UI_PROTOTYPE', 'TAURI_CONFIG')) {
+foreach ($name in @('PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR', 'npm_config_cache', 'CHATGPT_UI_DIST', 'CHATGPT_UI_PROTOTYPE', 'CHATGPT_UI_TEST_LAUNCHER', 'TAURI_CONFIG')) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 function Check-Exit([string]$Step) { if ($LASTEXITCODE -ne 0) { throw "$Step failed: $LASTEXITCODE" } }
@@ -45,8 +45,12 @@ try {
     if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'node_modules\typescript'))) { throw 'Run npm ci in frontend first.' }
     Push-Location $projectRoot
     try {
-        if (!$ReuseNativeBuild) { & $env:ComSpec /d /c tools\build-native.cmd; Check-Exit 'Native build' }
-        foreach ($file in @('outputs\ChatGPTProxyLauncher.exe', 'work\SetupResources.res', 'work\LocalizationData.h')) {
+        $testLauncher = $Command -ne 'build' -and !$ReuseNativeBuild
+        $env:CHATGPT_UI_TEST_LAUNCHER = if ($testLauncher) { '1' } else { '0' }
+        $launcherPath = Join-Path $projectRoot $(if ($testLauncher) { 'work\ui-test-native\ChatGPTProxyLauncher.exe' } else { 'outputs\ChatGPTProxyLauncher.exe' })
+        if ($testLauncher) { & $env:ComSpec /d /c tools\build-native.cmd test-launcher; Check-Exit 'Test launcher build' }
+        elseif (!$ReuseNativeBuild) { & $env:ComSpec /d /c tools\build-native.cmd; Check-Exit 'Native build' }
+        foreach ($file in @($launcherPath, 'work\LocalizationData.h')) {
             if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Native build output missing: $file" }
         }
     }
@@ -90,8 +94,8 @@ try {
                 testHarness=($visualPreview -or $Command -eq 'harness')
                 assetsDirectory=('work/ui-assets/' + $buildId)
                 setupSha256=(Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash
-                launcherSha256=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe') -Algorithm SHA256).Hash
-                payloadBytes=(Get-Item -LiteralPath (Join-Path $projectRoot 'outputs\ChatGPTProxyLauncher.exe')).Length
+                launcherSha256=(Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
+                payloadBytes=(Get-Item -LiteralPath $launcherPath).Length
             }
             $metadataPath = if ($Command -eq 'build') { Join-Path $projectRoot 'work\ui-build.json' } else { $directory + '-build.json' }
             [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json))

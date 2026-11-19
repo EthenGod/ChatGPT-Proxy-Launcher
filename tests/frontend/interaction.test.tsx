@@ -91,6 +91,19 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
     expect(read).toHaveBeenCalledTimes(2)
   })
+  it('shows the conflicting folder and opens the native conflict location before retrying', async () => {
+    const service = new MockSetupService('normal', 0)
+    const folder = 'C:\\Example\\冲突目录'
+    vi.spyOn(service, 'load').mockRejectedValueOnce({ nativeError: 183, message: 'Conflict', conflictDirectory: folder })
+    const open = vi.spyOn(service, 'openLocation')
+    const { user } = mount(service)
+    expect(await screen.findByText(folder)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: translator('zh-CN')('ui.openconflictfolder') }))
+    expect(open).toHaveBeenCalledExactlyOnceWith('conflict')
+    await user.click(screen.getByRole('button', { name: translator('zh-CN')('ui.retry') }))
+    await loaded()
+    expect(screen.queryByText(folder)).toBeNull()
+  })
   it.each(['zh-CN', 'en-US', 'ja-JP'])('renders the shared native Codex help in %s', async language => {
     Object.defineProperty(navigator, 'language', { configurable: true, value: language })
     const t = translator(language)

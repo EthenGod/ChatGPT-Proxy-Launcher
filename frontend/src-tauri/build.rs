@@ -106,7 +106,13 @@ fn main() {
         "cargo:rerun-if-changed={}",
         root.join("frontend/package.json").display()
     );
-    let launcher = root.join("outputs/ChatGPTProxyLauncher.exe");
+    println!("cargo:rerun-if-env-changed=CHATGPT_UI_TEST_LAUNCHER");
+    let launcher_dir = if env::var("CHATGPT_UI_TEST_LAUNCHER").as_deref() == Ok("1") {
+        "work/ui-test-native"
+    } else {
+        "outputs"
+    };
+    let launcher = root.join(launcher_dir).join("ChatGPTProxyLauncher.exe");
     assert!(
         launcher.is_file(),
         "Build the native launcher first with build.cmd"

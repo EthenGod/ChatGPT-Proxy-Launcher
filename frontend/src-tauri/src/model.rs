@@ -60,6 +60,8 @@ pub struct BridgeError {
     pub native_error: u32,
     pub message: String,
     pub commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_directory: Option<String>,
 }
 impl BridgeError {
     pub fn native(code: u32) -> Self {
@@ -68,6 +70,7 @@ impl BridgeError {
             native_error: code,
             message: String::new(),
             commit: "not-started".into(),
+            conflict_directory: None,
         }
     }
 }

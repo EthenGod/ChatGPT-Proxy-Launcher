@@ -82,9 +82,7 @@ call tests\test-bridge.cmd --reuse-build
 if errorlevel 1 exit /b %errorlevel%
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File frontend\desktop.ps1 -Command test -ReuseNativeBuild
 if errorlevel 1 exit /b %errorlevel%
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File frontend\desktop.ps1 -Command harness -ReuseNativeBuild
-if errorlevel 1 exit /b %errorlevel%
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ui-stage1-tests.ps1 -SkipGui
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ui-stage1-tests.ps1 -SkipGui -BuildHarness
 if errorlevel 1 exit /b %errorlevel%
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\delivery-tests.ps1
 exit /b %errorlevel%

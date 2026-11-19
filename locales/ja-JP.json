@@ -81,6 +81,7 @@
     "ui.load.failed": "既存の設定を読み込めません。再試行してください",
     "ui.close.failed": "ウィンドウ操作に失敗しました。再試行してください",
     "ui.retry": "再試行",
+    "ui.openconflictfolder": "競合するファイルのフォルダーを開く",
     "ui.details": "詳細",
     "ui.input.review": "入力内容を確認",
     "ui.preferences.unsaved": "言語と外観の設定を保存できませんでした。",

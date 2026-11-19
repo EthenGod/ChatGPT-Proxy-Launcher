@@ -13,7 +13,7 @@ if not "%~1"=="" (
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File frontend\desktop.ps1 -Command build
 exit /b %errorlevel%
 :native
-call tools\build-native.cmd
+call tools\build-native.cmd native
 exit /b %errorlevel%
 :launcher
 call tools\build-native.cmd launcher

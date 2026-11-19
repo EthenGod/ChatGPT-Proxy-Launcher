@@ -58,7 +58,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const requestedDark = useRef(true)
   const transitionAppearance = useAppearanceTransition()
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<MessageKey | null>(null)
+  const [loadError, setLoadError] = useState<{ message: MessageKey; issue: ErrorInfo } | null>(null)
   const [error, setError] = useState<ErrorInfo | null>(null)
   const [noticeManager] = useState(createNoticeManager)
   const [selectedNotice, setSelectedNotice] = useState<NoticeData | null>(null)
@@ -72,7 +72,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const adding = operation === 'program'
   const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>('idle')
   const detecting = detectionPhase === 'pending' || detectionPhase === 'scanning'
-  const appearanceLocked = busy || loading || detecting || loadError === 'setup.error.webviewstart'
+  const appearanceLocked = busy || loading || detecting || loadError?.message === 'setup.error.webviewstart'
   const [advanced, setAdvanced] = useState(showPrograms)
   const revealPrograms = useRef(showPrograms)
   const [inspectedProgram, setInspectedProgram] = useState<ListedProgram | null>(null)
@@ -171,7 +171,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       requestedLanguage.current = data.preferences.language
       setError(null); setPreferenceWarnings([])
       setDark(data.preferences.dark); setResult(null); setNotice(null)
-    } catch (cause) { if (alive.current && revision === loadRevision.current) { setLoadError('ui.load.failed'); setError(nativeIssue(cause)) } }
+    } catch (cause) { if (alive.current && revision === loadRevision.current) setLoadError({ message: 'ui.load.failed', issue: nativeIssue(cause) }) }
     finally { if (alive.current && revision === loadRevision.current) setLoading(false) }
   }, [service, resetValidation])
   useEffect(() => {
@@ -189,7 +189,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       if (active) await load()
     }).catch(cause => {
       if (!active) return
-      setError(nativeIssue(cause)); setLoadError('setup.error.webviewstart'); setLoading(false)
+      setLoadError({ message: 'setup.error.webviewstart', issue: nativeIssue(cause) }); setLoading(false)
     })
     return () => {
       active = false
@@ -388,7 +388,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
     finally { finishOperation() }
   }
-  async function openLocation(location: 'startup' | 'deployment' | 'windows') {
+  async function openLocation(location: Parameters<SetupService['openLocation']>[0]) {
     if (activeOperation.current || openingLocation.current) return
     openingLocation.current = true
     try { await service.openLocation(location); if (alive.current && !service.native) notify('ui.location.preview') }
@@ -439,8 +439,10 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
         </div>
       </header>
       {loading ? <SetupSkeleton />
-        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError)}</p>{error && <ErrorDetails error={error} t={t} />}
-          {loadError === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
+        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError.message)}</p><ErrorDetails error={loadError.issue} t={t} />
+          {loadError.issue.conflictDirectory && <><p className="error-detail">{loadError.issue.conflictDirectory}</p>
+            <Button className="button secondary-button" disabled={busy} onClick={() => void openLocation('conflict')}>{t('ui.openconflictfolder')}</Button></>}
+          {loadError.message === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}

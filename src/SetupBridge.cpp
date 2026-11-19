@@ -154,9 +154,13 @@ void ListFolder(const std::wstring& folder, const std::vector<std::wstring>& act
             return automation::SamePath(active, target);
         })) continue;
         bool available = valid;
-        if (valid && shortcut && setup::ui::LocalProgramDrive(target)) {
-            const auto attrs = GetFileAttributesW(target.c_str());
-            available = attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+        if (valid && shortcut) {
+            const auto drive = setup::ui::ClassifyProgramDrive(target);
+            if (drive == setup::ui::ProgramDrive::Missing) available = false;
+            else if (drive == setup::ui::ProgramDrive::Local) {
+                const auto attrs = GetFileAttributesW(target.c_str());
+                available = attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+            }
         }
         list.Add(path, data.cFileName, path, link.arguments, available ? L"ordinary" : L"unavailable",
             {available && shortcut ? link.target : L"", std::move(icon)});
@@ -237,6 +241,7 @@ extern "C" uint32_t setup_bridge_read_state(const uint8_t* pathBytes, size_t siz
             auto error = Json::Object();
             error[L"nativeError"] = Json::Number(status.code);
             error[L"message"] = Json(status.message);
+            if (!status.conflictDirectory.empty()) error[L"conflictDirectory"] = Json(status.conflictDirectory);
             error[L"commit"] = Json(L"not-started");
             Deliver(error, *output);
             return status.code;
@@ -392,16 +397,26 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
         } else if (action == SETUP_OPEN_LOCATION) {
             request.Fields({L"location"});
             const auto& location = request.At(L"location").String(32);
-            if (location != L"startup" && location != L"deployment" && location != L"windows") throw automation::Invalid("unknown-location");
-            if (!isolated) {
-                if (location == L"windows") Require(setup::OpenStartupSettings(reinterpret_cast<HWND>(owner)));
+            if (location != L"startup" && location != L"deployment" && location != L"windows" && location != L"conflict")
+                throw automation::Invalid("unknown-location");
+            if (location == L"windows") {
+                if (!isolated) Require(setup::OpenStartupSettings(reinterpret_cast<HWND>(owner)));
+            } else if (!isolated || location == L"conflict") {
+                automation::UserLock operation;
+                const DWORD locked = operation.AcquireForSetup(paths, isolated);
+                if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
+                std::wstring folder;
+                if (location == L"startup") Require(setup::EnsureCompanionFolder(paths, folder));
                 else {
-                    automation::UserLock operation;
-                    const DWORD locked = operation.Acquire(paths.settingsLink);
-                    if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
-                    std::wstring folder;
-                    if (location == L"startup") Require(setup::EnsureCompanionFolder(paths, folder));
-                    else { setup::Loaded loaded; Require(setup::Load(paths, loaded)); folder = loaded.options.directory; }
+                    setup::Loaded loaded;
+                    const auto status = setup::Load(paths, loaded);
+                    if (location == L"conflict") {
+                        if (status) throw automation::IoError(ERROR_NOT_FOUND);
+                        if (status.conflictDirectory.empty()) throw status;
+                        folder = status.conflictDirectory;
+                    } else { Require(status); folder = loaded.options.directory; }
+                }
+                if (!isolated) {
                     SHELLEXECUTEINFOW info{sizeof(info)};
                     info.fMask = SEE_MASK_FLAG_NO_UI; info.hwnd = reinterpret_cast<HWND>(owner);
                     info.lpVerb = L"open"; info.lpFile = folder.c_str(); info.nShow = SW_SHOWNORMAL;

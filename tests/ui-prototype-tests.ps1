@@ -81,6 +81,51 @@ function New-UiSessionDirectory {
     Assert-UiSessionDirectory $path
     return $path
 }
+function Test-StandaloneSampleProfile {
+    $sandbox = New-UiSessionDirectory
+    $temp = Join-Path $sandbox 'temp'
+    $outside = Join-Path $sandbox 'outside'
+    $null = [IO.Directory]::CreateDirectory($temp)
+    $null = [IO.Directory]::CreateDirectory($outside)
+    $guard = Join-Path $outside 'guard'
+    [IO.File]::WriteAllText($guard, 'unchanged')
+    $prefix = 'ChatGPTLauncherSetup-CompanionSample-Cache-'
+    $null = New-Item -ItemType Junction -Path (Join-Path $temp ($prefix + '0')) -Target $outside
+    $first = Join-Path $temp ($prefix + '1')
+    $next = Join-Path $temp ($prefix + '2')
+    foreach ($run in 1..3) {
+        if ($run -eq 3) {
+            $null = New-Item -ItemType HardLink -Path (Join-Path $first 'linked-file') -Target $guard
+        }
+        $session = New-UiSessionDirectory
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $exe; $info.WorkingDirectory = $session; $info.UseShellExecute = $false
+        $info.EnvironmentVariables['TEMP'] = $temp
+        $info.EnvironmentVariables['TMP'] = $temp
+        $info.EnvironmentVariables.Remove('CHATGPT_SETUP_TEST_ROOT')
+        $process = Start-UiTrackedProcess $info
+        try {
+            $started = $process.StartTime.ToUniversalTime().Ticks
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+                $process.Refresh()
+                Require (!$process.HasExited -and [DateTime]::UtcNow -lt $deadline) 'Standalone sample did not open'
+                if (!$process.MainWindowHandle.ToInt64()) { Start-Sleep -Milliseconds 100 }
+            } while (!$process.MainWindowHandle.ToInt64())
+            [PrototypeCloseMessage]::Request($process.MainWindowHandle, $process.Id)
+            Assert-UiJobExited $session $process.Id $started
+        } finally {
+            if (!$process.HasExited) { $null = $process.CloseMainWindow() }
+            $process.Dispose()
+        }
+        $expected = if ($run -eq 3) { $next } else { $first }
+        Require ([IO.Directory]::Exists((Join-Path $expected 'EBWebView'))) 'Standalone sample used the wrong WebView2 profile'
+        $count = if ($run -eq 3) { 3 } else { 2 }
+        Require ([IO.Directory]::GetDirectories($temp, ($prefix + '*')).Count -eq $count) 'Standalone sample kept creating profiles'
+    }
+    Require ([IO.Directory]::GetFileSystemEntries($outside).Count -eq 1 -and [IO.File]::ReadAllText($guard) -ceq 'unchanged') 'An external file changed'
+    Write-Host 'PASS standalone sample reuses one browser profile and skips junctions and hard-linked caches'
+}
 function Start-Preview {
     Require ([IO.File]::Exists($exe)) 'Build the prototype first'
     $root=New-UiSessionDirectory
@@ -202,6 +247,7 @@ switch($Action) {
     }
     'VerifyClosed' { Verify-Closed (Resolve-Session) }
     'Smoke' {
+        if ($Sample) { Test-StandaloneSampleProfile }
         & {
             $Session=New-UiSessionDirectory
             $text=[string][char]0x4E2D+[char]0x6587

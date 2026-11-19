@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-param([switch]$Observe, [switch]$LateChildFixture, [switch]$WaitForReleaseFixture)
+param([switch]$Observe, [switch]$LateChildFixture, [switch]$WaitForReleaseFixture, [int]$FixtureExitCode = 0)
 
 if ($WaitForReleaseFixture) {
     $release = Join-Path ([Environment]::CurrentDirectory) 'release-child'
@@ -8,7 +8,7 @@ if ($WaitForReleaseFixture) {
         if ([DateTime]::UtcNow -ge $deadline) { throw 'Late child was not released' }
         Start-Sleep -Milliseconds 50
     }
-    return
+    exit $FixtureExitCode
 }
 
 if (!('SetupUiTestJob' -as [type])) {
@@ -107,6 +107,7 @@ if ($Observe) {
             $identity = @{processId=$process.Id; started=$process.StartTime.ToUniversalTime().Ticks}
             Write-UiTestReport (Join-Path $folder 'job-started.json') ($identity | ConvertTo-Json)
             $process.WaitForExit()
+            $identity.exitCode = $process.ExitCode
             $deadline = [DateTime]::UtcNow.AddSeconds(10)
             do {
                 $remaining = [SetupUiTestJob]::Active($job) - 1 # Exclude this observer.
@@ -161,5 +162,8 @@ function Assert-UiJobExited([string]$Root, [int]$ProcessId, [long]$Started) {
     $report = [IO.File]::ReadAllText($path) | ConvertFrom-Json
     if ($report.processId -ne $ProcessId -or $report.started -ne $Started -or $null -eq $report.remaining -or $report.remaining -ne 0) {
         throw 'The isolated Job did not confirm that all its UI processes exited'
+    }
+    if ($null -eq $report.exitCode -or $report.exitCode -ne 0) {
+        throw "The isolated UI did not exit successfully (exit code: $($report.exitCode))"
     }
 }

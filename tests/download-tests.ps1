@@ -14,12 +14,13 @@ $progressNodeType = if ($hasProgressView) {
 $testFolder = Join-Path $root ('work\download-tests-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testFolder -Force
 $calls = @{launches = 0; browserOpens = 0; waitMs = 0; messages = [Collections.Generic.List[string]]::new(); progressActive = $false; stages = [Collections.Generic.List[string]]::new()}
-$fixture = [IO.File]::ReadAllBytes((Join-Path $root 'outputs\ChatGPTLauncherSetup.exe'))
+$fixture = [IO.File]::ReadAllBytes((Join-Path $root 'work\ui-native\ChatGPTLauncherSetup.exe'))
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = [BitConverter]::ToString($sha.ComputeHash($fixture)).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
 function Write-Host($Object, $ForegroundColor) { $calls.messages.Add([string]$Object) }
 function Get-ItemPropertyValue { return 'zh-CN' } # Never read the real language preference.
+function Read-Host { throw 'The generic download fixture must not prompt for WebView2' }
 function Assert-ProgressFits($Activity, $Status, $Percent = -1) {
     if (!$hasProgressView) { return }
     if ($PSStyle.Progress.View -ne 'Classic') { throw 'Progress must use the CJK-safe renderer' }
