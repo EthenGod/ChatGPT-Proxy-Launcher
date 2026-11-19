@@ -42,9 +42,9 @@ try {
     Push-Location $PSScriptRoot
     try {
         if ($Command -eq 'test' -or $Command -eq 'check') {
-            & npm.cmd run typecheck; Check-Exit 'TypeScript'
-            if ($Command -eq 'test') { & npm.cmd test; Check-Exit 'Frontend tests' }
+            # The build script runs the TypeScript check before bundling the page.
             & npm.cmd run build; Check-Exit 'Frontend build'
+            if ($Command -eq 'test') { & npm.cmd test; Check-Exit 'Frontend tests' }
             & cargo.exe fmt --manifest-path src-tauri/Cargo.toml --check; Check-Exit 'Rust format'
             & cargo.exe $Command --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol; Check-Exit "Rust $Command"
             if ($Command -eq 'check') {

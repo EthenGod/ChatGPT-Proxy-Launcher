@@ -120,4 +120,4 @@ Send-CglReply -Context $context -Status ready
 
 模块分工见[实现位置](automation-design.md#5-模块)。公共版本、能力和限制统一维护在 `src/AutomationContract.h`。
 
-接口变更同步[Schema](schemas/)、[示例](examples/)和文档。新增公共字段不能直接塞进 v1；扩展私有设置优先放 `config`。修改本项目后运行 `cmd /c tests\test-build.cmd`，原生代码改动再运行 `cmd /c tests\analyze.cmd`。新增文件同步 `release.ps1`。校验与已知边界见[维护记录](automation-maintenance.md)。
+接口变更同步[Schema](schemas/)、[示例](examples/)和文档。新增公共字段不能直接塞进 v1；扩展私有设置优先放 `config`。原生代码有改动时先运行 `cmd /c tests\analyze.cmd`，再运行 `cmd /c tests\test-build.cmd` 核对同次构建的产物。新增文件同步 `tools/release-sources.ps1`。校验与已知边界见[维护记录](automation-maintenance.md)。

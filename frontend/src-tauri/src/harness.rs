@@ -1,4 +1,5 @@
 // Compiled only into isolated test executables, never the normal configuration EXE.
+use crate::model::Action;
 use std::path::PathBuf;
 
 fn standalone_sample() -> bool {
@@ -83,18 +84,18 @@ pub fn record_close(approved: bool) {
     .expect("test close observation");
 }
 
-pub fn record_action(action: u32) {
+pub fn record_action(action: Action) {
     use std::{collections::BTreeMap, sync::Mutex};
     static COUNTS: Mutex<BTreeMap<u32, usize>> = Mutex::new(BTreeMap::new());
     let mut counts = COUNTS.lock().expect("test action counts");
-    *counts.entry(action).or_default() += 1;
+    *counts.entry(action as u32).or_default() += 1;
     std::fs::write(
         root().join("actions.json"),
         serde_json::to_vec(&*counts).unwrap(),
     )
     .expect("test command observation");
     drop(counts);
-    if action == 3 {
+    if action == Action::Save {
         if let Some(delay) = std::env::var("CHATGPT_SETUP_TEST_SAVE_DELAY_MS")
             .ok()
             .and_then(|text| text.parse::<u64>().ok())

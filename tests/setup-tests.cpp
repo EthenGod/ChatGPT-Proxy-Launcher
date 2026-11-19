@@ -646,9 +646,9 @@ static int IntegrationTests(PCWSTR rootArg, PCWSTR launcherArg, PCWSTR setupArg)
     REQUIRE(state.options.desktop);
     REQUIRE(ReadLink(paths.desktopLink, link) && link.arguments == arguments && link.target == target && link.directory == options.directory);
     {
-        Com<IShellLinkW> shell; Com<IPersistFile> persist;
-        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell.p))));
-        REQUIRE(SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist.p))));
+        ComPtr<IShellLinkW> shell; ComPtr<IPersistFile> persist;
+        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell))));
+        REQUIRE(SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist))));
         REQUIRE(SUCCEEDED(persist->Load(paths.desktopLink.c_str(), STGM_READ)));
         wchar_t icon[MAX_PATH]{}; int index = -1;
         REQUIRE(SUCCEEDED(shell->GetIconLocation(icon, MAX_PATH, &index)) && target == icon && index == 0);

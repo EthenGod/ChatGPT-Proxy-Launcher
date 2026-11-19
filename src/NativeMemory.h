@@ -14,8 +14,4 @@ struct TaskDeleter {
 // Adopt immediately after the API returns, before copying to an allocating C++ object.
 template<class T> using LocalPtr = std::unique_ptr<T, LocalDeleter>;
 template<class T> using TaskPtr = std::unique_ptr<T, TaskDeleter>;
-template<class T> struct ComDeleter {
-    void operator()(T* value) const noexcept { value->Release(); }
-};
-template<class T> using ComPtr = std::unique_ptr<T, ComDeleter<T>>;
 }

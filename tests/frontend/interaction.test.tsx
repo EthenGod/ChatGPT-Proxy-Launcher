@@ -5,7 +5,8 @@ import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
 import { SetupPage } from '../../frontend/src/features/setup/SetupPage'
 import { MockSetupService } from '../../frontend/src/platform/mock'
-import type { ProgramList, WindowHost } from '../../frontend/src/features/setup/contract'
+import type { ProgramList, Validation, WindowHost } from '../../frontend/src/features/setup/contract'
+import type { SetupOptions } from '../../frontend/src/platform/types'
 import { translator } from '../../frontend/src/i18n'
 import { NoticeToasts, createNoticeManager } from '../../frontend/src/components/NoticeToasts'
 
@@ -262,6 +263,43 @@ describe('settings prototype behavior', () => {
     await user.click(await screen.findByRole('button', { name: '放弃并关闭' }))
     expect(host.close).toHaveBeenCalledOnce()
   })
+  it('locks the form while closing, merges repeated requests and unlocks after a close failure', async () => {
+    let drained!: () => void
+    const settled = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { drained = resolve }))
+    const { user, host, requestClose, service } = mount(Object.assign(new MockSetupService('normal', 0), { settled }))
+    await loaded()
+    vi.mocked(host.close).mockRejectedValueOnce(new Error('Window unavailable'))
+    const port = screen.getByRole('textbox', { name: '端口' })
+    const save = screen.getByRole('button', { name: '保存更改' })
+    requestClose()
+    requestClose()
+    expect(settled).toHaveBeenCalledOnce()
+    expect(host.close).not.toHaveBeenCalled()
+    expect(port).toBeDisabled()
+    expect(save).toBeDisabled()
+    await user.click(save)
+    expect(service.calls.save).toBe(0)
+    await act(async () => drained())
+    await waitFor(() => expect(port).toBeEnabled())
+    expect(host.close).toHaveBeenCalledOnce()
+    expect(screen.getByRole('alert')).toHaveTextContent(translator('zh-CN')('ui.close.failed'))
+    requestClose()
+    await waitFor(() => expect(host.close).toHaveBeenCalledTimes(2))
+  })
+  it('asks about unsaved work once and allows an explicitly confirmed unload', async () => {
+    let drained!: () => void
+    const settled = () => new Promise<void>(resolve => { drained = resolve })
+    const { user, host, requestClose } = mount(Object.assign(new MockSetupService('normal', 0), { settled }))
+    await loaded()
+    await user.click(screen.getByRole('switch', { name: '桌面快捷方式' }))
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false)
+    requestClose()
+    await user.click(await screen.findByRole('button', { name: '放弃并关闭' }))
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true)
+    expect(screen.getByRole('button', { name: '继续编辑' })).toBeDisabled()
+    await act(async () => drained())
+    expect(host.close).toHaveBeenCalledOnce()
+  })
   it('marks a new detected port as unsaved after a successful save', async () => {
     const { user } = mount(); await loaded()
     await user.click(screen.getByRole('button', { name: '保存更改' }))
@@ -346,6 +384,7 @@ describe('settings prototype behavior', () => {
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '选择' }))
     await waitFor(() => expect(service.programs).toHaveLength(1))
     expect(service.programs[0]).toMatchObject({ name: 'Notes.lnk', path: 'C:\\Apps\\ChatGPT Launcher\\StartupApps\\Notes.lnk', arguments: '--profile "Work notes"', status: 'ordinary' })
+    expect(await screen.findByText(translator('zh-CN')('setup.status.addeddeploy'))).toBeInTheDocument()
     expect(await within(screen.getByRole('region', { name: '附加程序' })).findByText('Notes.lnk')).toBeInTheDocument()
     expect(service.calls.save).toBe(0)
     await user.click(screen.getByRole('button', { name: '关闭' }))
@@ -549,6 +588,23 @@ describe('native settings behavior', () => {
     view.unmount()
     expect(removeSecond).toHaveBeenCalledOnce()
   })
+  it('leaves the new connection open if the old window was still draining commands', async () => {
+    let drained!: () => void
+    const service = Object.assign(new MockSetupService('normal', 0), {
+      settled: vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { drained = resolve })),
+    })
+    const first: WindowHost = { connect: async () => () => {}, ready: async () => {}, close: vi.fn(async () => {}), setTheme: async () => {} }
+    const second = { ...first, close: vi.fn(async () => {}) }
+    const view = render(<SetupPage service={service} host={first} />)
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    view.rerender(<SetupPage service={service} host={second} />)
+    await act(async () => drained())
+    expect(first.close).not.toHaveBeenCalled()
+    expect(await screen.findByRole('textbox', { name: '端口' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(second.close).toHaveBeenCalledOnce())
+  })
   it('keeps a plain-text native validation failure in the preview', async () => {
     const service = Object.assign(new MockSetupService('normal', 0), { native: true, validate: vi.fn().mockRejectedValue('原生校验暂时不可用') })
     mount(service)
@@ -558,8 +614,8 @@ describe('native settings behavior', () => {
   })
   it('waits for current native validation and ignores an obsolete validation response', async () => {
     const base = new MockSetupService('normal', 0)
-    const pending: Array<{ options: import('../../frontend/src/platform/types').SetupOptions; resolve: (value: import('../../frontend/src/features/setup/contract').Validation) => void }> = []
-    const service = Object.assign(base, { native: true, validate: vi.fn((options: import('../../frontend/src/platform/types').SetupOptions) => new Promise<import('../../frontend/src/features/setup/contract').Validation>(resolve => pending.push({options, resolve}))) })
+    const pending: Array<{ options: SetupOptions; resolve: (value: Validation) => void }> = []
+    const service = Object.assign(base, { native: true, validate: vi.fn((options: SetupOptions) => new Promise<Validation>(resolve => pending.push({ options, resolve }))) })
     const { user } = mount(service); await loaded()
     await waitFor(() => expect(pending).toHaveLength(1))
     fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
@@ -602,6 +658,37 @@ describe('native settings behavior', () => {
     await act(async () => pending[3]!.resolve({ valid: true, arguments: 'corrected', errors: {} }))
     expect(preview).toHaveTextContent('corrected')
     expect(screen.queryByText('原型预览')).not.toBeInTheDocument()
+  })
+  it('reuses a valid preview across a cancelled picker and language changes, but refreshes localized errors', async () => {
+    let finishPicker!: (path: string | null) => void
+    const validate = vi.fn(async (options: SetupOptions) => options.host === 'bad/host'
+      ? { valid: false, arguments: '', errors: {}, detail: 'invalid-' + document.documentElement.lang }
+      : { valid: true, arguments: '--validated', errors: {} })
+    const service = Object.assign(new MockSetupService('normal', 0), {
+      native: true, validate,
+      chooseDirectory: () => new Promise<string | null>(resolve => { finishPicker = resolve }),
+      setPreferences: async (dark: boolean, language: string) => ({ preferences: { dark, language, resolvedLanguage: language }, warnings: [] }),
+    })
+    const { user } = mount(service)
+    await screen.findByText('--validated')
+    await user.click(screen.getByRole('button', { name: '高级设置' }))
+    await user.click(screen.getByRole('button', { name: '浏览…' }))
+    await act(async () => finishPicker(null))
+    const directory = screen.getByRole<HTMLInputElement>('textbox', { name: translator('zh-CN')('setup.label.directory') })
+    await user.click(screen.getByRole('button', { name: '浏览…' }))
+    await act(async () => finishPicker(directory.value))
+    await user.click(screen.getByRole('button', { name: '语言' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
+    const port = await screen.findByRole('textbox', { name: 'Port' })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 240)) })
+    expect(validate).toHaveBeenCalledOnce()
+    expect(port).toHaveValue('7890')
+    fireEvent.change(screen.getByRole('textbox', { name: translator('en-US')('setup.label.host') }), { target: { value: 'bad/host' } })
+    await screen.findByText('invalid-en-US')
+    await user.click(screen.getByRole('button', { name: translator('en-US')('ui.language') }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '日本語' }))
+    await screen.findByText('invalid-ja-JP')
+    expect(validate).toHaveBeenCalledTimes(3)
   })
   it('keeps user inputs when native preferences and a canceled folder picker finish', async () => {
     const base = new MockSetupService('normal', 0)

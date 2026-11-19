@@ -26,12 +26,6 @@ export interface SetupSnapshot {
   defaultDirectory: string
 }
 
-export interface BridgeError {
-  nativeError: number
-  message: string
-  commit: 'not-started' | 'saved' | 'rolled-back' | 'rollback-incomplete' | 'unknown'
-}
-
 export function nativeRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid native response')
   return value as Record<string, unknown>

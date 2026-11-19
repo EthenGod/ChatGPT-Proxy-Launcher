@@ -1,25 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
-param([string]$PackageDirectory)
+param([string]$PackageDirectory, [hashtable]$SourceHashes)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $projectRoot = Split-Path $PSScriptRoot
 function Require([bool]$Value, [string]$Message) { if (!$Value) { throw $Message } }
 function Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
-# Read the literal allowlist without executing the release script.
-$tokens=$null; $errors=$null
-$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $projectRoot 'release.ps1'),[ref]$tokens,[ref]$errors)
-Require ($errors.Count -eq 0) 'Release script has syntax errors'
-$assignment=$ast.Find({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$sourceNames'},$false)
-$names=@($assignment.Right.Expression.SubExpression.Statements[0].PipelineElements[0].Expression.SafeGetValue())
-$catalog=Get-Content -LiteralPath (Join-Path $projectRoot 'locales/languages.json') -Raw | ConvertFrom-Json
-$names+=@($catalog.languages | ForEach-Object { 'locales/' + $_.tag + '.json' })
-Require (($names | Sort-Object -Unique).Count -eq $names.Count) 'Duplicate source-package entry'
-foreach($name in $names) {
-    $path=[IO.Path]::GetFullPath((Join-Path $projectRoot $name))
-    Require ($path.StartsWith($projectRoot+'\',[StringComparison]::OrdinalIgnoreCase) -and [IO.File]::Exists($path)) "Missing or out-of-root source: $name"
-    Require ($name -notmatch '(^|/)(work|outputs|Releases|node_modules|target|gen)(/|$)|\.(exe|dll|lnk|log|env)$') "Non-source file in package: $name"
-}
+$names = @(& (Join-Path $projectRoot 'tools/release-sources.ps1') -ProjectRoot $projectRoot)
 
 $metadata=Get-Content -LiteralPath (Join-Path $projectRoot 'work/ui-build.json') -Raw | ConvertFrom-Json
 Require ($metadata.kind -eq 'build' -and !$metadata.testHarness -and !$metadata.prototype) 'Production output came from a test build'
@@ -87,15 +74,21 @@ if($PackageDirectory) {
     $zip=[IO.Compression.ZipFile]::OpenRead((Join-Path $PackageDirectory 'ChatGPTLauncher-source.zip'))
     try {
         Require ($zip.Entries.Count -eq $names.Count) 'Source ZIP entry count differs'
-        Require (@($zip.Entries.FullName | Sort-Object -Unique).Count -eq $names.Count) 'Duplicate source ZIP entry'
-        foreach($entry in $zip.Entries) {
-            $name=$entry.FullName -replace '^ChatGPTLauncher-source/',''
-            Require ($names -ccontains $name) "Unexpected ZIP entry: $($entry.FullName)"
-            $stream=$entry.Open(); $sha=[Security.Cryptography.SHA256]::Create()
-            try { $hash=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
-            finally { $sha.Dispose(); $stream.Dispose() }
-            Require ($hash -eq (Hash (Join-Path $projectRoot $name))) "Source ZIP content differs: $name"
+        $remaining = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($name in $names) {
+            $expected = if ($SourceHashes) { $SourceHashes[$name] } else { Hash (Join-Path $projectRoot $name) }
+            $remaining.Add('ChatGPTLauncher-source/' + $name, $expected)
         }
+        foreach($entry in $zip.Entries) {
+            $key = $entry.FullName
+            Require ($remaining.ContainsKey($key)) "Unexpected or duplicate source ZIP entry: $key"
+            $stream = $entry.Open()
+            try { $hash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash }
+            finally { $stream.Dispose() }
+            Require ($hash -eq $remaining[$key]) "Source ZIP content differs: $key"
+            $null = $remaining.Remove($key)
+        }
+        Require ($remaining.Count -eq 0) 'Missing source ZIP entry'
     } finally { $zip.Dispose() }
     $checksums=@(Get-Content -LiteralPath (Join-Path $PackageDirectory 'SHA256SUMS.txt'))
     Require ($checksums.Count -eq 3) 'Unexpected checksum count'

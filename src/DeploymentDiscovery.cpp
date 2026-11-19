@@ -2,11 +2,12 @@
 #include "DeploymentDiscovery.h"
 #include "SetupCore.h"
 #include <shlobj.h>
+#include <wrl/client.h>
 #include <set>
 
 namespace automation {
 namespace {
-template<class T> struct ComPtr { T* p = nullptr; ~ComPtr() { if (p) p->Release(); } };
+using Microsoft::WRL::ComPtr;
 bool Missing(DWORD error) { return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND; }
 std::wstring Join(const std::wstring& root, const std::wstring& leaf) {
     if (root.empty()) throw Invalid("empty-directory");
@@ -85,15 +86,15 @@ Json ReadDeploymentInfo(const std::wstring& root, const std::wstring& settings) 
         struct Apartment { HRESULT hr; ~Apartment() { if (SUCCEEDED(hr)) CoUninitialize(); } } apartment{com};
         if (FAILED(com) && com != RPC_E_CHANGED_MODE) throw IoError(ERROR_NOT_SUPPORTED);
         ComPtr<IShellLinkW> link; ComPtr<IPersistFile> persist;
-        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p)))
-            || FAILED(link.p->QueryInterface(IID_PPV_ARGS(&persist.p)))) throw IoError(ERROR_NOT_SUPPORTED);
-        const HRESULT loaded = persist.p->Load(settings.c_str(), STGM_READ);
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))
+            || FAILED(link->QueryInterface(IID_PPV_ARGS(&persist)))) throw IoError(ERROR_NOT_SUPPORTED);
+        const HRESULT loaded = persist->Load(settings.c_str(), STGM_READ);
         if (loaded == E_ACCESSDENIED || loaded == STG_E_ACCESSDENIED || loaded == STG_E_SHAREVIOLATION
             || loaded == STG_E_LOCKVIOLATION || loaded == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION)) throw IoError(static_cast<DWORD>(loaded));
         if (FAILED(loaded)) throw Invalid("invalid-settings");
         std::vector<wchar_t> path(32768), marker(256);
-        if (FAILED(link.p->GetPath(path.data(), static_cast<int>(path.size()), nullptr, SLGP_RAWPATH))
-            || FAILED(link.p->GetDescription(marker.data(), static_cast<int>(marker.size()))) || wcscmp(marker.data(), setup::Marker)) throw Invalid("foreign-settings");
+        if (FAILED(link->GetPath(path.data(), static_cast<int>(path.size()), nullptr, SLGP_RAWPATH))
+            || FAILED(link->GetDescription(marker.data(), static_cast<int>(marker.size()))) || wcscmp(marker.data(), setup::Marker)) throw Invalid("foreign-settings");
         const auto target = FullPath(path.data()); CheckPlainPath(target);
         if (!SamePath(Join(ParentPath(target), setup::LauncherName), target)) throw Invalid("invalid-target");
         result[L"launcherPath"] = Json(target);

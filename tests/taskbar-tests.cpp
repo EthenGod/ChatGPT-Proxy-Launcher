@@ -64,8 +64,8 @@ static std::vector<BYTE> Bytes(const std::wstring& path) {
 }
 static HRESULT Make(const std::wstring& path, const std::wstring& target, const std::wstring& args,
     PCWSTR id = AppId, PCWSTR icon = L"C:\\old icon.ico") {
-    Com<IShellLinkW> link; Com<IPersistFile> persist; Com<IPropertyStore> props;
-    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
+    ComPtr<IShellLinkW> link; ComPtr<IPersistFile> persist; ComPtr<IPropertyStore> props;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link));
     if (FAILED(hr)) return hr;
     if (FAILED(hr = link->SetPath(target.c_str())) || FAILED(hr = link->SetArguments(args.c_str()))
         || FAILED(hr = link->SetIconLocation(icon, 2))
@@ -73,19 +73,19 @@ static HRESULT Make(const std::wstring& path, const std::wstring& target, const 
         || FAILED(hr = link->SetDescription(L"保留说明"))
         || FAILED(hr = link->SetShowCmd(SW_SHOWMINNOACTIVE))
         || FAILED(hr = link->SetHotkey(MAKEWORD('G', HOTKEYF_CONTROL | HOTKEYF_ALT)))) return hr;
-    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&props.p)))) return hr;
+    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&props)))) return hr;
     if (id) {
         PROPVARIANT value{}; value.vt = VT_LPWSTR; value.pwszVal = const_cast<PWSTR>(id);
         if (FAILED(hr = props->SetValue(PKEY_AppUserModel_ID, value)) || FAILED(hr = props->Commit())) return hr;
     }
-    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))) return hr;
+    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist)))) return hr;
     return persist->Save(path.c_str(), TRUE);
 }
 static int Verify(const std::wstring& path, const std::wstring& launcher, const std::wstring& args) {
-    Com<IShellLinkW> link; Com<IPersistFile> persist; Values value;
+    ComPtr<IShellLinkW> link; ComPtr<IPersistFile> persist; Values value;
     REQUIRE(SUCCEEDED(Load(path, link, persist)));
-    REQUIRE(CorrectId(link.p));
-    REQUIRE(SUCCEEDED(Read(link.p, value)) && Stable(value, launcher));
+    REQUIRE(CorrectId(link.Get()));
+    REQUIRE(SUCCEEDED(Read(link.Get(), value)) && Stable(value, launcher));
     REQUIRE(value.arguments == args);
     wchar_t description[128]{}; int show = 0; WORD hotkey = 0;
     REQUIRE(SUCCEEDED(link->GetDescription(description, 128)) && wcscmp(description, L"保留说明") == 0);

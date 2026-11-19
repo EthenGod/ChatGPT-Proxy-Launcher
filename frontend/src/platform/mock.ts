@@ -17,7 +17,7 @@ export const scenarioLabels: Record<Scenario, MessageKey> = {
   'save-error': 'ui.scenario.saveerror', rollback: 'ui.scenario.rollback', incomplete: 'ui.scenario.incomplete', warnings: 'ui.scenario.warnings',
 }
 export const defaultDirectory = 'C:\\Apps\\ChatGPT Launcher'
-export const samplePrograms: ProgramEntry[] = [
+const samplePrograms: ProgramEntry[] = [
   { name: 'Notes.lnk', path: 'C:\\Apps\\Notes\\Notes.lnk', arguments: '--profile "Work notes"' },
   { name: 'Helper.exe', path: 'C:\\Apps\\Helper\\Helper.exe', arguments: '' },
   { name: '工具.lnk', path: 'C:\\Apps\\工具\\工具.lnk', arguments: '"中文 参数"' },
@@ -27,9 +27,21 @@ const ordinal = (left: string, right: string) => left < right ? -1 : left > righ
 
 /** No invoke, filesystem, registry, fetch, storage or system actions. Reset on reload. */
 export class MockSetupService implements SetupService {
-  picker = { directories: [defaultDirectory, 'D:\\Tools\\ChatGPT Launcher', 'C:\\Apps\\工作工具\\ChatGPT Launcher'], programs: samplePrograms }
   programs: ListedProgram[] = []
   calls = { load: 0, detect: 0, save: 0, add: 0, open: 0, list: 0 }
+  readonly picker = {
+    directories: [defaultDirectory, 'D:\\Tools\\ChatGPT Launcher', 'C:\\Apps\\工作工具\\ChatGPT Launcher'],
+    programs: samplePrograms,
+    addProgram: async (entry: ProgramEntry) => {
+      this.calls.add++
+      await wait(160 * this.delay)
+      const name = entry.name.replace(/\.[^.]+$/, '.lnk')
+      const path = defaultDirectory + '\\StartupApps\\' + name
+      if (!this.programs.some(program => program.path === path)) {
+        this.programs.push({ ...entry, id: path, name, path, status: 'ordinary' })
+      }
+    },
+  }
   private snapshot: SetupSnapshot
   constructor(readonly scenario: Scenario = 'normal', private delay = 1) {
     this.snapshot = {
@@ -88,13 +100,6 @@ export class MockSetupService implements SetupService {
     this.snapshot.deployedVersion = this.snapshot.setupVersion
     return { commit: 'saved', message: this.scenario === 'warnings' ? 'ui.save.warnings' : 'setup.status.saved',
       tasks: this.scenario === 'warnings' ? ['startup', 'restart'] : [] }
-  }
-  async addProgram(entry: ProgramEntry) {
-    this.calls.add++
-    await wait(160 * this.delay)
-    const name = entry.name.replace(/\.[^.]+$/, '.lnk')
-    const path = defaultDirectory + '\\StartupApps\\' + name
-    if (!this.programs.some(p => p.path === path)) this.programs.push({ ...entry, id: path, name, path, status: 'ordinary' })
   }
   async listPrograms() {
     const firstRead = ++this.calls.list === 1

@@ -5,9 +5,9 @@
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法，英语和日语对应 `README.en.md`、`README.ja.md`。
 - 默认图形配置工具入口为 `frontend/src-tauri/src/main.rs`，旧原生界面为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`；构建时内嵌同次生成的启动器。
 - 新 UI 位于 `frontend/src/`。正式入口 `main.tsx` 和模拟入口 `prototype.tsx` 共用 `features/setup/SetupPage.tsx`。共用控件在 `components/`，真实接口在 `platform/setup-service.ts`，模拟接口在 `platform/mock.ts`。Rust 外壳在 `frontend/src-tauri/`，C ABI 连接层为 `src/SetupBridge.*`。`src/SetupUiServices.*` 供新旧界面共用偏好、原生选择器和保存后处理。阶段约定与验证见 `docs/ui-refactor.md`。
-- `components/ScrollBox.tsx` 统一正文和弹层滚动；`useAppearanceTransition.ts` 处理语言和主题过渡。窗口外观经 `platform/prototype-window.ts` 同步到原生标题栏，权限仅授予主窗口。
+- `components/ScrollBox.tsx` 统一正文和弹层滚动。`useAppearanceTransition.ts` 处理语言和主题过渡。正式页与原型共用 `platform/desktop.ts` 管理窗口就绪、外观和关闭。权限仅授予主窗口。
 - `components/NoticeToasts.tsx` 显示临时提示；`ErrorDetails.tsx` 和 `features/setup/errors.ts` 解释原生错误码。检测来源、校验和保存错误码由 C ABI 原样传递，不能从文案猜测原因或提交状态。
-- `features/setup/SetupSkeleton.tsx` 提供首次读取、重试和参数预览的骨架。端口检测的操作状态及反馈在 `SetupPage.tsx`。
+- `features/setup/SetupSkeleton.tsx` 提供加载骨架。`useSetupValidation.ts` 管理参数预览和原生校验结果。`SetupPage.tsx` 管理保存、选择、关闭和端口检测。
 - `features/setup/SetupStatus.tsx` 显示底部的操作结果、退出提醒、输入问题入口和偏好警告。
 - `features/setup/CompanionPrograms.tsx` 显示附加程序。只读命令 `list_setup_programs` 合并普通启动目录和注册扩展。清单由现有 C++ 协议解析器校验。`src/SetupProgramIcons.*` 读取本地图标资源和 Windows 文件类型图标。
 - `frontend/desktop.ps1 -Command sample` 生成可双击的附加程序示例版。示例存于 `platform/mock.ts`，只在内存中操作。`tests/ui-prototype-tests.ps1 -Sample` 和 `tests/ui-program-sample-checks.js` 验证独立窗口与示例场景。`tests/ui-program-clip-checks.js` 逐帧检查语言过渡时的列表裁剪。
@@ -20,15 +20,15 @@
 - 用户可见名称为 `ChatGPT Launcher`。新旧快捷方式名在 `SetupCore.h`，读取、迁移和回滚在 `SetupCore.cpp`；EXE 文件名、配置根目录和协议标记保持兼容。测试须显式传入隔离的新旧路径。
 - `src/SetupArguments.cpp` 只处理启动参数的生成、解析和校验；`src/CodexEnv.cpp` 只合并 `.env` 字节。文件读写、所有权检查与回滚统一留在 `src/SetupCore.cpp`。
 - 构建：根目录运行 `cmd /c build.cmd`，产物在 `outputs/`。完整构建还需 Node.js、Rust MSVC、Clippy、rustfmt 和 `frontend` 的锁定依赖。`build.cmd native` 只构建旧 GUI 到 `work/ui-native/`，`build.cmd launcher` 只构建独立启动器；两者只需 C++ 工具和 Windows SDK。共用原生编译在 `tools/build-native.cmd`，不能再回调默认入口。
-- `tools/msvc-env.cmd` 是共用工具链入口，优先复用 x64 开发者终端，否则用 Visual Studio Installer 的 `vswhere` 定位带 C++ 工具的安装。
+- `tools/msvc-env.cmd` 定位 x64 工具链。`tools/msvc-common.rsp` 统一启动器、两种配置器、测试和静态分析的 C++ 标准、警告和字符集。
 - `locales/zh-CN.json` 是用户文本基准，`languages.json` 登记语言。`tools/locales.ps1` 校验后生成内置文本和 `setup.ps1` 的下载文案；`src/Localization.*` 负责匹配和查找。翻译指南见 `docs/translating.md`，测试为 `tests/localization-tests.*`。不要翻译机器接口字段、代码、固定文件名和管理标记。
-- 用户文档的 `.en.md`、`.ja.md` 与中文同步，顶部提供语言链接。`tests/documentation-tests.ps1` 检查用户文档同步，也检查开发者文档的本地链接、章节锚点及 PowerShell/JSON 示例语法；新增文档同步 `release.ps1` 源码清单。
-- `src/NativeMemory.h` 管理 Windows 返回的内存和 COM 引用；`tests/memory-tests.cpp` 用分配失败替身检查释放。线程和内存审查见 `docs/memory-thread-review.md`。
+- 用户文档的 `.en.md`、`.ja.md` 与中文同步，顶部提供语言链接。`tests/documentation-tests.ps1` 检查用户文档同步，也检查开发者文档的本地链接、章节锚点及 PowerShell/JSON 示例语法；新增文档同步 `tools/release-sources.ps1` 源码清单。
+- `src/NativeMemory.h` 管理 Windows 分配的内存。COM 接口使用 Windows SDK 的 `Microsoft::WRL::ComPtr`。`tests/memory-tests.cpp` 用分配失败替身检查释放。线程和内存审查见 `docs/memory-thread-review.md`。
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；包含 C++、C ABI、前端、Rust、后台对照及交付检查，只启动隔离测试子进程，不启动 ChatGPT。`tests/delivery-tests.ps1` 检查源码清单、正式 feature、EXE 配对、静态运行库及可选的本地 ZIP；GUI 生命周期另用 `tests/ui-prototype-tests.ps1 -Functional`。
 - 静态分析：根目录运行 `cmd /c tests\analyze.cmd`。性能方案与复测方法见 `docs/performance-review.md`；`work\proxy-tests.exe --benchmark` 只解析合成配置，不读取本机代理。
 - `setup.ps1` 是 PowerShell 下载入口。`-Channel` 选择正式版或含测试版，`-Branch` 限制标签所在的提交历史，`-Tag` 固定版本；选择逻辑测试在 `tests/release-channel-tests.ps1`。后台模式转发部署、查询和四项 `companion-*` 操作；`tests/download-tests.ps1` 和 `tests/headless-download-tests.ps1` 替换网络和启动操作，验证参数、下载与校验。
 - `tests/preview-download.ps1` 用本机限速数据预览真实下载进度条，不访问 GitHub 或启动配置器。
-- 发布文件：根目录运行 `cmd /c release.cmd`，静态分析、构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；正式版中文说明放在 `Releases/README.md`，测试版说明放在 `Releases/v版本号.md`，不自动上传。`release.cmd -TestPackage` 只生成新的 `work/release-stage-*` 测试包，不覆盖既有 Release。`src/AppVersion.h` 同时维护自动化使用的数值版本和界面显示的完整发布版本，升级时同步两个 manifest、前端 package 和 Tauri 版本。`release.ps1` 使用明确源码清单，新增源码/资源时须同步清单；`Releases/` 不提交。
+- 发布文件：根目录运行 `cmd /c release.cmd`，静态分析、构建和测试后按部署器 `FileVersion` 生成 `Releases/v版本号/` 中的两个 EXE、对应源码 ZIP 与校验值，共四个上传附件；正式版中文说明放在 `Releases/README.md`，测试版说明放在 `Releases/v版本号.md`，不自动上传。`release.cmd -TestPackage` 只生成新的 `work/release-stage-*` 测试包，不覆盖既有 Release。`src/AppVersion.h` 同时维护自动化使用的数值版本和界面显示的完整发布版本，升级时同步两个 manifest、前端 package 和 Tauri 版本。`release.ps1` 从 `tools/release-sources.ps1` 读取源码清单。新增源码或资源时同步清单。`Releases/` 不提交。
 - 正式测试和入口统一放在 `tests/` 并提交。测试先构建正式程序，文件操作放在 `work/` 的隔离目录。自启和 Windows 设置调用必须替换，不改真实用户配置。`work/` 也可能包含本机备份。
 - `src/ProxyDetection.cpp` 负责只读端口发现；`tests/proxy-tests.cpp` 使用合成数据，界面测试替换真实检测，不依赖本机代理配置。
 - `src/StartupApps.cpp` 处理 ChatGPT 启动后的附加程序。只读专用目录第一层；`tests/companion-tests.cpp` 用隔离目录和测试子进程验证。

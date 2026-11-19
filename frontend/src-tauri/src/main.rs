@@ -10,7 +10,7 @@ mod harness;
 mod model;
 
 use model::{
-    BridgeError, Detection, Options, PreferenceResult, ProgramList, SaveResult, Selection,
+    Action, BridgeError, Detection, Options, PreferenceResult, ProgramList, SaveResult, Selection,
     Snapshot, Validation,
 };
 use serde::de::DeserializeOwned;
@@ -19,6 +19,9 @@ use std::sync::{
     Arc, Mutex,
 };
 use tauri::{Emitter, Manager};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_BUSY, ERROR_INVALID_DATA, ERROR_INVALID_HANDLE,
+};
 
 // Closing and task admission share one total order across both atomics.
 struct NativeState {
@@ -39,48 +42,50 @@ where
     F: FnOnce(Option<&[u8]>) -> Result<R, BridgeError> + Send + 'static,
 {
     if state.closing.load(Ordering::SeqCst) {
-        return Err(BridgeError::native(170));
+        return Err(BridgeError::native(ERROR_BUSY));
     }
     state.pending.fetch_add(1, Ordering::SeqCst);
     let guard = JobGuard(state.pending.clone());
     if state.closing.load(Ordering::SeqCst) {
-        return Err(BridgeError::native(170));
+        return Err(BridgeError::native(ERROR_BUSY));
     }
     let serial = state.serial.clone();
     let paths = state.paths.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _pending = guard;
-        let _serial = serial.lock().map_err(|_| BridgeError::native(13))?;
+        let _serial = serial
+            .lock()
+            .map_err(|_| BridgeError::native(ERROR_INVALID_DATA))?;
         work(paths.as_deref())
     })
     .await
     .map_err(|_| BridgeError {
-        native_error: 13,
+        native_error: ERROR_INVALID_DATA,
         message: String::new(),
         commit: "unknown".into(),
     })?
 }
 async fn action<T: DeserializeOwned + Send + 'static>(
     state: &NativeState,
-    code: u32,
+    command: Action,
     request: impl serde::Serialize + Send + 'static,
     owner: usize,
 ) -> Result<T, BridgeError> {
     // The visual prototype can never write real or isolated deployment data.
     if cfg!(feature = "ui-prototype") {
-        return Err(BridgeError::native(5));
+        return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
     run(state, move |paths| {
         #[cfg(feature = "test-harness")]
-        harness::record_action(code);
-        bridge::action(code, &request, paths, owner).1
+        harness::record_action(command);
+        bridge::action(command, &request, paths, owner).1
     })
     .await
 }
 #[tauri::command]
 async fn read_setup_state(state: tauri::State<'_, NativeState>) -> Result<Snapshot, BridgeError> {
     if cfg!(feature = "program-sample") {
-        return Err(BridgeError::native(5));
+        return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
     run(&state, |paths| {
         let snapshot = bridge::read_state(paths)?;
@@ -95,7 +100,7 @@ async fn validate_setup(
     state: tauri::State<'_, NativeState>,
     options: Options,
 ) -> Result<Validation, BridgeError> {
-    action(&state, 1, options, 0).await
+    action(&state, Action::Validate, options, 0).await
 }
 #[tauri::command]
 async fn detect_setup_port(
@@ -105,7 +110,7 @@ async fn detect_setup_port(
 ) -> Result<Detection, BridgeError> {
     action(
         &state,
-        2,
+        Action::Detect,
         serde_json::json!({"protocol":protocol,"host":host}),
         0,
     )
@@ -117,23 +122,23 @@ async fn save_setup(
     options: Options,
 ) -> Result<SaveResult, BridgeError> {
     if cfg!(feature = "ui-prototype") {
-        return Err(BridgeError::native(5));
+        return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
     run(&state, move |paths| {
         #[cfg(feature = "test-harness")]
-        harness::record_action(3);
+        harness::record_action(Action::Save);
         Ok(bridge::save(options, paths))
     })
     .await
 }
 fn owner(window: &tauri::WebviewWindow) -> Result<usize, BridgeError> {
     if window.label() != "main" {
-        return Err(BridgeError::native(5));
+        return Err(BridgeError::native(ERROR_ACCESS_DENIED));
     }
     window
         .hwnd()
         .map(|hwnd| hwnd.0 as usize)
-        .map_err(|_| BridgeError::native(6))
+        .map_err(|_| BridgeError::native(ERROR_INVALID_HANDLE))
 }
 #[tauri::command]
 async fn choose_setup_directory(
@@ -143,7 +148,7 @@ async fn choose_setup_directory(
 ) -> Result<Selection, BridgeError> {
     action(
         &state,
-        4,
+        Action::Directory,
         serde_json::json!({"initial":initial}),
         owner(&window)?,
     )
@@ -154,13 +159,19 @@ async fn add_setup_program(
     state: tauri::State<'_, NativeState>,
     window: tauri::WebviewWindow,
 ) -> Result<Selection, BridgeError> {
-    action(&state, 5, serde_json::json!({}), owner(&window)?).await
+    action(
+        &state,
+        Action::AddProgram,
+        serde_json::json!({}),
+        owner(&window)?,
+    )
+    .await
 }
 #[tauri::command]
 async fn list_setup_programs(
     state: tauri::State<'_, NativeState>,
 ) -> Result<ProgramList, BridgeError> {
-    action(&state, 8, serde_json::json!({}), 0).await
+    action(&state, Action::ListPrograms, serde_json::json!({}), 0).await
 }
 #[tauri::command]
 async fn open_setup_location(
@@ -170,7 +181,7 @@ async fn open_setup_location(
 ) -> Result<(), BridgeError> {
     let _: serde_json::Value = action(
         &state,
-        6,
+        Action::OpenLocation,
         serde_json::json!({"location":location}),
         owner(&window)?,
     )
@@ -185,7 +196,7 @@ async fn set_setup_preferences(
 ) -> Result<PreferenceResult, BridgeError> {
     action(
         &state,
-        7,
+        Action::Preferences,
         serde_json::json!({"dark":dark,"language":language}),
         0,
     )

@@ -59,8 +59,6 @@ export function createSetupService(): SetupService {
     chooseDirectory: async initial => (await call<{ path: string }>('choose_setup_directory', { initial })).path || null,
     selectProgram: async () => (await call<{ entry: ProgramEntry | null }>('add_setup_program')).entry,
     listPrograms: async () => parseProgramList(await call('list_setup_programs')),
-    // Production imports only the path selected by the native dialog.
-    addProgram: async () => { throw new Error('Native selection required') },
     openLocation: location => call<void>('open_setup_location', { location }),
     setPreferences: (dark, language) => call('set_setup_preferences', { dark, language }),
   }

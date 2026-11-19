@@ -35,15 +35,15 @@ static bool WriteScript(const std::wstring& path, const char* contents) {
     CloseHandle(h); return ok;
 }
 static bool MakeShortcut(const std::wstring& path, const std::wstring& target, PCWSTR args, const std::wstring& cwd) {
-    companions::ComPtr<IShellLinkW> shell; companions::ComPtr<IPersistFile> persist;
+    Microsoft::WRL::ComPtr<IShellLinkW> shell; Microsoft::WRL::ComPtr<IPersistFile> persist;
     PIDLIST_ABSOLUTE item = ILCreateFromPathW(target.c_str());
     if (!item) return false;
-    const bool bound = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell.p)))
-        && SUCCEEDED(shell.p->SetIDList(item));
+    const bool bound = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell)))
+        && SUCCEEDED(shell->SetIDList(item));
     CoTaskMemFree(item);
-    return bound && SUCCEEDED(shell.p->SetArguments(args))
-        && SUCCEEDED(shell.p->SetWorkingDirectory(cwd.c_str()))
-        && SUCCEEDED(shell.p->QueryInterface(IID_PPV_ARGS(&persist.p))) && SUCCEEDED(persist.p->Save(path.c_str(), TRUE));
+    return bound && SUCCEEDED(shell->SetArguments(args))
+        && SUCCEEDED(shell->SetWorkingDirectory(cwd.c_str()))
+        && SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist))) && SUCCEEDED(persist->Save(path.c_str(), TRUE));
 }
 static int Scripts(const std::wstring& root, PCWSTR self) {
     setup::Paths paths{setup::Join(root, L"scripts"), {}, {}, {}};
@@ -196,13 +196,13 @@ static int Suite(PCWSTR work, PCWSTR self, bool liveWsh) {
     REQUIRE(!setup::AddCompanionProgram(paths, other));
     REQUIRE(setup::ReadLink(shortcut, link) && link.target == external);
     {
-        companions::ComPtr<IShellLinkW> shell; companions::ComPtr<IPersistFile> persist;
-        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell.p))));
-        REQUIRE(SUCCEEDED(shell.p->QueryInterface(IID_PPV_ARGS(&persist.p))));
-        REQUIRE(SUCCEEDED(persist.p->Load(shortcut.c_str(), STGM_READ)));
-        REQUIRE(SUCCEEDED(shell.p->SetArguments(L"--probe \"中文 参数\" \"\"")));
-        REQUIRE(SUCCEEDED(shell.p->SetWorkingDirectory(working.c_str())));
-        REQUIRE(SUCCEEDED(persist.p->Save(shortcut.c_str(), TRUE)));
+        Microsoft::WRL::ComPtr<IShellLinkW> shell; Microsoft::WRL::ComPtr<IPersistFile> persist;
+        REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shell))));
+        REQUIRE(SUCCEEDED(shell->QueryInterface(IID_PPV_ARGS(&persist))));
+        REQUIRE(SUCCEEDED(persist->Load(shortcut.c_str(), STGM_READ)));
+        REQUIRE(SUCCEEDED(shell->SetArguments(L"--probe \"中文 参数\" \"\"")));
+        REQUIRE(SUCCEEDED(shell->SetWorkingDirectory(working.c_str())));
+        REQUIRE(SUCCEEDED(persist->Save(shortcut.c_str(), TRUE)));
     }
     const auto nested = setup::Join(folder, L"nested");
     REQUIRE(CreateDirectoryW(nested.c_str(), nullptr));

@@ -6,7 +6,7 @@ export function portErrorKey(port: string): MessageKey | undefined {
   return /^\d{1,5}$/.test(port) && +port >= 1 && +port <= 65535 ? undefined : 'ui.invalid.port'
 }
 // Prototype-only argument generation.
-export function quoteArgument(value: string): string {
+function quoteArgument(value: string): string {
   if (value && !/[\s"]/.test(value)) return value
   return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"'
 }

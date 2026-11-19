@@ -12,14 +12,26 @@ import { useAppearanceTransition } from '../../components/useAppearanceTransitio
 import { resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeIssue, type ErrorInfo } from './errors'
-import { portErrorKey, previewOptions, sameOptions } from './preview'
+import { portErrorKey, sameOptions } from './preview'
+import { useSetupValidation } from './useSetupValidation'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
-import type { ListedProgram, SaveResult, SetupService, WindowHost, Validation } from './contract'
+import type { ListedProgram, SaveResult, SetupService, WindowHost } from './contract'
 import { CompanionPrograms, ProgramDetails } from './CompanionPrograms'
 
 type DialogState = 'discard' | 'help' | 'directory' | 'program' | 'program-details' | 'result' | 'preview' | 'error' | 'notice' | null
 type DetectionPhase = 'idle' | 'pending' | 'scanning' | 'found'
+type Operation = 'save' | 'directory' | 'program' | 'close'
+interface DialogText { title: MessageKey; description?: MessageKey }
+const dialogText: Record<Exclude<DialogState, 'help' | 'result' | null>, DialogText> = {
+  discard: { title: 'setup.dialog.close', description: 'setup.dialog.discard' },
+  directory: { title: 'setup.dialog.directory', description: 'ui.picker.preview' },
+  program: { title: 'setup.dialog.program', description: 'ui.picker.preview' },
+  'program-details': { title: 'ui.programs.details' },
+  preview: { title: 'ui.prototype.title', description: 'ui.prototype.description' },
+  error: { title: 'ui.error.title' },
+  notice: { title: 'ui.notice.label' },
+}
 const helpTitles = {
   'setup.hint.startup': 'ui.help.startup',
   'ui.help.proxy': 'setup.dialog.proxy',
@@ -43,12 +55,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const [noticeManager] = useState(createNoticeManager)
   const [selectedNotice, setSelectedNotice] = useState<NoticeData | null>(null)
   const [preferenceWarnings, setPreferenceWarnings] = useState<MessageKey[]>([])
-  const [selecting, setSelecting] = useState(false)
-  const [nativeValidation, setNativeValidation] = useState<{ options: SetupOptions; value: Validation } | null>(null)
   const preferenceRevision = useRef(0)
   const requestedLanguage = useRef('auto')
-  const [busy, setBusy] = useState(false)
-  const [adding, setAdding] = useState(false)
+  const [operation, setOperation] = useState<Operation | null>(null)
+  const activeOperation = useRef<Operation | null>(null)
+  const busy = operation !== null
+  const saving = operation === 'save'
+  const adding = operation === 'program'
   const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>('idle')
   const detecting = detectionPhase === 'pending' || detectionPhase === 'scanning'
   const [advanced, setAdvanced] = useState(showPrograms)
@@ -63,7 +76,6 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const [selection, setSelection] = useState('')
   const [closed, setClosed] = useState(false)
   const alive = useRef(true)
-  const inFlight = useRef(false)
   const openingLocation = useRef(false)
   const focusAfterSave = useRef(false)
   const detectRevision = useRef(0)
@@ -79,9 +91,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const resolved = resolveLanguage(language, service.native ? snapshot?.preferences.resolvedLanguage : undefined)
   const t = translator(resolved)
   const dirty = !!options && !!snapshot && !sameOptions(options, snapshot.options)
-  const validation: Validation | null = options ? service.validate
-    ? nativeValidation?.options === options ? nativeValidation.value : null
-    : previewOptions(options) : null
+  const { validation, previewValue, resetValidation } = useSetupValidation(service, options, resolved, busy || loading || closed)
   const locked = busy || loading || result?.commit === 'rollback-incomplete'
 
   function notify(message: MessageKey, values: Record<string, string> = {}, detail: NoticeData['detail'] = '', type = 'info', problem?: ErrorInfo, fullDetail?: NoticeData['fullDetail']) {
@@ -100,13 +110,40 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   function showError(problem: ErrorInfo) {
     setError(problem); openDialog('error')
   }
+  // A second click or native close event can arrive before React paints disabled controls.
+  function beginOperation(next: Operation) {
+    if (activeOperation.current) return false
+    activeOperation.current = next
+    setOperation(next)
+    return true
+  }
+  function finishOperation(restoreFocus?: HTMLElement | null) {
+    activeOperation.current = null
+    if (!alive.current) return
+    setOperation(null)
+    if (restoreFocus) requestAnimationFrame(() => {
+      if (alive.current && !activeOperation.current && restoreFocus.isConnected) restoreFocus.focus()
+    })
+  }
   async function close() {
-    if (inFlight.current) return
-    try { await service.settled?.(); await host.close(); if (alive.current) { setDialogOpen(false); setClosed(true) } }
-    catch (cause) { if (alive.current) reportFailure('ui.close.failed', cause) }
+    if (!beginOperation('close')) return
+    const revision = loadRevision.current
+    const sameWindow = () => alive.current && revision === loadRevision.current
+    try {
+      await service.settled?.()
+      if (sameWindow()) await host.close()
+      if (sameWindow()) {
+        setDialogOpen(false)
+        setClosed(true)
+        return
+      }
+    } catch (cause) {
+      if (sameWindow()) reportFailure('ui.close.failed', cause)
+    }
+    finishOperation()
   }
   closeRequest.current = () => {
-    if (inFlight.current || openingLocation.current) return
+    if (activeOperation.current || openingLocation.current) return
     if (dialogOpen) { if (dialog !== 'discard') setDialogOpen(false); return }
     if (dirty) openDialog('discard')
     else void close()
@@ -118,14 +155,14 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     try {
       const data = await service.load()
       if (!alive.current || revision !== loadRevision.current) return
-      setNativeValidation(null)
+      resetValidation()
       setSnapshot(data); setOptions({ ...data.options }); setLanguage(data.preferences.language)
       requestedLanguage.current = data.preferences.language
       setError(null); setPreferenceWarnings([])
       setDark(data.preferences.dark); setResult(null); setNotice(null)
     } catch (cause) { if (alive.current && revision === loadRevision.current) { setLoadError(true); setError(nativeIssue(cause)) } }
     finally { if (alive.current && revision === loadRevision.current) setLoading(false) }
-  }, [service])
+  }, [service, resetValidation])
   useEffect(() => {
     alive.current = true
     let active = true
@@ -161,7 +198,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     return () => { current = false }
   }, [dark, host])
   useEffect(() => {
-    const beforeUnload = (event: BeforeUnloadEvent) => { if (dirty || inFlight.current) { event.preventDefault(); event.returnValue = '' } }
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (activeOperation.current !== 'close' && (dirty || activeOperation.current)) {
+        event.preventDefault(); event.returnValue = ''
+      }
+    }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [dirty])
@@ -177,23 +218,6 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     return () => window.clearTimeout(timer)
   }, [detectionPhase])
 
-  // Validate through C++ after typing settles. A result belongs only to its exact input object.
-  useEffect(() => {
-    if (!options || !service.validate || busy) return
-    let current = true
-    const timer = setTimeout(() => {
-      void service.validate!(options).then(value => {
-        if (current && alive.current) setNativeValidation({ options, value })
-      }).catch(cause => {
-        if (!current || !alive.current) return
-        const problem = nativeIssue(cause)
-        setNativeValidation({ options, value: {
-          valid: false, arguments: '', errors: {}, nativeError: problem.nativeError, detail: problem.detail || t('ui.save.invalid'),
-        } })
-      })
-    }, 180)
-    return () => { current = false; clearTimeout(timer) }
-  }, [options, service, busy, resolved])
   async function preferences(nextDark: boolean, nextLanguage: string) {
     if (!service.setPreferences) return
     const revision = ++preferenceRevision.current
@@ -215,55 +239,56 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     void preferences(requestedDark.current, value)
   }
   async function chooseDirectory() {
-    if (!options || inFlight.current) return
+    if (!options || locked) return
     if (!service.chooseDirectory) { setSelection(options.directory); openDialog('directory'); return }
+    if (!beginOperation('directory')) return
     const trigger = document.activeElement as HTMLElement | null
-    inFlight.current = true; setBusy(true); setSelecting(true); setError(null)
+    setError(null)
     try {
       const path = await service.chooseDirectory(options.directory)
-      if (alive.current && path) { setOptions(current => current ? { ...current, directory: path } : current); setResult(null) }
+      if (alive.current && path && path !== options.directory) {
+        setOptions(current => current ? { ...current, directory: path } : current)
+        setResult(null)
+      }
     } catch (cause) { if (alive.current) reportFailure('setup.error.directory', cause) }
-    finally {
-      inFlight.current = false
-      if (alive.current) { setBusy(false); setSelecting(false); requestAnimationFrame(() => { if (alive.current) trigger?.focus() }) }
-    }
+    finally { finishOperation(trigger) }
+  }
+  function programAdded(path: string) {
+    setProgramRevision(previous => previous + 1)
+    notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success', undefined, path)
+    setError(null)
+    setNotice(null)
   }
   async function chooseProgram() {
-    if (inFlight.current) return
+    if (locked) return
     if (!service.selectProgram) { setSelection(samplePrograms[0]?.path ?? ''); openDialog('program'); return }
+    if (!beginOperation('program')) return
     const trigger = document.activeElement as HTMLElement | null
-    inFlight.current = true; setBusy(true); setAdding(true)
     try {
       const entry = await service.selectProgram()
-      if (alive.current && entry) {
-        setProgramRevision(previous => previous + 1)
-        notify(snapshot?.deployed ? 'setup.status.added' : 'setup.status.addeddeploy', {}, '', 'success', undefined, entry.path); setError(null); setNotice(null)
-      }
+      if (alive.current && entry) programAdded(entry.path)
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
-    finally {
-      inFlight.current = false
-      if (alive.current) { setBusy(false); setAdding(false); requestAnimationFrame(() => { if (alive.current) trigger?.focus() }) }
-    }
+    finally { finishOperation(trigger) }
   }
 
   function update<K extends keyof SetupOptions>(key: K, value: SetupOptions[K]) {
-    if (locked || !options) return
+    if (!options || locked || activeOperation.current) return
     if (['host', 'port', 'protocol', 'proxy'].includes(key)) { ++detectRevision.current; setDetectionPhase('idle'); noticeManager.close('activity') }
     setOptions({ ...options, [key]: value }); setResult(null); setNotice(null); setError(null)
   }
   function changeProxy(enabled: boolean) {
-    if (!options || locked || enabled === options.proxy) return
+    if (!options || locked || activeOperation.current || enabled === options.proxy) return
     update('proxy', enabled)
     if (enabled) void detect({ ...options, proxy: true })
   }
   async function detect(input = options) {
-    if (!input || detecting || locked || !input.proxy) return
+    if (!input || detecting || locked || activeOperation.current || !input.proxy) return
     const revision = ++detectRevision.current
     setDetectionPhase('pending'); setNotice(null); setResult(null)
     let found = false
     try {
       const detection = await service.detectPort(input.protocol, input.host)
-      if (!alive.current || revision !== detectRevision.current || inFlight.current) return
+      if (!alive.current || revision !== detectRevision.current || activeOperation.current) return
       const port = detection.port
       if (port) {
         found = true
@@ -273,12 +298,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       notify(detection.port ? 'ui.detect.port' : 'ui.detect.empty', { port: detection.port ?? '' },
         detection.port && detection.source ? { message: 'ui.detect.source', values: { source: detection.source } } : detection.message,
         detection.port ? 'success' : 'info', undefined, detection.message)
-    } catch (cause) { if (alive.current && revision === detectRevision.current) reportFailure('ui.detect.failed', cause) }
+    } catch (cause) { if (alive.current && revision === detectRevision.current && !activeOperation.current) reportFailure('ui.detect.failed', cause) }
     finally { if (alive.current && revision === detectRevision.current) setDetectionPhase(found ? 'found' : 'idle') }
   }
   async function save() {
-    if (!options || !snapshot || !validation?.valid || locked || inFlight.current || (snapshot.deployed && !dirty && result?.commit === 'saved')) return
-    inFlight.current = true; focusAfterSave.current = true; ++detectRevision.current; setDetectionPhase('idle'); setBusy(true); setNotice(null); setResult(null)
+    if (!options || !snapshot || !validation?.valid || locked || (snapshot.deployed && !dirty && result?.commit === 'saved')) return
+    if (!beginOperation('save')) return
+    focusAfterSave.current = true; ++detectRevision.current; setDetectionPhase('idle'); setNotice(null); setResult(null)
     noticeManager.close('activity')
     const submitted = { ...options }
     try {
@@ -297,10 +323,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     } catch (cause) {
       // A lost response cannot establish whether writes happened.
       if (alive.current) setResult({ commit: 'rollback-incomplete', message: 'ui.save.unknown', tasks: [], ...nativeIssue(cause) })
-    } finally {
-      inFlight.current = false
-      if (alive.current) setBusy(false)
-    }
+    } finally { finishOperation() }
   }
   useEffect(() => {
     if (!busy && result && !dialogOpen && focusAfterSave.current) {
@@ -310,19 +333,19 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     }
   }, [busy, result, dialogOpen])
   async function addProgram() {
-    const entry = samplePrograms.find(program => program.path === selection)
-    if (!entry || inFlight.current) return
-    inFlight.current = true; setBusy(true); setAdding(true)
+    const picker = service.picker
+    const entry = picker?.programs.find(program => program.path === selection)
+    if (!picker || !entry || !beginOperation('program')) return
     try {
-      await service.addProgram(entry)
+      await picker.addProgram(entry)
       if (!alive.current) return
-      setProgramRevision(previous => previous + 1)
-      notify('setup.status.added', {}, '', 'success', undefined, entry.path); setDialogOpen(false)
+      programAdded(entry.path)
+      setDialogOpen(false)
     } catch (cause) { if (alive.current) reportFailure('setup.error.add', cause) }
-    finally { inFlight.current = false; if (alive.current) { setBusy(false); setAdding(false) } }
+    finally { finishOperation() }
   }
   async function openLocation(location: 'startup' | 'deployment' | 'windows') {
-    if (inFlight.current || openingLocation.current) return
+    if (activeOperation.current || openingLocation.current) return
     openingLocation.current = true
     try { await service.openLocation(location); if (alive.current && !service.native) notify('ui.location.preview') }
     catch (cause) { if (alive.current) reportFailure('setup.error.openfolder', cause) }
@@ -335,8 +358,6 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const portError = options?.proxy ? portErrorKey(options.port) : undefined
   const invalidInput = !!portError || validation?.valid === false
   const checking = !!options && !validation && !portError
-  // While a new check is pending, only the preview may retain the last confirmed arguments.
-  const previewValue = validation ?? (nativeValidation?.value.valid ? nativeValidation.value : null)
   let previewText = ''
   if (portError) previewText = t(portError)
   else if (previewValue?.valid) previewText = previewValue.arguments || t('ui.arguments.empty')
@@ -348,13 +369,16 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const deployment = snapshot?.deployed ? snapshot.deployedVersion ? t('setup.state.version', { version: snapshot.deployedVersion }) : t('setup.state.unknownversion')
     : t(snapshot?.hasSettings ? 'setup.state.missing' : 'setup.state.absent')
   const discard = dialog === 'discard'
-  const dialogTitle = t(discard ? 'setup.dialog.close' : dialog === 'help' ? helpTitles[help] : dialog === 'directory' ? 'setup.dialog.directory'
-    : dialog === 'program' ? 'setup.dialog.program' : dialog === 'program-details' ? 'ui.programs.details' : dialog === 'preview' ? 'ui.prototype.title' : dialog === 'error' ? 'ui.error.title'
-      : dialog === 'notice' ? 'ui.notice.label' : saved ? 'ui.save.followup' : 'setup.error.saving')
+  const pickerOpen = dialog === 'directory' || dialog === 'program'
+  let text: DialogText | undefined
+  if (dialog === 'help') text = { title: helpTitles[help], description: help }
+  else if (dialog === 'result') text = { title: saved ? 'ui.save.followup' : 'setup.error.saving', description: saved ? undefined : result?.message }
+  else if (dialog) text = dialogText[dialog]
+  const dialogTitle = text ? t(text.title) : ''
   const noticeDetail = selectedNotice?.fullDetail || selectedNotice?.detail
 
-  if (closed) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1>{t('ui.closed')}</h1><p>{t('ui.prototype.description')}</p>
-    <Button className="button primary-button" onClick={() => { setClosed(false); void load() }}>{t('ui.reopen')}</Button></div>
+  if (closed && !service.native) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1>{t('ui.closed')}</h1><p>{t('ui.prototype.description')}</p>
+    <Button className="button primary-button" onClick={() => { finishOperation(); setClosed(false); void load() }}>{t('ui.reopen')}</Button></div>
 
   return <div className={`setup-shell ${service.native ? 'native-shell' : ''}`}>
     {!service.native && <div className="prototype-bar"><Button className="prototype-label" onClick={() => openDialog('preview')} disabled={busy}><FlaskConical size={13} />{t('ui.prototype.title')}</Button><fieldset disabled={busy}>{scenarioControls}</fieldset></div>}
@@ -371,7 +395,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
         </div>
       </header>
       {loading ? <SetupSkeleton />
-        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t('ui.load.failed')}</p>{error && <ErrorDetails error={error} t={t} />}<Button className="button secondary-button" onClick={() => void load()}>{t('ui.retry')}</Button></div>
+        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t('ui.load.failed')}</p>{error && <ErrorDetails error={error} t={t} />}<Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button></div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}
@@ -444,17 +468,16 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
         {dirty && <span className="sr-only" id="unsaved-status">{t('setup.status.unsaved')}</span>}
         {loading ? <span className="skeleton-bar skeleton-save" aria-hidden="true" /> : !saved && !loadError &&
-          <Button ref={saveButton} className="button primary-button save-button" data-edited={dirty && !busy || undefined} aria-describedby={dirty ? 'unsaved-status' : undefined} disabled={locked || !validation?.valid} onClick={() => void save()}>{busy && !adding && !selecting && <LoaderCircle size={16} className="spinner" />}{t(busy && !adding && !selecting ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
+          <Button ref={saveButton} className="button primary-button save-button" data-edited={dirty && !busy || undefined} aria-describedby={dirty ? 'unsaved-status' : undefined} disabled={locked || !validation?.valid} onClick={() => void save()}>{saving && <LoaderCircle size={16} className="spinner" />}{t(saving ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
       <NoticeToasts manager={noticeManager} t={t} onOpen={item => { setSelectedNotice(item); openDialog('notice'); focusReturn.current = doneButton.current }} />
     </footer>
-    <Modal open={dialogOpen} title={dialogTitle} variant={dialog === 'help' ? 'help' : undefined} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!inFlight.current) setDialogOpen(false) }}
-      description={discard ? t('setup.dialog.discard') : dialog === 'help' ? t(help) : dialog === 'preview' ? t('ui.prototype.description')
-        : dialog === 'directory' || dialog === 'program' ? t('ui.picker.preview') : dialog === 'result' && result && !saved ? t(result.message) : undefined}
-      actions={discard ? <><Button ref={cancelButton} className="button secondary-button" onClick={() => setDialogOpen(false)}>{t('ui.keepediting')}</Button><Button className="button danger-button" onClick={() => void close()}>{t('ui.discard')}</Button></>
-        : dialog === 'directory' || dialog === 'program' ? <><Button className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('download.cancel')}</Button>
+    <Modal open={dialogOpen} title={dialogTitle} variant={dialog === 'help' ? 'help' : undefined} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!activeOperation.current) setDialogOpen(false) }}
+      description={text?.description && t(text.description)}
+      actions={discard ? <><Button ref={cancelButton} className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('ui.keepediting')}</Button><Button className="button danger-button" disabled={busy} onClick={() => void close()}>{t('ui.discard')}</Button></>
+        : pickerOpen ? <><Button className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('download.cancel')}</Button>
           <Button className="button primary-button" disabled={busy || !selection} onClick={() => { if (dialog === 'program') void addProgram(); else { update('directory', selection); setDialogOpen(false) } }}>{adding && <LoaderCircle size={16} className="spinner" />}{t(adding ? 'ui.adding' : 'ui.select')}</Button></>
           : <Button className="button primary-button" onClick={() => setDialogOpen(false)}>{t('ui.understood')}</Button>}>
-      {(dialog === 'directory' || dialog === 'program') && <RadioGroup className="picker-list" value={selection} onValueChange={value => setSelection(String(value))} disabled={busy} aria-label={dialogTitle}>
+      {pickerOpen && <RadioGroup className="picker-list" value={selection} onValueChange={value => setSelection(String(value))} disabled={busy} aria-label={dialogTitle}>
         {(dialog === 'program' ? samplePrograms.map(program => ({ path: program.path, name: program.name })) : (service.picker?.directories ?? []).map(path => ({ path, name: path })))
           .map(item => <Radio.Root className="picker-item" key={item.path} value={item.path}><Radio.Indicator keepMounted className="picker-indicator"><CheckCircle2 size={16} /></Radio.Indicator><span>{item.name}</span></Radio.Root>)}
       </RadioGroup>}

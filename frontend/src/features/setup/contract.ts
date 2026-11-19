@@ -23,7 +23,11 @@ export interface Detection { port: string | null; source: string; message: strin
 export interface SetupService {
   native?: boolean
   settled?(): Promise<void>
-  picker?: { directories: string[]; programs: ProgramEntry[] }
+  picker?: {
+    directories: string[]
+    programs: ProgramEntry[]
+    addProgram(entry: ProgramEntry): Promise<void>
+  }
   validate?(options: SetupOptions): Promise<Validation>
   chooseDirectory?(initial: string): Promise<string | null>
   selectProgram?(): Promise<ProgramEntry | null>
@@ -31,7 +35,6 @@ export interface SetupService {
   load(): Promise<SetupSnapshot>
   detectPort(protocol: string, host: string): Promise<Detection>
   save(options: SetupOptions): Promise<SaveResult>
-  addProgram(entry: ProgramEntry): Promise<void>
   listPrograms(): Promise<ProgramList>
   openLocation(location: 'startup' | 'deployment' | 'windows'): Promise<void>
 }

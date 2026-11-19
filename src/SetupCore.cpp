@@ -8,16 +8,13 @@
 #include "NativeMemory.h"
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <wrl/client.h>
 #include <utility>
 #include <new>
 
 namespace setup {
 namespace {
-template<class T> struct Com {
-    T* p = nullptr;
-    ~Com() { if (p) p->Release(); }
-    T* operator->() const { return p; }
-};
+using Microsoft::WRL::ComPtr;
 struct Handle {
     HANDLE h = INVALID_HANDLE_VALUE;
     ~Handle() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); }
@@ -122,8 +119,8 @@ Result Restore(const std::wstring& path, const Snapshot& snapshot, bool replace 
     return Fail(GetLastError(), l10n::Format("error.files.undo", {{"path", path}}));
 }
 Result WriteLink(const std::wstring& path, const Link& value, bool replace = true) {
-    Com<IShellLinkW> link;
-    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
+    ComPtr<IShellLinkW> link;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link));
     if (FAILED(hr)) return Hr(hr, l10n::Text("error.link.create"));
     if (value.target.find(L'%') == std::wstring::npos) hr = link->SetPath(value.target.c_str());
     else {
@@ -138,8 +135,8 @@ Result WriteLink(const std::wstring& path, const Link& value, bool replace = tru
         || FAILED(hr = link->SetDescription(value.description.c_str()))
         || FAILED(hr = link->SetIconLocation(value.target.c_str(), 0))
         || FAILED(hr = link->SetShowCmd(SW_SHOWNORMAL))) return Hr(hr, l10n::Text("error.link.properties"));
-    Com<IPersistFile> persist;
-    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))) return Hr(hr, l10n::Text("error.link.save"));
+    ComPtr<IPersistFile> persist;
+    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist)))) return Hr(hr, l10n::Text("error.link.save"));
     TempFile temp;
     Result result = NewTemp(path, temp);
     if (!result) return result;
@@ -285,11 +282,11 @@ Result NormalizeDirectory(const std::wstring& input, std::wstring& output) {
     return {};
 }
 Result ReadLink(const std::wstring& path, Link& value, bool expandedTarget, LinkIcon* icon) {
-    Com<IShellLinkW> link;
-    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link.p));
+    ComPtr<IShellLinkW> link;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link));
     if (FAILED(hr)) return Hr(hr, l10n::Text("error.link.read"));
-    Com<IPersistFile> persist;
-    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist.p)))
+    ComPtr<IPersistFile> persist;
+    if (FAILED(hr = link->QueryInterface(IID_PPV_ARGS(&persist)))
         || FAILED(hr = persist->Load(path.c_str(), STGM_READ))) return Hr(hr, l10n::Format("error.link.readpath", {{"path", path}}));
     std::vector<wchar_t> text(32768);
     Link read;

@@ -4,6 +4,7 @@
 #include "NativeMemory.h"
 #include "StartupApps.h"
 #include <shlobj.h>
+#include <wrl/client.h>
 
 namespace setup::ui {
 namespace {
@@ -28,9 +29,9 @@ bool SaveLanguagePreference() {
         value, static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
 }
 Result ChoosePath(HWND owner, bool program, const std::wstring& initial, std::wstring& path) {
-    IFileOpenDialog* dialog = nullptr;
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IFileOpenDialog> dialog;
     HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
-    native::ComPtr<IFileOpenDialog> ownedDialog(dialog);
     if (SUCCEEDED(hr)) {
         DWORD flags = 0;
         hr = dialog->GetOptions(&flags);
@@ -51,16 +52,14 @@ Result ChoosePath(HWND owner, bool program, const std::wstring& initial, std::ws
         };
         if (SUCCEEDED(hr) && program) hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
         if (SUCCEEDED(hr)) hr = dialog->SetTitle(l10n::Text(program ? "setup.dialog.program" : "setup.dialog.directory"));
-        IShellItem* folder = nullptr;
+        ComPtr<IShellItem> folder;
         if (!initial.empty() && SUCCEEDED(SHCreateItemFromParsingName(initial.c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
-            native::ComPtr<IShellItem> ownedFolder(folder);
-            dialog->SetFolder(folder);
+            dialog->SetFolder(folder.Get());
         }
         if (SUCCEEDED(hr)) hr = dialog->Show(owner);
         if (SUCCEEDED(hr)) {
-            IShellItem* item = nullptr;
+            ComPtr<IShellItem> item;
             hr = dialog->GetResult(&item);
-            native::ComPtr<IShellItem> ownedItem(item);
             if (SUCCEEDED(hr)) {
                 PWSTR selected = nullptr;
                 hr = item->GetDisplayName(SIGDN_FILESYSPATH, &selected);

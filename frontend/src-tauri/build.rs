@@ -64,16 +64,12 @@ fn main() {
     let mut native = cc::Build::new();
     native
         .cpp(true)
-        .std("c++17")
         .static_crt(true)
-        .flag("/utf-8")
-        .flag("/EHsc")
-        .flag("/W4")
-        .flag("/WX")
-        .define("UNICODE", None)
-        .define("_UNICODE", None)
         .define("SETUP_UI_EMBEDDED", None)
         .opt_level(1);
+    for flag in include_str!("../../tools/msvc-common.rsp").lines() {
+        native.flag(flag);
+    }
     for name in sources {
         native.file(root.join(format!("src/{name}.cpp")));
     }

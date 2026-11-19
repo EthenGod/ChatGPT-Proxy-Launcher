@@ -1,5 +1,19 @@
 use serde::{Deserialize, Serialize};
 
+// Numeric IDs are part of the static C ABI in src/SetupBridge.h.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Action {
+    Validate = 1,
+    Detect = 2,
+    Save = 3,
+    Directory = 4,
+    AddProgram = 5,
+    OpenLocation = 6,
+    Preferences = 7,
+    ListPrograms = 8,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Options {
@@ -126,25 +140,21 @@ pub struct SaveResult {
 }
 impl SaveResult {
     // The independent ABI outcome survives JSON encoding/decoding/allocation failures.
-    pub fn unavailable(commit: u32, detail: String, native_error: u32) -> Self {
+    pub fn unavailable(code: u32, detail: String, native_error: u32) -> Self {
+        let (commit, message) = match code {
+            0 => (Commit::NotStarted, "ui.save.failed"),
+            1 => (Commit::Saved, "ui.save.response"),
+            2 => (Commit::RolledBack, "ui.save.rollback"),
+            3 => (Commit::RollbackIncomplete, "ui.save.incomplete"),
+            _ => (Commit::RollbackIncomplete, "ui.save.unknown"),
+        };
         Self {
-            commit: match commit {
-                1 => Commit::Saved,
-                2 => Commit::RolledBack,
-                3 => Commit::RollbackIncomplete,
-                _ => Commit::NotStarted,
-            },
-            message: match commit {
-                1 => "ui.save.response",
-                2 => "ui.save.rollback",
-                3 => "ui.save.incomplete",
-                _ => "ui.save.failed",
-            }
-            .into(),
+            commit,
+            message: message.into(),
             detail,
             native_error,
             tasks: vec![],
-            warnings: if commit == 1 {
+            warnings: if code == 1 {
                 vec!["ui.save.response".into()]
             } else {
                 vec![]

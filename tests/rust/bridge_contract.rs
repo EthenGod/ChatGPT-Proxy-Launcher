@@ -6,6 +6,36 @@ mod bootstrap;
 mod model;
 
 #[test]
+fn native_action_ids_match_the_cpp_contract() {
+    use model::Action;
+    let header = include_str!("../../src/SetupBridge.h");
+    let (_, declaration) = header.split_once("enum SetupBridgeAction").unwrap();
+    let (_, body) = declaration.split_once('{').unwrap();
+    let (body, _) = body.split_once('}').unwrap();
+    let ids: std::collections::BTreeMap<_, _> = body
+        .split(',')
+        .map(|field| {
+            let (name, value) = field.split_once('=').unwrap();
+            (name.trim(), value.trim().parse::<u32>().unwrap())
+        })
+        .collect();
+    let actions = [
+        ("SETUP_VALIDATE", Action::Validate),
+        ("SETUP_DETECT", Action::Detect),
+        ("SETUP_SAVE", Action::Save),
+        ("SETUP_DIRECTORY", Action::Directory),
+        ("SETUP_ADD_PROGRAM", Action::AddProgram),
+        ("SETUP_OPEN_LOCATION", Action::OpenLocation),
+        ("SETUP_PREFERENCES", Action::Preferences),
+        ("SETUP_LIST_PROGRAMS", Action::ListPrograms),
+    ];
+    assert_eq!(ids.len(), actions.len());
+    for (name, action) in actions {
+        assert_eq!(ids[name], action as u32, "{name}");
+    }
+}
+
+#[test]
 fn raw_command_tail_preserves_quotes_empty_arguments_and_unicode() {
     let cases = [
         (
@@ -101,6 +131,7 @@ fn response_failure_preserves_the_independent_native_commit() {
         (1, "saved"),
         (2, "rolled-back"),
         (3, "rollback-incomplete"),
+        (u32::MAX, "rollback-incomplete"),
     ] {
         let response = model::SaveResult::unavailable(code, String::new(), 8);
         let json = serde_json::to_value(response).unwrap();
@@ -108,6 +139,9 @@ fn response_failure_preserves_the_independent_native_commit() {
         assert_eq!(json["nativeError"], 8);
         if code == 1 {
             assert_eq!(json["warnings"][0], "ui.save.response");
+        }
+        if code == u32::MAX {
+            assert_eq!(json["message"], "ui.save.unknown");
         }
     }
 }

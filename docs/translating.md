@@ -60,4 +60,4 @@ cmd /c tests\analyze.cmd
 
 翻译时同步步骤、限制、按钮名称和链接。按钮名称以对应语言文件为准；命令、参数、环境变量和文件名保持原样。链接优先指向同语言文档；尚未翻译的开发文档标明“中文”。发布说明会复制到 GitHub Release 正文，顶部语言链接必须使用完整 GitHub 地址，版本号和下载地址也要同步。
 
-运行 `powershell -NoProfile -ExecutionPolicy Bypass -File tests/documentation-tests.ps1` 检查语言链接、本地链接和命令示例。新增语言文档时，更新该测试中的文档组及语言后缀，并将文件加入 `release.ps1` 的源码清单。仅增加界面语言时不需要翻译所有文档。不要翻译 `AGENTS.md`、`HANDOFF.md` 等内部工作记录。
+运行 `powershell -NoProfile -ExecutionPolicy Bypass -File tests/documentation-tests.ps1` 检查语言链接、本地链接和命令示例。新增语言文档时，更新该测试中的文档组及语言后缀，并将文件加入 `tools/release-sources.ps1` 的源码清单。仅增加界面语言时不需要翻译所有文档。不要翻译 `AGENTS.md`、`HANDOFF.md` 等内部工作记录。

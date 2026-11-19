@@ -183,13 +183,15 @@ setup::Options ParseOptions(const Json& value) {
     result.bypass = value.At(L"bypass").String(); result.extra = value.At(L"extra").String(); result.directory = value.At(L"directory").String();
     return result;
 }
-uint32_t CommitCode(setup::CommitState commit) noexcept {
+struct CommitInfo { uint32_t code; PCWSTR name; PCWSTR message; };
+constexpr CommitInfo DescribeCommit(setup::CommitState commit) noexcept {
     switch (commit) {
-    case setup::CommitState::Committed: return 1;
-    case setup::CommitState::RolledBack: return 2;
-    case setup::CommitState::Incomplete: return 3;
-    default: return 0;
+    case setup::CommitState::NotStarted: return {0, L"not-started", L"ui.save.failed"};
+    case setup::CommitState::Committed: return {1, L"saved", L"setup.status.nextlaunch"};
+    case setup::CommitState::RolledBack: return {2, L"rolled-back", L"ui.save.rollback"};
+    case setup::CommitState::Incomplete: return {3, L"rollback-incomplete", L"ui.save.incomplete"};
     }
+    return {3, L"rollback-incomplete", L"ui.save.unknown"};
 }
 void Require(const setup::Result& result) {
     if (!result) throw result;
@@ -332,14 +334,13 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             options.directory.swap(normalized);
             std::wstring target;
             const auto result = setup::Apply(paths, options, {static_cast<const BYTE*>(payload), SizeofResource(module, resource)}, target);
-            *commit = CommitCode(result.commit); // No allocation between Apply and publishing its outcome.
-            const bool saved = *commit == 1;
+            const auto outcome = DescribeCommit(result.commit);
+            *commit = outcome.code; // No allocation between Apply and publishing its outcome.
             auto tasks = Json::Array();
             auto warnings = Json::Array();
             std::wstring detail = result.message;
-            PCWSTR message = *commit == 1 ? L"setup.status.nextlaunch" : *commit == 2 ? L"ui.save.rollback"
-                : *commit == 3 ? L"ui.save.incomplete" : L"ui.save.failed";
-            if (saved) {
+            PCWSTR message = outcome.message;
+            if (result.commit == setup::CommitState::Committed) {
                 const bool wroteEnv = options.proxy && options.codexEnv;
                 const bool startup = options.startup && !startupReminderShown;
                 setup::StartupReport report;
@@ -359,7 +360,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
                     if (!isolated) detail = report.Message();
                 }
             }
-            response[L"commit"] = Json(*commit == 1 ? L"saved" : *commit == 2 ? L"rolled-back" : *commit == 3 ? L"rollback-incomplete" : L"not-started");
+            response[L"commit"] = Json(outcome.name);
             response[L"message"] = Json(message); response[L"detail"] = Json(detail);
             response[L"tasks"] = std::move(tasks); response[L"warnings"] = std::move(warnings);
             response[L"conflictDirectory"] = Json(result.conflictDirectory);

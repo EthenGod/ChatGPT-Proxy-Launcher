@@ -1,6 +1,7 @@
-use crate::model::{BridgeError, Options, SaveResult, Snapshot};
+use crate::model::{Action, BridgeError, Options, SaveResult, Snapshot};
 use serde::de::DeserializeOwned;
 use std::{ptr, slice};
+use windows_sys::Win32::Foundation::ERROR_INVALID_DATA;
 
 const MAX_RESPONSE: usize = 1024 * 1024;
 #[repr(C)]
@@ -25,14 +26,18 @@ impl Drop for Buffer {
 impl Buffer {
     fn decode<T: DeserializeOwned>(&self, code: u32) -> Result<T, BridgeError> {
         if self.data.is_null() || self.length == 0 || self.length > MAX_RESPONSE {
-            return Err(BridgeError::native(if code == 0 { 13 } else { code }));
+            return Err(BridgeError::native(if code == 0 {
+                ERROR_INVALID_DATA
+            } else {
+                code
+            }));
         }
         // C++ owns these bytes until this Buffer drops. Deserialization owns its result.
         let data = unsafe { slice::from_raw_parts(self.data, self.length) };
         if code != 0 {
             return Err(serde_json::from_slice(data).unwrap_or_else(|_| BridgeError::native(code)));
         }
-        serde_json::from_slice(data).map_err(|_| BridgeError::native(13))
+        serde_json::from_slice(data).map_err(|_| BridgeError::native(ERROR_INVALID_DATA))
     }
 }
 unsafe extern "C" {
@@ -81,13 +86,13 @@ pub fn read_state(paths: Option<&[u8]>) -> Result<Snapshot, BridgeError> {
     let code = unsafe { setup_bridge_read_state(paths, length, &mut buffer) };
     let state: Snapshot = buffer.decode(code)?;
     if state.schema_version != 1 || state.payload_bytes == 0 {
-        return Err(BridgeError::native(13));
+        return Err(BridgeError::native(ERROR_INVALID_DATA));
     }
     Ok(state)
 }
 
 pub fn action<T: DeserializeOwned>(
-    action: u32,
+    action: Action,
     request: &impl serde::Serialize,
     paths: Option<&[u8]>,
     owner: usize,
@@ -95,13 +100,13 @@ pub fn action<T: DeserializeOwned>(
     let mut buffer = Buffer::default();
     let request = match serde_json::to_vec(request) {
         Ok(value) => value,
-        Err(_) => return (0, Err(BridgeError::native(13))),
+        Err(_) => return (0, Err(BridgeError::native(ERROR_INVALID_DATA))),
     };
     let (paths, length) = bytes(paths);
     let mut commit = 0;
     let code = unsafe {
         setup_bridge_action(
-            action,
+            action as u32,
             request.as_ptr(),
             request.len(),
             paths,
@@ -114,7 +119,7 @@ pub fn action<T: DeserializeOwned>(
     (commit, buffer.decode(code))
 }
 pub fn save(options: Options, paths: Option<&[u8]>) -> SaveResult {
-    let (commit, result) = action::<SaveResult>(3, &options, paths, 0);
+    let (commit, result) = action::<SaveResult>(Action::Save, &options, paths, 0);
     result
         .unwrap_or_else(|error| SaveResult::unavailable(commit, error.message, error.native_error))
 }

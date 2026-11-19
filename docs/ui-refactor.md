@@ -58,7 +58,8 @@
 ## 分层与边界
 
 - `frontend/src/features/setup/` 包含设置页面、服务接口和原型参数预览。`components/` 提供 Base UI 控件，`styles/` 提供 Radix 语义颜色与动效，`i18n/` 继续读取根目录的三语词条。
-- `frontend/src/platform/setup-service.ts` 提供串行真实接口，`platform/mock.ts` 提供内存模拟接口。`main.tsx` 是真实设置入口，`prototype.tsx` 是独立原型入口。两者共用 `platform/prototype-window.ts` 的窗口就绪、主题和关闭事件。原型不调用真实配置加载或保存接口。
+- `frontend/src/platform/setup-service.ts` 调用串行原生命令。`platform/mock.ts` 提供示例数据和内存选择器。正式页 `main.tsx` 和原型 `prototype.tsx` 共用 `platform/desktop.ts` 处理窗口就绪、主题和关闭事件。正式页添加程序时，由原生选择器取得文件路径。
+- `features/setup/useSetupValidation.ts` 在输入停止后校验参数。成功结果可跨语言复用，错误结果按当前语言重取。只有当前输入通过校验才能保存。保存、目录选择、添加程序和关闭共用一处操作状态。关闭失败后恢复编辑。对应回归在 `tests/frontend/interaction.test.tsx` 和 `tests/frontend/desktop-service.test.ts`。
 - `frontend/src-tauri/` 包含窗口、原生命令、Rust 数据类型和 C ABI 包装。主窗口可加载、校验、检测、保存、选择目录、列出和添加附加程序、打开指定位置及更改偏好。窗口权限限于显示、关闭、必要事件，以及设置自身主题和窗口、WebView 底色。
 - `src/SetupBridge.*` 把现有核心接入有界 UTF-8 JSON。C++ 分配结果，Rust 作用域对象调用 C++ 释放。异常不跨越 ABI。保存另传独立提交状态，响应构造失败仍保留已提交结果。`src/SetupUiServices.*` 共用原生偏好、选择器和保存后处理。
 - 现有部署核心与启动器不迁移。后台命令在 WebView2 检查和 Tauri 初始化之前分流。原始 UTF-16 参数不重新编码或拼接。

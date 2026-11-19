@@ -1,10 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { createSetupService, parseProgramList, parseSaveResult } from '../../frontend/src/platform/setup-service'
+import { desktopWindow } from '../../frontend/src/platform/desktop'
 import fixture from '../fixtures/setup-snapshot.json'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+const surfaces = vi.hoisted(() => ({ setTheme: vi.fn(), setBackgroundColor: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }))
+vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: () => surfaces }))
 afterEach(() => vi.resetAllMocks())
+describe('desktop window', () => {
+  it('waits for both native appearance changes before starting the next theme after a failure', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    const failure = new Error('Title bar unavailable')
+    let finishBackground!: () => void
+    surfaces.setTheme.mockRejectedValueOnce(failure).mockResolvedValue(undefined)
+    surfaces.setBackgroundColor.mockImplementationOnce(() => new Promise<void>(resolve => { finishBackground = resolve }))
+      .mockResolvedValue(undefined)
+    const dark = desktopWindow.setTheme(true).catch(error => error)
+    const light = desktopWindow.setTheme(false)
+    await vi.waitFor(() => expect(surfaces.setBackgroundColor).toHaveBeenCalled())
+    try {
+      expect(surfaces.setTheme.mock.calls).toEqual([['dark']])
+    } finally { finishBackground() }
+    expect(await dark).toBe(failure)
+    await light
+    expect(surfaces.setTheme.mock.calls).toEqual([['dark'], ['light']])
+    expect(surfaces.setBackgroundColor.mock.calls).toEqual([['#111111'], ['#fcfcfc']])
+  })
+})
 describe('desktop command boundary', () => {
   it('serializes preferences, detection and save, then continues after an error', async () => {
     const calls: string[] = []
@@ -28,7 +51,8 @@ describe('desktop command boundary', () => {
     const service = createSetupService()
     await service.selectProgram!()
     expect(invoke).toHaveBeenCalledWith('add_setup_program', undefined)
-    await expect(service.addProgram({ name: 'x', path: 'C:\\x.exe', arguments: '' })).rejects.toThrow()
+    expect(service.picker).toBeUndefined()
+    expect(service).not.toHaveProperty('addProgram')
     expect(invoke).toHaveBeenCalledTimes(1)
   })
   it('keeps a committed result with warnings and rejects malformed outcomes', () => {

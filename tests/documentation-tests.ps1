@@ -8,7 +8,7 @@ $localeTags = @('zh-CN', 'en-US', 'ja-JP')
 $groups = @('README', 'docs/translating', 'docs/taskbar-repair', 'docs/release-upload', 'assets/README')
 $releaseTag = 'v' + (ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $ProjectRoot 'frontend/package.json')))).version
 $repository = "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/$releaseTag/"
-$releaseScript = [IO.File]::ReadAllText((Join-Path $ProjectRoot 'release.ps1'))
+$sources = @(& (Join-Path $ProjectRoot 'tools/release-sources.ps1') -ProjectRoot $ProjectRoot)
 $count = 0
 foreach ($group in $groups) {
     $baseName = ($group -split '/')[-1]
@@ -18,7 +18,7 @@ foreach ($group in $groups) {
         $name = $group + $suffix + '.md'
         $path = Join-Path $ProjectRoot $name
         $text = [IO.File]::ReadAllText($path)
-        if (!$releaseScript.Contains("'" + $name + "'")) { throw "Document missing from release sources: $name" }
+        if ($sources -cnotcontains $name) { throw "Document missing from release sources: $name" }
         $firstLine = ($text -split '\r?\n', 2)[0]
         $navigation = @([regex]::Matches($firstLine, '\]\(([^)\r\n]+)\)'))
         if ($navigation.Count -ne $suffixes.Count) { throw "Missing language links: $name" }
@@ -68,7 +68,7 @@ $powerShellBlocks = 0; $jsonBlocks = 0
 foreach ($name in $developerDocs) {
     $path = Join-Path $ProjectRoot $name
     $text = [IO.File]::ReadAllText($path)
-    if (!$releaseScript.Contains("'" + $name + "'")) { throw "Developer document missing from source package: $name" }
+    if ($sources -cnotcontains $name) { throw "Developer document missing from source package: $name" }
     foreach ($link in [regex]::Matches($text, '\]\(([^)\r\n]+)\)')) {
         $target = $link.Groups[1].Value
         if ($target -match '^(https?://|mailto:)') { continue }
@@ -99,6 +99,6 @@ foreach ($name in $developerDocs) {
     }
 }
 foreach ($example in @('docs/examples/deploy-minimal-v1.json', 'docs/examples/companion-v1.json', 'docs/examples/companion-task-v1.json', 'docs/examples/companion-context.ps1')) {
-    if (!$releaseScript.Contains("'" + $example + "'")) { throw "Integration example missing from source package: $example" }
+    if ($sources -cnotcontains $example) { throw "Integration example missing from source package: $example" }
 }
 Write-Host "PASS developer docs: $($developerDocs.Count) documents, local links/anchors, $powerShellBlocks PowerShell examples, $jsonBlocks JSON examples and package inclusion"
