@@ -56,10 +56,7 @@ async page => {
     void cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId });
   });
   const screenshot = async () => (await cdp.send('Page.captureScreenshot', { format: 'png' })).data;
-  const captureLabel = async (tag, name) => {
-    await page.locator('.settings-scroll > .scroll-viewport').evaluate(el => { el.scrollTop = 0; });
-    await page.mouse.move(1, 1); await settled();
-    const old = await caption.boundingBox(), first = await screenshot();
+  async function captureLanguageChange(tag, name) {
     await menu.click();
     images = [];
     await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
@@ -67,6 +64,13 @@ async page => {
       await page.getByRole('menuitemradio', { name, exact: true }).click();
       await waitForLanguage(tag);
     } finally { await cdp.send('Page.stopScreencast'); }
+    return images;
+  }
+  const captureLabel = async (tag, name) => {
+    await page.locator('.settings-scroll > .scroll-viewport').evaluate(el => { el.scrollTop = 0; });
+    await page.mouse.move(1, 1); await settled();
+    const old = await caption.boundingBox(), first = await screenshot();
+    const frames = await captureLanguageChange(tag, name);
     const end = await caption.boundingBox(), last = await screenshot();
     const levels = await page.evaluate(async ({ old, end, frames }) => {
       const x = Math.floor(Math.min(old.x, end.x)) - 1, y = Math.floor(Math.min(old.y, end.y)) - 1;
@@ -90,13 +94,89 @@ async page => {
         values.push(peak);
       }
       return values;
-    }, { old, end, frames: [first, ...images, last] });
+    }, { old, end, frames: [first, ...frames, last] });
     const start = levels[0], finish = levels.at(-1), peak = Math.max(...levels), low = Math.min(...levels);
     if (Math.min(start, finish) < 20 || levels.length < 5 || low >= .8 * Math.min(start, finish) || peak > Math.max(start, finish) + 6) {
       throw Error('Unexpected label fade: ' + JSON.stringify({ tag, start, finish, low, peak }));
     }
     return { tag, start, finish, peak };
   };
+
+  async function checkStatusIcon(icon, tag, name, wraps) {
+    const start = await icon.boundingBox();
+    const frames = await captureLanguageChange(tag, name);
+    const end = await icon.boundingBox();
+    if (wraps && Math.abs(start.y - end.y) < 4) throw Error('Expected the translated status to wrap and move the icon');
+    // The snapshot can stretch even when the live SVG reports its original bounding box.
+    const sizes = await page.evaluate(async ({ frames, start, end }) => {
+      const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const left = Math.floor(Math.min(start.x, end.x)) - 6, top = Math.floor(Math.min(start.y, end.y)) - 6;
+      const right = Math.ceil(Math.max(start.x + start.width, end.x + end.width)) + 6;
+      const bottom = Math.ceil(Math.max(start.y + start.height, end.y + end.height)) + 6;
+      const sizes = [];
+      for (const frame of frames) {
+        const png = Uint8Array.from(atob(frame), c => c.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([png], { type: 'image/png' })), scale = bitmap.width / innerWidth;
+        canvas.width = Math.ceil((right - left) * scale); canvas.height = Math.ceil((bottom - top) * scale);
+        ctx.drawImage(bitmap, -Math.floor(left * scale), -Math.floor(top * scale)); bitmap.close();
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i] - pixels[i + 1] < 80 || pixels[i + 2] - pixels[i + 1] < 80) continue;
+          const x = i / 4 % canvas.width, y = Math.floor(i / 4 / canvas.width);
+          x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+        }
+        sizes.push({ width: (x1 - x0 + 1) / scale, height: (y1 - y0 + 1) / scale, y: top + y0 / scale });
+      }
+      return sizes;
+    }, { frames, start, end });
+    const moved = sizes.some(s => s.y > Math.min(start.y, end.y) && s.y < Math.max(start.y, end.y));
+    if ((wraps && !moved) || sizes.length < 5 || sizes.some(s => Math.abs(s.width - start.width) > 1 || Math.abs(s.height - start.height) > 1)) {
+      throw Error('Distorted or missing status icon: ' + JSON.stringify({ tag, start, end, sizes }));
+    }
+    return { tag, frames: sizes.length };
+  }
+
+  async function checkSaveFade() {
+    const save = page.locator('.save-button'), port = page.locator('#proxy-port');
+    await settled();
+    async function sample(change, endDisabled) {
+      // Arm the recorder before fill/click can synchronously change the button.
+      const recorder = await save.evaluateHandle((el, endDisabled) => ({ frames: new Promise((resolve, reject) => {
+        const initial = el.disabled, started = performance.now(), frames = [];
+        let changed = false;
+        function record(time) {
+          const opacity = Number(getComputedStyle(el).opacity);
+          changed ||= el.disabled !== initial;
+          const fading = el.getAnimations().some(a => a.transitionProperty === 'opacity');
+          frames.push({ disabled: el.disabled, opacity, fading });
+          if (changed && el.disabled === endDisabled && !fading) resolve(frames);
+          else if (time - started > 3000) reject(Error('Save availability did not settle'));
+          else requestAnimationFrame(record);
+        }
+        record(started);
+      }) }), endDisabled);
+      try { await change(); return await recorder.evaluate(recording => recording.frames); }
+      finally { await recorder.dispose(); }
+    }
+    const value = await port.inputValue();
+    const checking = await sample(() => page.locator('.setting-row .switch').first().click(), false);
+    const invalid = await sample(() => port.fill('0'), true);
+    const valid = await sample(() => port.fill(value), false);
+    const min = Math.min(...checking.map(frame => frame.opacity)), dim = invalid.at(-1).opacity;
+    const intermediate = frames => frames.some(f => f.opacity > dim + .02 && f.opacity < .98);
+    if (!checking.some(f => f.disabled) || checking.at(-1).disabled || checking.at(-1).opacity !== 1 ||
+      !checking.some(f => f.opacity > min + .01 && f.opacity < .99) || min <= dim + .1 || !invalid.at(-1).disabled || valid.at(-1).disabled ||
+      valid.at(-1).opacity !== 1 || !intermediate(invalid) || !intermediate(valid)) {
+      throw Error('Save button fade: ' + JSON.stringify({ checking, invalid, valid }));
+    }
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    try {
+      const off = await sample(() => port.fill('0'), true), on = await sample(() => port.fill(value), false);
+      if ([...off, ...on].some(frame => frame.fading)) throw Error('Reduced motion still animated save opacity');
+    } finally { await page.emulateMedia({ reducedMotion: null }); }
+    return { checking: min, invalid: dim, valid: valid.at(-1).opacity };
+  }
 
   // Keep the port focused and measure both axes throughout the layout change.
   const recordReflow = async (width, reduced) => {
@@ -142,6 +222,22 @@ async page => {
     return { width, reduced, start, end, rowFrames, inlineFrames };
   };
   try {
+    await size(600, 700); await settled(); await choose('zh-CN', '简体中文');
+    const codex = page.getByRole('switch', { name: '应用于 Codex' });
+    if (await codex.getAttribute('aria-checked') !== 'true') await codex.click();
+    await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
+    const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });
+    const icons = [];
+    try {
+      const info = page.locator('.status-line[data-tone=info] > svg');
+      icons.push(await checkStatusIcon(info, 'en-US', 'English', true), await checkStatusIcon(info, 'zh-CN', '简体中文', true));
+      const port = page.locator('#proxy-port'), value = await port.inputValue();
+      await port.fill('0'); await settled();
+      icons.push(await checkStatusIcon(page.locator('.status-input-link > svg'), 'ja-JP', '日本語', false));
+      await port.fill(value);
+      await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
+    } finally { await ink.evaluate(el => el.remove()); }
+    const saveFade = await checkSaveFade();
     await size(780, 1000); await settled(); await choose('zh-CN', '简体中文');
     const labels = [];
     for (const [dark, enabled, tag, name] of [[true, false, 'en-US', 'English'], [false, false, 'ja-JP', '日本語'],
@@ -173,7 +269,7 @@ async page => {
         await page.keyboard.press('Escape'); await page.locator('.menu-popup').waitFor({ state: 'detached' });
       }
     }
-    return { labels, motion, layouts: 15 };
+    return { icons, saveFade, labels, motion, layouts: 15 };
   } finally {
     await page.emulateMedia({ reducedMotion: null });
     await cdp.send('Emulation.clearDeviceMetricsOverride');

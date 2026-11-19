@@ -468,7 +468,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
         {dirty && <span className="sr-only" id="unsaved-status">{t('setup.status.unsaved')}</span>}
         {loading ? <span className="skeleton-bar skeleton-save" aria-hidden="true" /> : !saved && !loadError &&
-          <Button ref={saveButton} className="button primary-button save-button" data-edited={dirty && !busy || undefined} aria-describedby={dirty ? 'unsaved-status' : undefined} disabled={locked || !validation?.valid} onClick={() => void save()}>{saving && <LoaderCircle size={16} className="spinner" />}{t(saving ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}</Button>}</div>
+          <Button ref={saveButton} className="button primary-button save-button" data-edited={dirty && !busy || undefined}
+            data-validating={!locked && checking && previewValue?.valid || undefined} aria-describedby={dirty ? 'unsaved-status' : undefined}
+            disabled={locked || !validation?.valid} onClick={() => void save()}>
+            {saving && <LoaderCircle size={16} className="spinner" />}{t(saving ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}
+          </Button>}</div>
       <NoticeToasts manager={noticeManager} t={t} onOpen={item => { setSelectedNotice(item); openDialog('notice'); focusReturn.current = doneButton.current }} />
     </footer>
     <Modal open={dialogOpen} title={dialogTitle} variant={dialog === 'help' ? 'help' : undefined} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!activeOperation.current) setDialogOpen(false) }}

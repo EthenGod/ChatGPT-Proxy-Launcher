@@ -274,13 +274,17 @@ button svg { flex-shrink: 0; }
 @keyframes status-enter { from { opacity: 0; transform: translateY(2px); } }
 .footer-actions { display: flex; flex: none; justify-content: flex-end; margin-inline-start: auto; gap: 8px; }
 .button { --button-inset: 16px; min-height: var(--control-height); padding: 7px var(--button-inset); font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
-.save-button { position: relative; --edit-shift: 5px; --edit-duration: var(--motion-fast); }
+.save-button {
+  position: relative; --edit-shift: 5px; --edit-duration: var(--motion-fast);
+  transition-property: background-color, border-color, color, transform, opacity;
+}
 .save-button[data-edited] { --edit-duration: 180ms; }
 .save-button::before { content: ''; position: absolute; inset-inline-start: calc(var(--button-inset) - var(--edit-shift)); top: calc(50% - 2px); width: 4px; height: 4px; border-radius: 50%; background: currentColor; pointer-events: none; opacity: 0; transform: translateX(2px) scale(.5); transition: opacity var(--motion-fast) ease-out, transform var(--edit-duration) var(--motion-space); }
 .save-button[data-edited]::before { opacity: 1; transform: none; }
 .save-button > [data-motion-text] { transition: transform var(--edit-duration) ease-in-out; }
 .save-button[data-edited] > [data-motion-text] { transform: translateX(var(--edit-shift)); }
 .button:disabled { opacity: .45; }
+.save-button:disabled[data-validating] { opacity: .78; }
 .secondary-button { background: var(--gray-3); border-color: var(--gray-7); }
 .secondary-button:hover:not(:disabled) { background: var(--gray-4); border-color: var(--gray-8); }
 .primary-button { background: var(--accent-solid); color: var(--accent-ink); }
@@ -401,6 +405,8 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 :root[data-appearance-transition=language] [style*="view-transition-name"] { transition: none !important; }
 :root[data-appearance-transition=language] .disclosure-panel { height: auto; }
 :root[data-appearance-transition=language] :is(.scroll-viewport, .disclosure-panel) { view-transition-group: contain; }
+/* Keep each glyph at its own size while the translated status wraps and its viewport moves. */
+:root[data-appearance-transition=language] .footer-status svg { view-transition-name: match-element; view-transition-class: language-static; }
 ::view-transition-group-children(.language-clip) { overflow: clip; border-radius: inherit; }
 :root[data-window-resizing] :is(.scroll-content, .scroll-track, .program-scroll, .disclosure-panel) { transition: none !important; }
 :root[data-window-resizing] .disclosure-panel[data-open]:not([data-ending-style]) { height: auto; }
