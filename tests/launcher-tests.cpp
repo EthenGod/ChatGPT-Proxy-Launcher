@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <objbase.h>
 #include <appmodel.h>
 #include <stdio.h>
 #include <string>
@@ -197,7 +198,7 @@ static int CheckLookup() {
     return 0;
 }
 
-static int CheckEntryAndLifetime(PCWSTR outputPrefix) {
+static int CheckEntryAndLifetime(const std::wstring& outputDir) {
     fakePackages = true; fakeCreate = true; createSuccess = true; scenario = Scenario::Normal;
     const HANDLE oldOut = GetStdHandle(STD_OUTPUT_HANDLE), oldError = GetStdHandle(STD_ERROR_HANDLE);
     HANDLE sink = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -252,12 +253,15 @@ static int CheckEntryAndLifetime(PCWSTR outputPrefix) {
     }
     for (unsigned failure = 1; failure <= 2; ++failure) {
         companionFailure = failure;
+        const int chainError = failure == 2 ? 70 : 10;
+        const auto output = outputDir + L"\\failure-" + std::to_wstring(failure) + L".json";
         for (unsigned explicitChain = 0; explicitChain <= 1; ++explicitChain) {
-            const auto output = std::wstring(outputPrefix) + L"-failure-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(failure) + L".json";
             std::wstring tail = explicitChain ? L"--launcher-chain --result \"" + output + L"\" --feedback quiet --" : L"--test";
             int code = -1;
             { memory_fault::Scope fault; code = wWinMain(nullptr, nullptr, tail.data(), 0); }
-            REQUIRE(code == (explicitChain ? failure == 2 ? 70 : 10 : 0));
+            const int expected = explicitChain ? chainError : 0;
+            if (code != expected) printf("Failure case %u, explicit chain %u: expected %d, got %d\n", failure, explicitChain, expected, code);
+            REQUIRE(code == expected);
             REQUIRE(liveAllocations == 0);
         }
     }
@@ -301,8 +305,14 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
     if (argc != 2) return 2;
+    // Windows reuses PIDs. Results must be new files, and a capture must come from this run.
+    GUID runId{};
+    wchar_t id[39]{};
+    REQUIRE(SUCCEEDED(CoCreateGuid(&runId)) && StringFromGUID2(runId, id, _countof(id)));
+    const auto outputDir = std::wstring(argv[1]) + L"-" + id;
+    REQUIRE(CreateDirectoryW(outputDir.c_str(), nullptr));
     REQUIRE(CheckLookup() == 0);
-    REQUIRE(CheckEntryAndLifetime(argv[1]) == 0);
+    REQUIRE(CheckEntryAndLifetime(outputDir) == 0);
     messageCalls = 0;
     REQUIRE(ReportError(0) == 0 && messageCalls == 0);
     wchar_t executable[32768], command[32768];
@@ -352,7 +362,7 @@ int wmain(int argc, wchar_t** argv) {
     // Quotes, spaces and Unicode in the path are received by an actual child, not a shell.
     unsigned index = 0;
     for (const auto tail : cases) {
-        const std::wstring capturePath = std::wstring(argv[1]) + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(index++);
+        const auto capturePath = outputDir + L"\\capture with spaces-" + std::to_wstring(index++) + L".txt";
         const std::wstring args = std::wstring(L"--capture \"") + capturePath + L"\" " + tail;
         const DWORD result = StartApplication(executable, args.c_str());
         if (result) return static_cast<int>(result);

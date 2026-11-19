@@ -11,7 +11,6 @@ import { NoticeToasts, createNoticeManager, type NoticeData } from '../../compon
 import { useAppearanceTransition } from '../../components/useAppearanceTransition'
 import { resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
-import { nativeMessage } from '../../platform/setup-service'
 import { nativeIssue, type ErrorInfo } from './errors'
 import { portErrorKey, previewOptions, sameOptions } from './preview'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
@@ -129,17 +128,23 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   }, [service])
   useEffect(() => {
     alive.current = true
+    let active = true
     let disconnect: (() => void) | undefined
     // Capture also covers Base UI portals and keyboard context-menu requests.
     const preventBrowserMenu = (event: MouseEvent) => event.preventDefault()
     window.addEventListener('contextmenu', preventBrowserMenu, true)
-    void host.connect(() => closeRequest.current()).then(remove => {
-      if (!alive.current) remove()
-      else { disconnect = remove; return host.ready() }
-    }).catch(cause => { if (alive.current) reportFailure('ui.close.failed', cause) })
+    void host.connect(() => { if (active) closeRequest.current() }).then(remove => {
+      if (!active) return remove()
+      disconnect = remove
+      return host.ready()
+    }).catch(cause => { if (active) reportFailure('ui.close.failed', cause) })
     void load()
     return () => {
-      alive.current = false; ++detectRevision.current; ++loadRevision.current; disconnect?.()
+      active = false
+      alive.current = false
+      ++detectRevision.current
+      ++loadRevision.current
+      disconnect?.()
       window.removeEventListener('contextmenu', preventBrowserMenu, true)
     }
   }, [host, load])
@@ -179,7 +184,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     const timer = setTimeout(() => {
       void service.validate!(options).then(value => {
         if (current && alive.current) setNativeValidation({ options, value })
-      }).catch(cause => { if (current && alive.current) setNativeValidation({ options, value: { valid: false, arguments: '', errors: {}, ...nativeIssue(cause), detail: nativeMessage(cause) || t('ui.save.invalid') } }) })
+      }).catch(cause => {
+        if (!current || !alive.current) return
+        const problem = nativeIssue(cause)
+        setNativeValidation({ options, value: {
+          valid: false, arguments: '', errors: {}, nativeError: problem.nativeError, detail: problem.detail || t('ui.save.invalid'),
+        } })
+      })
     }, 180)
     return () => { current = false; clearTimeout(timer) }
   }, [options, service, busy, resolved])

@@ -529,6 +529,33 @@ describe('notice reading time', () => {
 })
 
 describe('native settings behavior', () => {
+  it('releases a late close listener after the window connection is replaced', async () => {
+    const service = new MockSetupService('normal', 0)
+    let finishConnect!: (remove: () => void) => void
+    let staleClose!: () => void
+    const first: WindowHost = {
+      connect: callback => { staleClose = callback; return new Promise(resolve => { finishConnect = resolve }) },
+      ready: vi.fn(async () => {}), close: vi.fn(async () => {}), setTheme: vi.fn(async () => {}),
+    }
+    const removeFirst = vi.fn(), removeSecond = vi.fn()
+    const second = { ...first, connect: vi.fn(async () => removeSecond), ready: vi.fn(async () => {}) }
+    const view = render(<SetupPage service={service} host={first} />)
+    view.rerender(<SetupPage service={service} host={second} />)
+    await waitFor(() => expect(second.ready).toHaveBeenCalledOnce())
+    await act(async () => { staleClose(); finishConnect(removeFirst) })
+    expect(first.close).not.toHaveBeenCalled()
+    expect(first.ready).not.toHaveBeenCalled()
+    expect(removeFirst).toHaveBeenCalledOnce()
+    view.unmount()
+    expect(removeSecond).toHaveBeenCalledOnce()
+  })
+  it('keeps a plain-text native validation failure in the preview', async () => {
+    const service = Object.assign(new MockSetupService('normal', 0), { native: true, validate: vi.fn().mockRejectedValue('原生校验暂时不可用') })
+    mount(service)
+    const preview = await screen.findByRole('region', { name: '启动参数' })
+    await waitFor(() => expect(preview).toHaveTextContent('原生校验暂时不可用'))
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
+  })
   it('waits for current native validation and ignores an obsolete validation response', async () => {
     const base = new MockSetupService('normal', 0)
     const pending: Array<{ options: import('../../frontend/src/platform/types').SetupOptions; resolve: (value: import('../../frontend/src/features/setup/contract').Validation) => void }> = []

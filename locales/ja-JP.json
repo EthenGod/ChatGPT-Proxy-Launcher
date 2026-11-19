@@ -4,10 +4,7 @@
   "nativeName": "日本語",
   "fontFamily": "Yu Gothic UI",
   "strings": {
-    "setup.preview.readonly": "画面プレビュー。現在の設定は表示のみです。",
     "setup.preview.loading": "設定を読み込み中…",
-    "setup.preview.on": "オン",
-    "setup.preview.off": "オフ",
     "setup.action.refresh": "更新",
     "setup.error.readstate": "設定を読み込めませんでした。再試行してください。",
     "setup.error.webviewmissing": "Microsoft Edge WebView2 ランタイムが見つかりません。Microsoft の公式サイトからインストールして再試行してください。バックグラウンドコマンドは引き続き使用できます。\n\nhttps://developer.microsoft.com/microsoft-edge/webview2/",

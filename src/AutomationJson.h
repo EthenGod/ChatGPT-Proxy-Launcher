@@ -3,6 +3,8 @@
 #include "AutomationContract.h"
 #include <map>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <stdexcept>
 #include <initializer_list>
@@ -19,7 +21,7 @@ struct Json {
     std::map<std::wstring, Json, std::less<>> object;
     Json() = default;
     explicit Json(bool value) : type(Type::Boolean), boolean(value) {}
-    explicit Json(const std::wstring& value) : type(Type::String), text(value) {}
+    explicit Json(std::wstring value) : type(Type::String), text(std::move(value)) {}
     explicit Json(const wchar_t* value) : type(Type::String), text(value) {}
     static Json Number(long long value);
     static Json Object();
@@ -32,8 +34,8 @@ struct Json {
     long long Integer(long long minimum, long long maximum) const;
     void Fields(std::initializer_list<const wchar_t*> allowed) const;
 };
-std::wstring FromUtf8(const std::string& text);
+std::wstring FromUtf8(std::string_view text);
 std::string Utf8(const std::wstring& text);
-Json ParseJson(const std::string& bytes, size_t maximum = contract::JsonBytes);
+Json ParseJson(std::string_view bytes, size_t maximum = contract::JsonBytes);
 std::string WriteJson(const Json& value);
 }

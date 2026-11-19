@@ -37,6 +37,7 @@ describe('desktop command boundary', () => {
     expect(parseSaveResult(saved).nativeError).toBe(8)
     expect(() => parseSaveResult({ ...saved, nativeError: -1 })).toThrow()
     expect(() => parseSaveResult({ ...saved, commit: 'maybe' })).toThrow()
+    expect(() => parseSaveResult({ ...saved, commit: ['saved'] })).toThrow()
     expect(() => parseSaveResult({ ...saved, warnings: ['unrecognized'] })).toThrow()
     expect(() => parseSaveResult({ ...saved, options: { ...fixture.options, silent: undefined } })).toThrow()
     expect(parseSaveResult({ ...saved, options: fixture.options }).options?.extra).toBe(fixture.options.extra)
@@ -50,7 +51,9 @@ describe('desktop command boundary', () => {
     const row = { id: 'org.example.tool', name: 'Example', path: 'tool.exe', arguments: '', status: 'adapted' }
     const value = { entries: [row], incomplete: false }
     vi.mocked(invoke).mockResolvedValue(value)
-    expect(await createSetupService().listPrograms()).toEqual(value)
+    const service = createSetupService()
+    expect(await service.listPrograms()).toEqual(value)
+    await expect(service.settled!()).resolves.toBeUndefined()
     expect(invoke).toHaveBeenCalledWith('list_setup_programs', undefined)
     expect(() => parseProgramList({ ...value, entries: [row, row] })).toThrow()
     expect(() => parseProgramList({ ...value, entries: [{ ...row, status: 'unknown' }] })).toThrow()

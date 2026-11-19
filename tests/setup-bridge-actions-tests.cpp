@@ -10,6 +10,7 @@
 static int syntheticCommit = -1;
 static bool failAfterCommit = false;
 namespace setup {
+Result UnexpectedSystemPaths(Paths&) { return {ERROR_PATH_NOT_FOUND, L"System folders unavailable"}; }
 Result BridgeTestApply(const Paths& paths, const Options& options, Payload payload, std::wstring& target) {
     if (syntheticCommit >= 0) {
         Result result{ERROR_WRITE_FAULT, L"Synthetic write failure"};
@@ -22,7 +23,9 @@ Result BridgeTestApply(const Paths& paths, const Options& options, Payload paylo
 }
 }
 #define Apply BridgeTestApply
+#define GetPaths UnexpectedSystemPaths
 #include "../src/SetupBridge.cpp"
+#undef GetPaths
 #undef Apply
 
 #define REQUIRE(x) do { if (!(x)) { printf("FAIL actions line %d: %s\n", __LINE__, #x); return 20; } } while (0)
@@ -55,13 +58,14 @@ int wmain(int argc, wchar_t** argv) {
         options.extra = L"\"\" \"中文 参数\" \"quote\\\"end\"";
         Json reply;
         uint32_t commit = 0;
-        auto call = [&](uint32_t action, const Json& request) {
+        auto call = [&](uint32_t action, const Json& request, bool useSystemPaths = false) {
             const auto input = automation::WriteJson(request);
             SetupBridgeBuffer buffer{};
             const auto code = setup_bridge_action(action, reinterpret_cast<const uint8_t*>(input.data()), input.size(),
-                reinterpret_cast<const uint8_t*>(pathJson.data()), pathJson.size(), 0, &buffer, &commit);
+                useSystemPaths ? nullptr : reinterpret_cast<const uint8_t*>(pathJson.data()),
+                useSystemPaths ? 0 : pathJson.size(), 0, &buffer, &commit);
             memory_fault::armed = false;
-            reply = buffer.data ? automation::ParseJson(std::string(reinterpret_cast<char*>(buffer.data), buffer.length), MaxResponseBytes) : Json{};
+            reply = buffer.data ? automation::ParseJson({reinterpret_cast<char*>(buffer.data), buffer.length}, MaxResponseBytes) : Json{};
             memory_fault::watchedAllocation = buffer.data; memory_fault::watchedReleased = false;
             const bool hadBuffer = buffer.data != nullptr;
             setup_bridge_free(&buffer);
@@ -74,6 +78,12 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(call(SETUP_LIST_PROGRAMS, arbitrary) != 0);
         REQUIRE(call(SETUP_VALIDATE, Options(options)) == 0 && reply.At(L"valid").Bool());
         REQUIRE(reply.At(L"arguments").String().find(options.extra) != std::wstring::npos);
+        const auto preview = automation::WriteJson(reply);
+        // Even without Windows folders or an STA, preview must return the same result.
+        REQUIRE(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)));
+        const auto previewCode = call(SETUP_VALIDATE, Options(options), true);
+        CoUninitialize();
+        REQUIRE(previewCode == 0 && commit == 0 && automation::WriteJson(reply) == preview);
         for (const auto& bad : {L"\"unclosed", L"bad\nline"}) {
             auto invalid = options; invalid.extra = bad;
             REQUIRE(call(SETUP_VALIDATE, Options(invalid)) == 0 && !reply.At(L"valid").Bool());
@@ -82,7 +92,7 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(call(SETUP_VALIDATE, Options(invalid)) == 0 && !reply.At(L"valid").Bool());
         invalid = options; invalid.port = L"65536";
         REQUIRE(call(SETUP_VALIDATE, Options(invalid)) == 0 && !reply.At(L"valid").Bool());
-        REQUIRE(automation::WriteJson(reply.At(L"nativeError")) != "0");
+        REQUIRE(reply.At(L"nativeError").Integer(0, MAXDWORD) == ERROR_INVALID_PARAMETER);
         auto detection = Json::Object(); detection[L"protocol"] = Json(L"http"); detection[L"host"] = Json(L"127.0.0.1");
         REQUIRE(call(SETUP_DETECT, detection) == 0 && reply.At(L"port").String() == L"7897" && !reply.At(L"source").String().empty());
         detection[L"protocol"] = Json(L"https");

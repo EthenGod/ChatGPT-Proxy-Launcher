@@ -4,10 +4,7 @@
   "nativeName": "简体中文",
   "fontFamily": "Microsoft YaHei UI",
   "strings": {
-    "setup.preview.readonly": "界面预览，仅查看现有设置。",
     "setup.preview.loading": "正在读取设置…",
-    "setup.preview.on": "已开启",
-    "setup.preview.off": "已关闭",
     "setup.action.refresh": "刷新",
     "setup.error.readstate": "无法读取设置，请重试。",
     "setup.error.webviewmissing": "缺少 Microsoft Edge WebView2 运行时。请从 Microsoft 官方网站安装后重试。后台命令仍可使用。\n\nhttps://developer.microsoft.com/microsoft-edge/webview2/",

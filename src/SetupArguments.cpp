@@ -2,21 +2,24 @@
 #include "SetupCore.h"
 #include "Localization.h"
 #include "AutomationIO.h"
+#include "NativeMemory.h"
 #include <shellapi.h>
 #include <cwchar>
+#include <optional>
+#include <string_view>
 
 namespace setup {
 namespace {
 Result Fail(DWORD code, const std::wstring& what) {
     return { code ? code : ERROR_GEN_FAILURE, what + L"\n" + ErrorText(code) };
 }
-struct Token { std::wstring value, raw; size_t end = 0; };
-struct LocalArguments {
-    LPWSTR* values;
-    explicit LocalArguments(LPWSTR* value) : values(value) {}
-    ~LocalArguments() { if (values) LocalFree(values); }
-    LocalArguments(const LocalArguments&) = delete;
-    LocalArguments& operator=(const LocalArguments&) = delete;
+// raw borrows the caller's command line for the duration of BuildArguments or ParseArguments.
+struct Token {
+    std::wstring_view raw;
+    size_t end;
+    std::optional<std::wstring> decoded;
+
+    std::wstring_view Value() const { return decoded ? std::wstring_view(*decoded) : raw; }
 };
 Result Tokens(const std::wstring& arguments, std::vector<Token>& tokens) {
     tokens.clear();
@@ -27,33 +30,42 @@ Result Tokens(const std::wstring& arguments, std::vector<Token>& tokens) {
     while (i < arguments.size()) {
         if (arguments[i] == L' ' || arguments[i] == L'\t') { ++i; continue; }
         const size_t start = i;
-        bool quoted = false;
+        bool quoted = false, hasQuote = false;
         size_t slashes = 0;
         for (; i < arguments.size(); ++i) {
             const wchar_t c = arguments[i];
             if (!quoted && (c == L' ' || c == L'\t')) break;
-            if (c == L'"' && slashes % 2 == 0) quoted = !quoted;
+            if (c == L'"') {
+                hasQuote = true;
+                if (slashes % 2 == 0) quoted = !quoted;
+            }
             slashes = c == L'\\' ? slashes + 1 : 0;
         }
         if (quoted) return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.quote"));
-        const std::wstring raw = arguments.substr(start, i - start);
-        int count = 0;
-        const LocalArguments argv(CommandLineToArgvW((L"program " + raw).c_str(), &count));
-        if (!argv.values) return Fail(GetLastError(), l10n::Text("error.arguments.parse"));
-        if (count != 2) return Fail(ERROR_INVALID_DATA, l10n::Text("error.arguments.format"));
-        tokens.push_back({ argv.values[1], raw, i });
+        Token token{std::wstring_view(arguments).substr(start, i - start), i, std::nullopt};
+        // Only quotes change the value of a Windows argument, including escaped quotes.
+        if (hasQuote) {
+            std::wstring command = L"program ";
+            command.append(token.raw);
+            int count = 0;
+            native::LocalPtr<LPWSTR> argv(CommandLineToArgvW(command.c_str(), &count));
+            if (!argv) return Fail(GetLastError(), l10n::Text("error.arguments.parse"));
+            if (count != 2) return Fail(ERROR_INVALID_DATA, l10n::Text("error.arguments.format"));
+            token.decoded.emplace(argv.get()[1]);
+        }
+        tokens.push_back(std::move(token));
     }
     return {};
 }
 enum ManagedOption { Other, ProxyServer, SilentStart, ProxyBypass, ManagedOptionCount };
-ManagedOption ManagedKind(const std::wstring& arg) {
-    const std::wstring key = arg.substr(0, arg.find(L'='));
+ManagedOption ManagedKind(std::wstring_view arg) {
+    const auto key = arg.substr(0, arg.find(L'='));
     if (key == L"--proxy-server") return ProxyServer;
     if (key == L"--no-startup-window") return SilentStart;
     if (key == L"--proxy-bypass-list") return ProxyBypass;
     return Other;
 }
-void Append(std::wstring& text, const std::wstring& item) {
+void Append(std::wstring& text, std::wstring_view item) {
     if (item.empty()) return;
     if (!text.empty()) text += L' ';
     text += item;
@@ -90,11 +102,12 @@ Result BuildArguments(const Options& options, std::wstring& arguments) {
     if (!result) return result;
     unsigned counts[ManagedOptionCount]{};
     for (const auto& token : tokens) {
-        if (token.value == L"--") break;
-        const ManagedOption kind = ManagedKind(token.value);
+        const auto value = token.Value();
+        if (value == L"--") break;
+        const ManagedOption kind = ManagedKind(value);
         if (kind != Other && ++counts[kind] > 1)
             return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.duplicate"));
-        if (token.value == L"--launcher-check" || token.value == L"--launcher-info" || token.value == L"--launcher-chain")
+        if (value == L"--launcher-check" || value == L"--launcher-info" || value == L"--launcher-chain")
             return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.reserved"));
     }
     return {};
@@ -106,8 +119,9 @@ Result ParseArguments(const std::wstring& arguments, Options& options) {
     if (!result) { options.extra = arguments; return result; }
     unsigned counts[ManagedOptionCount]{};
     for (const auto& token : tokens) {
-        if (token.value == L"--") break;
-        ++counts[ManagedKind(token.value)];
+        const auto value = token.Value();
+        if (value == L"--") break;
+        ++counts[ManagedKind(value)];
     }
     // Preserve the complete original text when duplicate managed options cannot be represented by the form.
     if (counts[ProxyServer] > 1 || counts[SilentStart] > 1 || counts[ProxyBypass] > 1) {
@@ -117,13 +131,14 @@ Result ParseArguments(const std::wstring& arguments, Options& options) {
     size_t lastUnknownEnd = 0;
     bool previousUnknown = false, positional = false;
     for (const auto& token : tokens) {
-        if (token.value == L"--") positional = true;
-        if (!positional && token.value == L"--no-startup-window") { options.silent = true; previousUnknown = false; continue; }
-        if (!positional && token.value.rfind(L"--proxy-bypass-list=", 0) == 0 && token.value.size() > 20) {
-            options.bypass = token.value.substr(20); previousUnknown = false; continue;
+        const auto argument = token.Value();
+        if (argument == L"--") positional = true;
+        if (!positional && argument == L"--no-startup-window") { options.silent = true; previousUnknown = false; continue; }
+        if (!positional && argument.rfind(L"--proxy-bypass-list=", 0) == 0 && argument.size() > 20) {
+            options.bypass = argument.substr(20); previousUnknown = false; continue;
         }
-        if (!positional && token.value.rfind(L"--proxy-server=", 0) == 0) {
-            const std::wstring value = token.value.substr(15);
+        if (!positional && argument.rfind(L"--proxy-server=", 0) == 0) {
+            const auto value = argument.substr(15);
             const size_t separator = value.find(L"://"), colon = value.rfind(L':');
             if (separator != std::wstring::npos && colon > separator + 3) {
                 Options candidate = options;
@@ -139,7 +154,7 @@ Result ParseArguments(const std::wstring& arguments, Options& options) {
                 }
             }
         }
-        if (previousUnknown) options.extra += arguments.substr(lastUnknownEnd, token.end - lastUnknownEnd);
+        if (previousUnknown) options.extra.append(arguments, lastUnknownEnd, token.end - lastUnknownEnd);
         else Append(options.extra, token.raw);
         previousUnknown = true;
         lastUnknownEnd = token.end;

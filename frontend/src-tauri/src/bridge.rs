@@ -22,6 +22,19 @@ impl Drop for Buffer {
         unsafe { setup_bridge_free(self) }
     }
 }
+impl Buffer {
+    fn decode<T: DeserializeOwned>(&self, code: u32) -> Result<T, BridgeError> {
+        if self.data.is_null() || self.length == 0 || self.length > MAX_RESPONSE {
+            return Err(BridgeError::native(if code == 0 { 13 } else { code }));
+        }
+        // C++ owns these bytes until this Buffer drops. Deserialization owns its result.
+        let data = unsafe { slice::from_raw_parts(self.data, self.length) };
+        if code != 0 {
+            return Err(serde_json::from_slice(data).unwrap_or_else(|_| BridgeError::native(code)));
+        }
+        serde_json::from_slice(data).map_err(|_| BridgeError::native(13))
+    }
+}
 unsafe extern "C" {
     fn setup_bridge_initialize();
     fn setup_bridge_action(
@@ -66,14 +79,7 @@ pub fn read_state(paths: Option<&[u8]>) -> Result<Snapshot, BridgeError> {
     let mut buffer = Buffer::default();
     let (paths, length) = bytes(paths);
     let code = unsafe { setup_bridge_read_state(paths, length, &mut buffer) };
-    if buffer.data.is_null() || buffer.length == 0 || buffer.length > MAX_RESPONSE {
-        return Err(BridgeError::native(if code == 0 { 13 } else { code }));
-    }
-    let data = unsafe { slice::from_raw_parts(buffer.data, buffer.length) };
-    if code != 0 {
-        return Err(serde_json::from_slice(data).unwrap_or_else(|_| BridgeError::native(code)));
-    }
-    let state: Snapshot = serde_json::from_slice(data).map_err(|_| BridgeError::native(13))?;
+    let state: Snapshot = buffer.decode(code)?;
     if state.schema_version != 1 || state.payload_bytes == 0 {
         return Err(BridgeError::native(13));
     }
@@ -82,7 +88,7 @@ pub fn read_state(paths: Option<&[u8]>) -> Result<Snapshot, BridgeError> {
 
 pub fn action<T: DeserializeOwned>(
     action: u32,
-    request: &serde_json::Value,
+    request: &impl serde::Serialize,
     paths: Option<&[u8]>,
     owner: usize,
 ) -> (u32, Result<T, BridgeError>) {
@@ -105,21 +111,10 @@ pub fn action<T: DeserializeOwned>(
             &mut commit,
         )
     };
-    let value = if buffer.data.is_null() || buffer.length == 0 || buffer.length > MAX_RESPONSE {
-        Err(BridgeError::native(if code == 0 { 13 } else { code }))
-    } else {
-        let data = unsafe { slice::from_raw_parts(buffer.data, buffer.length) };
-        if code != 0 {
-            Err(serde_json::from_slice(data).unwrap_or_else(|_| BridgeError::native(code)))
-        } else {
-            serde_json::from_slice(data).map_err(|_| BridgeError::native(13))
-        }
-    };
-    (commit, value)
+    (commit, buffer.decode(code))
 }
-pub fn save(options: Options, paths: Option<&[u8]>) -> Result<SaveResult, BridgeError> {
-    let request = serde_json::to_value(options).map_err(|_| BridgeError::native(13))?;
-    let (commit, result) = action::<SaveResult>(3, &request, paths, 0);
-    Ok(result
-        .unwrap_or_else(|error| SaveResult::unavailable(commit, error.message, error.native_error)))
+pub fn save(options: Options, paths: Option<&[u8]>) -> SaveResult {
+    let (commit, result) = action::<SaveResult>(3, &options, paths, 0);
+    result
+        .unwrap_or_else(|error| SaveResult::unavailable(commit, error.message, error.native_error))
 }

@@ -24,10 +24,16 @@ int wmain(int argc, wchar_t** argv) {
         REQUIRE(Rejected("{\"x\":1,\"\\u0078\":2}"));
         REQUIRE(Rejected("{\"x\":\"\\uD800\"}"));
         REQUIRE(Rejected("{\"x\":\"\\u0000\"}"));
+        REQUIRE(Rejected("\"prefix\\uD800suffix\"") && Rejected("\"中文\\uDC00\""));
+        REQUIRE(Rejected("\"text\tend\"") && Rejected("\"unfinished") && Rejected("\"tail\\"));
         REQUIRE(Rejected("{\"x\":1,}")); REQUIRE(Rejected("[1,]")); REQUIRE(Rejected("01")); REQUIRE(Rejected("1e"));
         REQUIRE(Rejected(std::string("\xff\xff", 2)));
         REQUIRE(Rejected(std::string(30, '[') + "0" + std::string(30, ']')));
         REQUIRE(WriteJson(ParseJson("{\"z\":[true,null,\"\\u4e2d\\u6587\",\"\\ud83d\\ude00\"]}")) == "{\"z\":[true,null,\"中文\",\"😀\"]}\n");
+        const std::string framed = R"(prefix["a\"b\\c\/d","\b\f\n\r\t","😀\u4e2d"]suffix)";
+        const auto slice = std::string_view(framed).substr(6, framed.size() - 12);
+        const std::string expected = R"(["a\"b\\c/d","\u0008\u000c\u000a\u000d\u0009","😀中"])" "\n";
+        REQUIRE(WriteJson(ParseJson(slice, slice.size())) == expected);
         REQUIRE(ParseJson("1.0").Integer(1, 1) == 1);
         REQUIRE(ParseJson("1.23e2").Integer(0, 255) == 123);
         bool fractionalRejected = false;

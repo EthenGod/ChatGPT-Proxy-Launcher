@@ -409,7 +409,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     result = ReadFileBytes(discoveryPath, oldDiscovery); if (!result) return result;
     if (oldDiscovery.exists) {
         try {
-            const auto record = automation::ParseJson(std::string(oldDiscovery.data.begin(), oldDiscovery.data.end()));
+            const auto record = automation::ParseJson({reinterpret_cast<const char*>(oldDiscovery.data.data()), oldDiscovery.data.size()});
             if (record.At(L"schemaVersion").Integer(0, MAXDWORD) != automation::contract::DiscoverySchema || record.At(L"managedBy").String() != automation::contract::ManagedBy)
                 return Conflict(l10n::Text("error.discovery.owner"), paths.defaultDirectory);
         } catch (...) { return Conflict(l10n::Text("error.discovery.read"), paths.defaultDirectory); }

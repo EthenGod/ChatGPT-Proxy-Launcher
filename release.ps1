@@ -82,7 +82,7 @@ $sourceNames = @(
     'tests/rust/bridge_contract.rs', 'tests/rust/embedded_assets.rs',
     'frontend/.npmrc', 'frontend/.cargo/config.toml', 'frontend/desktop.ps1', 'frontend/preview.ps1', 'frontend/index.html', 'frontend/prototype.html',
     'frontend/package.json', 'frontend/package-lock.json', 'frontend/tsconfig.json', 'frontend/vite.config.ts',
-    'frontend/src/main.tsx', 'frontend/src/prototype.tsx', 'frontend/src/app/App.tsx', 'frontend/src/i18n/index.ts',
+    'frontend/src/main.tsx', 'frontend/src/prototype.tsx', 'frontend/src/i18n/index.ts',
     'frontend/src/assets/sample-audio.png', 'frontend/src/assets/sample-archive.png',
     'frontend/src/components/controls.tsx', 'frontend/src/components/ScrollBox.tsx', 'frontend/src/components/useAppearanceTransition.ts', 'frontend/src/components/NoticeToasts.tsx', 'frontend/src/components/ErrorDetails.tsx', 'frontend/src/features/setup/SetupPage.tsx',
     'frontend/src/features/setup/contract.ts', 'frontend/src/features/setup/preview.ts', 'frontend/src/features/setup/errors.ts', 'frontend/src/features/setup/SetupSkeleton.tsx', 'frontend/src/features/setup/SetupStatus.tsx', 'frontend/src/features/setup/CompanionPrograms.tsx',

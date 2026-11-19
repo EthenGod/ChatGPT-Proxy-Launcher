@@ -63,7 +63,7 @@ where
 async fn action<T: DeserializeOwned + Send + 'static>(
     state: &NativeState,
     code: u32,
-    request: serde_json::Value,
+    request: impl serde::Serialize + Send + 'static,
     owner: usize,
 ) -> Result<T, BridgeError> {
     // The visual prototype can never write real or isolated deployment data.
@@ -95,13 +95,7 @@ async fn validate_setup(
     state: tauri::State<'_, NativeState>,
     options: Options,
 ) -> Result<Validation, BridgeError> {
-    action(
-        &state,
-        1,
-        serde_json::to_value(options).map_err(|_| BridgeError::native(13))?,
-        0,
-    )
-    .await
+    action(&state, 1, options, 0).await
 }
 #[tauri::command]
 async fn detect_setup_port(
@@ -128,7 +122,7 @@ async fn save_setup(
     run(&state, move |paths| {
         #[cfg(feature = "test-harness")]
         harness::record_action(3);
-        bridge::save(options, paths)
+        Ok(bridge::save(options, paths))
     })
     .await
 }

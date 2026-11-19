@@ -22,7 +22,7 @@ export interface Validation {
 export interface Detection { port: string | null; source: string; message: string }
 export interface SetupService {
   native?: boolean
-  settled?(): Promise<unknown>
+  settled?(): Promise<void>
   picker?: { directories: string[]; programs: ProgramEntry[] }
   validate?(options: SetupOptions): Promise<Validation>
   chooseDirectory?(initial: string): Promise<string | null>

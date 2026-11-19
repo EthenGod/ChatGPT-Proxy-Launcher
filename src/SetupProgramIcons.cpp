@@ -102,11 +102,11 @@ struct IconTable {
         }
         OwnedIcon icon(handle);
         if (!icon) return -1;
-        const auto png = EncodeIcon(factory, icon.get());
+        auto png = EncodeIcon(factory, icon.get());
         if (png.empty() || png.size() + 3 > budget) return -1;
         budget -= png.size() + 3; // quotes and comma
         slot->second = static_cast<int>(images.array.size());
-        images.array.emplace_back(png);
+        images.array.emplace_back(std::move(png));
         return slot->second;
     }
 };

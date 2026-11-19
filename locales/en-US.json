@@ -4,10 +4,7 @@
   "nativeName": "English",
   "fontFamily": "Segoe UI",
   "strings": {
-    "setup.preview.readonly": "Interface preview. Existing settings are read-only.",
     "setup.preview.loading": "Reading settings…",
-    "setup.preview.on": "On",
-    "setup.preview.off": "Off",
     "setup.action.refresh": "Refresh",
     "setup.error.readstate": "Could not read settings. Please try again.",
     "setup.error.webviewmissing": "Microsoft Edge WebView2 Runtime is missing. Install it from Microsoft's official website and try again. Headless commands remain available.\n\nhttps://developer.microsoft.com/microsoft-edge/webview2/",

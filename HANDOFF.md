@@ -10,6 +10,7 @@
 - `release.cmd -TestPackage` 完成静态分析、完整回归和源码核验后，只创建新的 `work/release-stage-*`，不写旧 Release。打包期间不能修改源码；脚本会核对构建前后的清单哈希。`tests/delivery-tests.ps1` 复核两个 EXE、明确源码清单和校验文件。
 - 单文件检查拒绝额外的 VC++ 和 `WebView2Loader.dll` 依赖，但允许 Windows 10 以上自带的 UCRT/API-set。不要把 `api-ms-win-crt-*` 当作需要随包附带的 DLL。边界见[微软 UCRT 部署说明](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment)。
 - C++ 结果由 C++ 释放。Rust 的作用域对象负责调用释放函数。原始后台命令以 UTF-16 直接交给原解析器，必须在 WebView 检查和窗口初始化之前分流。普通 EXE 不接受测试路径环境变量；`test-harness` 产物必须单独保存在 `work/ui-stage1-test/`。
+- 参数预览只校验输入。正式调用无需获取用户目录或初始化 COM。前端命令队列只保留完成信号，避免把上次附加程序列表和图标留在内存中。窗口监听若在页面换用新连接后才注册成功，须释放旧监听。
 - Tauri 生成窗口图标和版本资源，追加编号 101 的启动器载荷和 102 的界面能力信息，不整体链接旧 `SetupResources.rc`。资源编译器会改变 manifest 的空白，验收时按 XML 内容核对；启动器载荷必须逐字节匹配该次构建。
 - 原生 GUI 通过 `RunNativeSetup` 静态链接进同一个 Tauri EXE。`--compatibility` 只接受单独使用，在 Tauri 初始化前分流；缺少 WebView2 时直接运行 EXE 也回退到兼容界面。旧原生构建保留独立入口。兼容模式的隔离测试入口锁住编辑、偏好写入、检测和系统操作，不能把测试包当正常配置器使用。
 - PowerShell 读取资源 102 判断是否需要 WebView2，不能按版本猜测或执行新参数探测旧 EXE。缺失时询问安装、兼容界面或取消。只有明确选择安装才下载微软安装器；校验有效微软签名，并保持文件只读锁直到启动。安装结束需重新检测运行库。后台调用跳过全部 UI 检测和安装流程。测试替换注册表读取、下载、安装和启动操作，不安装真实运行库。
@@ -103,7 +104,8 @@
 
 - 配置器的文本规则分为 `SetupArguments.cpp` 和 `CodexEnv.cpp`。两者不读写用户文件，不执行系统操作。文件所有权、原子替换和回滚由 `SetupCore.cpp` 统一负责。新增模块须同时进入构建、测试链接、静态分析和发布源码清单。
 - `build.cmd`、测试和静态分析共用 `tools/msvc-env.cmd`。优先复用 x64 开发者终端，否则使用 `vswhere` 定位工具链，不在各入口分别写死安装路径。
-- `tests/analyze.cmd` 只编译分析正式源码，产物放在 `work/analysis/`。`work/proxy-tests.exe --benchmark` 只解析合成 YAML，不接触本机代理配置。性能对照方法与边界见 `docs/performance-review.md`。
+- `tests/analyze.cmd` 把 C++ 分析对象写入 `work/analysis/`，随后的桌面检查会重建原生启动器。验证交付时先运行静态分析，再运行 `tests/test-build.cmd`，最后核对同次构建的两个 EXE。性能复测方法见 `docs/performance-review.md`。
+- 启动器测试为每轮结果和子进程捕获新建独立目录。Windows 会复用进程号。仅按进程号命名会与旧结果冲突，也可能提前读到上轮捕获。
 - 代理进程快照和路径缓存只属于一次检测。重复查询和失败查询都复用结果，下次点击须重新获取；不能跨次保留 PID。v2rayN 的安装根目录可能就是本地配置目录，应先去重。
 - YAML 解析使用原文本的 `string_view`。视图不得逃逸出本次解析；不能为提前返回端口而跳过后续重复键或多文档检查。
 

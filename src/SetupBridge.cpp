@@ -24,7 +24,7 @@ constexpr size_t MaxResponseBytes = 1024 * 1024;
 setup::Result ResolvePaths(const uint8_t* bytes, size_t size, setup::Paths& paths) {
     if (!bytes && !size) return setup::GetPaths(paths);
     if (!bytes || !size || size > automation::contract::JsonBytes) throw automation::Invalid("invalid-paths");
-    const auto value = automation::ParseJson(std::string(reinterpret_cast<const char*>(bytes), size));
+    const auto value = automation::ParseJson({reinterpret_cast<const char*>(bytes), size});
     value.Fields({L"defaultDirectory", L"startupLink", L"settingsLink", L"desktopLink", L"codexEnvFile",
         L"legacyStartupLink", L"legacyDesktopLink"});
     auto get = [&](PCWSTR key) {
@@ -279,25 +279,30 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
     *commit = 0;
     try {
         if (!requestBytes || !requestLength || requestLength > automation::contract::JsonBytes) return ERROR_INVALID_PARAMETER;
-        const auto request = automation::ParseJson(std::string(reinterpret_cast<const char*>(requestBytes), requestLength));
+        const auto request = automation::ParseJson({reinterpret_cast<const char*>(requestBytes), requestLength});
         setup::Paths paths;
-        Require(ResolvePaths(pathBytes, pathsLength, paths));
+        // A preview only checks the supplied text. Still validate any explicit harness paths.
+        if (action != SETUP_VALIDATE || pathBytes || pathsLength) Require(ResolvePaths(pathBytes, pathsLength, paths));
+        if (action == SETUP_VALIDATE) {
+            const auto options = ParseOptions(request);
+            std::wstring arguments, directory;
+            auto result = setup::BuildArguments(options, arguments);
+            if (result) result = setup::NormalizeDirectory(options.directory, directory);
+            auto response = Json::Object();
+            response[L"valid"] = Json(static_cast<bool>(result));
+            response[L"arguments"] = Json(std::move(arguments));
+            response[L"errors"] = Json::Object();
+            response[L"detail"] = Json(std::move(result.message));
+            response[L"nativeError"] = Json::Number(result.code);
+            Deliver(response, *output);
+            return ERROR_SUCCESS;
+        }
         const bool isolated = pathBytes != nullptr;
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(com)) return static_cast<uint32_t>(com);
         struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
         auto response = Json::Object();
-        if (action == SETUP_VALIDATE) {
-            auto options = ParseOptions(request);
-            std::wstring arguments, directory;
-            auto result = setup::BuildArguments(options, arguments);
-            if (result) result = setup::NormalizeDirectory(options.directory, directory);
-            response[L"valid"] = Json(static_cast<bool>(result));
-            response[L"arguments"] = Json(arguments);
-            response[L"errors"] = Json::Object();
-            response[L"detail"] = Json(result.message);
-            response[L"nativeError"] = Json::Number(result.code);
-        } else if (action == SETUP_DETECT) {
+        if (action == SETUP_DETECT) {
             request.Fields({L"protocol", L"host"});
             const auto& protocol = request.At(L"protocol").String(16);
             const auto& host = request.At(L"host").String(1024);

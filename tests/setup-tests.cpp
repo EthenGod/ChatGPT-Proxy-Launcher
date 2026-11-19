@@ -373,6 +373,11 @@ static int ParameterTests() {
     options.extra = L"--proxy-server=http://127.0.0.1:80"; options.proxy = true; options.port = L"81";
     REQUIRE(!BuildArguments(options, args));
     options = {}; options.extra = L"--launcher-check-extra"; REQUIRE(BuildArguments(options, args));
+    options.extra = L"\"--launcher-check\""; REQUIRE(!BuildArguments(options, args));
+    options.extra = L"\"--\" --launcher-check"; REQUIRE(BuildArguments(options, args));
+    const std::wstring mixed = L"C:\\jobs\\plain\\\t\"\"\t\"中文\\\"尾\"";
+    REQUIRE(ParseArguments(L"\"--no-startup-window\" " + mixed, parsed));
+    REQUIRE(parsed.silent && parsed.extra == mixed);
     REQUIRE(ParseArguments(L"--unknown=\"中文 \\\"引号\\\"\" \"\"", parsed));
     REQUIRE(BuildArguments(parsed, args) && args == L"--unknown=\"中文 \\\"引号\\\"\" \"\"");
     REQUIRE(ParseArguments(L"--proxy-server=custom-route --no-startup-window", parsed));
