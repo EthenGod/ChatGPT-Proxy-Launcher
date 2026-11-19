@@ -196,25 +196,6 @@ constexpr CommitInfo DescribeCommit(setup::CommitState commit) noexcept {
 void Require(const setup::Result& result) {
     if (!result) throw result;
 }
-// Only harness paths reach here. All writes and chosen files must stay under its root.
-void CheckIsolatedPath(const setup::Paths& paths, const std::wstring& path, bool isolated) {
-    if (!isolated) return;
-    const auto root = paths.defaultDirectory.substr(0, paths.defaultDirectory.find_last_of(L'\\'));
-    const auto full = automation::FullPath(path);
-    if (full.size() <= root.size() || full[root.size()] != L'\\'
-        || CompareStringOrdinal(full.c_str(), static_cast<int>(root.size()), root.c_str(), static_cast<int>(root.size()), TRUE) != CSTR_EQUAL)
-        throw automation::Invalid("outside-test-root");
-    // A junction in a selected test directory must not escape the isolated tree.
-    for (size_t end = root.size(); end <= full.size();) {
-        const auto part = full.substr(0, end);
-        const DWORD attrs = GetFileAttributesW(part.c_str());
-        if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) throw automation::Invalid("redirected-test-path");
-        const auto next = full.find(L'\\', end + 1);
-        if (end == full.size()) break;
-        end = next == full.npos ? full.size() : next;
-    }
-}
-
 // Isolated CLI tests never inspect or change real Windows startup settings.
 setup::StartupReport IsolatedStartup() { return {}; }
 }
@@ -317,7 +298,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             response[L"port"] = Json(found.port); response[L"message"] = Json(found.message); response[L"source"] = Json(found.source);
         } else if (action == SETUP_SAVE) {
             auto options = ParseOptions(request);
-            CheckIsolatedPath(paths, options.directory, isolated);
+            if (isolated) setup::CheckIsolatedPath(paths, options.directory);
             automation::UserLock operation;
             const DWORD locked = operation.Acquire(paths.settingsLink);
             if (locked) throw setup::Result{locked, l10n::Text("error.busy")};
@@ -378,7 +359,7 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
                 if (!isolated) throw automation::Invalid("test-selection-disabled");
                 selected = request.At(L"testSelection").String();
             } else Require(setup::ui::ChoosePath(reinterpret_cast<HWND>(owner), program, initial, selected));
-            if (!selected.empty()) CheckIsolatedPath(paths, selected, isolated);
+            if (isolated && !selected.empty()) setup::CheckIsolatedPath(paths, selected);
             if (program && !selected.empty()) {
                 // Complete the reply allocation before the immediately effective write.
                 response[L"entry"] = Program(selected);
@@ -416,9 +397,9 @@ extern "C" uint32_t setup_bridge_action(uint32_t action, const uint8_t* requestB
             request.Fields({L"dark", L"language"});
             // Validate the whole request before changing either preference.
             const bool dark = request.At(L"dark").Bool();
-            const auto& language = request.At(L"language").String(32);
-            if (language != L"auto" && language != L"zh-CN" && language != L"en-US" && language != L"ja-JP") throw automation::Invalid("unknown-language");
-            if (language == L"auto") l10n::UseSystem(); else l10n::Select(language);
+            const auto& language = request.At(L"language").String(LOCALE_NAME_MAX_LENGTH - 1);
+            if (language == L"auto") l10n::UseSystem();
+            else if (!l10n::Select(language)) throw automation::Invalid("unknown-language");
             auto warnings = Json::Array();
             if (isolated) isolatedDark = dark;
             else {
@@ -459,14 +440,20 @@ extern "C" int32_t setup_bridge_headless(const uint16_t* tail, size_t tailLength
     } catch (...) { return 50; }
 }
 
-extern "C" int32_t setup_bridge_compatibility(const uint8_t* pathBytes, size_t size) noexcept {
+extern "C" uint32_t setup_bridge_acquire_gui(const uint16_t* windowClass, void** instance) noexcept {
+    if (!windowClass || !*windowClass || !instance) return ERROR_INVALID_PARAMETER;
+    return setup::AcquireGuiInstance(reinterpret_cast<PCWSTR>(windowClass), *instance);
+}
+
+extern "C" int32_t setup_bridge_compatibility(const uint8_t* pathBytes, size_t size, const uint16_t* windowClass) noexcept {
+    if (!windowClass || !*windowClass) return ERROR_INVALID_PARAMETER;
     try {
         setup::Paths paths;
         if (pathBytes || size) {
             const auto status = ResolvePaths(pathBytes, size, paths);
             if (!status) return static_cast<int32_t>(status.code);
         }
-        return setup::RunNativeSetup(GetModuleHandleW(nullptr), SW_SHOWNORMAL, true,
+        return setup::RunNativeSetup(GetModuleHandleW(nullptr), SW_SHOWNORMAL, true, reinterpret_cast<PCWSTR>(windowClass),
             pathBytes ? &paths : nullptr);
     } catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
     catch (...) { return ERROR_INVALID_DATA; }

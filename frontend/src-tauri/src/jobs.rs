@@ -6,6 +6,7 @@ use windows_sys::Win32::Foundation::{ERROR_BUSY, ERROR_INVALID_DATA};
 struct Activity {
     pending: usize,
     closing: bool,
+    close_listener_ready: bool,
 }
 
 pub struct NativeJobs {
@@ -50,8 +51,17 @@ impl NativeJobs {
         self.activity.lock().unwrap().closing = false;
     }
 
-    pub fn is_closing(&self) -> bool {
-        self.activity.lock().unwrap().closing
+    pub fn mark_close_listener_ready(&self) {
+        self.activity.lock().unwrap().close_listener_ready = true;
+    }
+
+    pub fn allow_native_close(&self) -> bool {
+        let mut activity = self.activity.lock().unwrap();
+        // The page cannot edit settings before the listener handshake succeeds.
+        if !activity.close_listener_ready && activity.pending == 0 {
+            activity.closing = true;
+        }
+        activity.closing
     }
 
     pub async fn run<R, F>(self: &Arc<Self>, work: F) -> Result<R, BridgeError>

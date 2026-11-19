@@ -364,6 +364,7 @@
     "download.keepfolder": "Temporary folder retained: {path}",
     "download.incompletecleanup": "Temporary download files could not be fully removed.",
     "ui.save.response": "Settings were saved, but the full result is unavailable. Reopen the configurator to check the settings, startup options, and whether ChatGPT needs to be restarted.",
+    "ui.save.refreshfailed": "Could not read back the settings. Reopen the configurator to check them.",
     "ui.notice.label": "Notifications",
     "ui.notice.dismiss": "Dismiss notification",
     "ui.detect.port": "Port {port} filled in",

@@ -364,6 +364,7 @@
     "download.keepfolder": "临时目录已保留：{path}",
     "download.incompletecleanup": "未能清理全部临时下载文件。",
     "ui.save.response": "配置已保存，但未能取得完整结果。请重新打开配置器核对，并检查自启和 ChatGPT 是否需要重新打开。",
+    "ui.save.refreshfailed": "未能重新读取设置。请重新打开配置器核对。",
     "ui.notice.label": "临时提示",
     "ui.notice.dismiss": "关闭提示",
     "ui.detect.port": "已填入端口 {port}",

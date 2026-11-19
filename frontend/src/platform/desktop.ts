@@ -7,7 +7,7 @@ let painting = Promise.resolve()
 
 export const desktopWindow: WindowHost = {
   connect: async onClose => isTauri() ? listen('setup-close-requested', onClose) : () => {},
-  ready: async () => { if (isTauri()) await invoke<void>('show_setup_window') },
+  ready: async () => { if (isTauri()) await invoke<void>('setup_window_ready') },
   close: async () => { if (isTauri()) await invoke<void>('close_setup_window') },
   setTheme: async dark => {
     if (!isTauri()) return

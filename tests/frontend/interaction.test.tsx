@@ -78,6 +78,7 @@ describe('settings prototype behavior', () => {
     expect(skeleton?.querySelector('button, input, [tabindex]')).toBeNull()
     expect(main.querySelector('.version-badge')).toBeNull()
     expect(screen.getByRole('button', { name: '关闭' })).toBeEnabled()
+    await waitFor(() => expect(read).toHaveBeenCalledOnce())
     await act(async () => fail({ nativeError: 5 }))
     expect(screen.getByRole('alert')).toHaveTextContent(t('ui.load.failed'))
     expect(main.querySelector('.setup-skeleton')).toBeNull()
@@ -397,6 +398,37 @@ describe('settings prototype behavior', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('保存结果无法确认')
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
   })
+  it('replaces stale warnings, version and form values with the saved snapshot', async () => {
+    const service = new MockSetupService('normal', 0)
+    const clean = await service.load()
+    const notice = 'Invalid shortcut arguments'
+    vi.spyOn(service, 'load')
+      .mockResolvedValueOnce({ ...clean, validArguments: false, notice })
+      .mockResolvedValueOnce({ ...clean, deployedVersion: '9.8.7', options: { ...clean.options, port: '8123' } })
+    const { user } = mount(service)
+    await loaded()
+    expect(screen.getByText(notice)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    await screen.findByText('已部署 v9.8.7')
+    expect(screen.queryByText(notice)).toBeNull()
+    expect(screen.getByRole('textbox', { name: '端口' })).toHaveValue('8123')
+    expect(screen.getByRole('button', { name: '完成' })).toBeEnabled()
+  })
+  it('preserves a confirmed save and its follow-ups when the readback fails', async () => {
+    const service = new MockSetupService('warnings', 0)
+    const state = await service.load()
+    vi.spyOn(service, 'load').mockResolvedValueOnce(state).mockRejectedValueOnce({ nativeError: 5 })
+    const { user } = mount(service)
+    await loaded()
+    await user.click(screen.getByRole('button', { name: '保存更改' }))
+    const dialog = await screen.findByRole('dialog', { name: '已保存，请完成以下操作' })
+    expect(dialog.querySelectorAll('.followup')).toHaveLength(2)
+    await user.click(within(dialog).getByRole('button', { name: '知道了' }))
+    expect(await screen.findByText('已部署，版本无法识别')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(translator('zh-CN')('ui.save.refreshfailed'))
+    expect(screen.getByRole('button', { name: '完成' })).toBeEnabled()
+    expect(service.calls.save).toBe(1)
+  })
   it('keeps committed settings when follow-up tasks are still needed', async () => {
     const { user, host } = mount(new MockSetupService('warnings', 0)); await loaded()
     await user.click(screen.getByRole('button', { name: '保存更改' }))
@@ -616,6 +648,18 @@ describe('notice reading time', () => {
 })
 
 describe('native settings behavior', () => {
+  it.each(['connect', 'ready'] as const)('keeps the startup error closable if %s fails', async step => {
+    const service = new MockSetupService('normal', 0)
+    const host = { connect: vi.fn(async () => () => {}), ready: vi.fn(async () => {}),
+      close: vi.fn(async () => {}), setTheme: vi.fn(async () => {}) }
+    host[step].mockRejectedValueOnce(new Error('Handshake failed'))
+    render(<SetupPage service={service} host={host} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent(translator('zh-CN')('setup.error.webviewstart'))
+    expect(service.calls.load).toBe(0)
+    expect(screen.queryByRole('button', { name: '保存更改' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(host.close).toHaveBeenCalledOnce())
+  })
   it('releases a late close listener after the window connection is replaced', async () => {
     const service = new MockSetupService('normal', 0)
     let finishConnect!: (remove: () => void) => void

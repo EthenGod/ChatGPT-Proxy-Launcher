@@ -48,6 +48,15 @@ public static class SetupWindowClose {
     static extern bool PostMessageW(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")]
+    static extern IntPtr GetClassLongPtrW(IntPtr window, int index);
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(IntPtr window, int command);
+    public static bool HasClassIcons(IntPtr window) {
+        return GetClassLongPtrW(window, -14) != IntPtr.Zero && GetClassLongPtrW(window, -34) != IntPtr.Zero;
+    }
     public static void Request(IntPtr window, int expectedProcessId) {
         uint owner;
         if (window == IntPtr.Zero || GetWindowThreadProcessId(window, out owner) == 0 || owner != expectedProcessId)
@@ -91,7 +100,8 @@ function Quote-Argument([string]$Value) {
     $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
     return '"' + $escaped + '"'
 }
-function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$WithoutWebView = $false, [bool]$ShowWindow = $false) {
+function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$WithoutWebView = $false,
+    [bool]$ShowWindow = $false, [bool]$WithoutPageScript = $false) {
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $Exe
     $info.Arguments = $Tail
@@ -101,6 +111,7 @@ function Start-Isolated([string]$Exe, [string]$Root, [string]$Tail, [bool]$Witho
     $info.WorkingDirectory = $Root
     $info.EnvironmentVariables['CHATGPT_SETUP_TEST_ROOT'] = $Root
     if ($WithoutWebView) { $info.EnvironmentVariables['WEBVIEW2_BROWSER_EXECUTABLE_FOLDER'] = (Join-Path $Root 'no-webview') }
+    if ($WithoutPageScript) { $info.EnvironmentVariables['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--blink-settings=scriptEnabled=false' }
     return [Diagnostics.Process]::Start($info)
 }
 function Run-Cli([string]$Exe, [string]$Root, [string]$Tail) {
@@ -138,9 +149,17 @@ foreach ($argument in $extra) { $tail += ' --extra-arg ' + (Quote-Argument $argu
 $plan = Compare-Cli $cliRoot $tail 0
 Require (!$plan.committed) 'Plan committed files'
 Require (![IO.Directory]::Exists((Join-Path $cliRoot 'state'))) 'Plan created deployment files'
+$rootPlan = Compare-Cli $cliRoot ('--headless plan --directory ' + (Quote-Argument $cliRoot)) 0
+Require ($rootPlan.data.directory -eq $cliRoot) 'A launcher directly inside the isolated root must be allowed'
 $null = Compare-Cli $cliRoot ($tail.Replace('--headless plan', '--headless deploy')) 0
 $null = Compare-Cli $cliRoot '--headless info' 0
 $null = Compare-Cli $cliRoot '--headless companion list' 0
+$sibling = $cliRoot + '-sibling'
+$requestPath = Join-Path $cliRoot 'outside-request.json'
+[IO.File]::WriteAllText($requestPath, (@{schemaVersion=1;settings=@{directory=$sibling}} | ConvertTo-Json))
+$rejected = Compare-Cli $cliRoot ('--headless deploy --request ' + (Quote-Argument $requestPath)) 20
+Require ($rejected.code -eq 'outside-test-root' -and !$rejected.committed) 'Isolated deployment accepted a sibling directory'
+Require (![IO.Directory]::Exists($sibling)) 'Isolated deployment wrote outside its root'
 $null = Compare-Cli $cliRoot '--headless invalid' 20
 $null = Compare-Cli $cliRoot '--headless plan --startup invalid' 20
 $null = Compare-Cli $cliRoot ('--headless plan --extra-arg ' + (Quote-Argument ('x' * 16000))) 20
@@ -153,6 +172,11 @@ foreach ($exe in @($native, $desktop)) {
     $run = Run-Cli $exe $cliRoot ('--headless info --result ' + (Quote-Argument $reserved))
     Require ($run.exitCode -eq 70) 'Existing result was not rejected'
     Require ([IO.File]::ReadAllText($reserved) -ceq 'keep') 'Existing result was overwritten'
+    $outsideResult = Join-Path $testRoot 'outside-result.json'
+    foreach ($suffix in @('', ' --startup invalid')) {
+        $run = Run-Cli $exe $cliRoot ('--headless plan --result ' + (Quote-Argument $outsideResult) + $suffix)
+        Require ($run.exitCode -eq 70 -and ![IO.File]::Exists($outsideResult)) 'An isolated result escaped its root'
+    }
 }
 $run = Run-Cli $production $cliRoot '--invalid'
 Require ($run.exitCode -eq 20) 'Normal EXE failed the no-WebView headless check'
@@ -181,21 +205,55 @@ function Get-ProcessTree([int]$RootId) {
 }
 $gui = @()
 $compatibility = @()
+function Wait-Visible([Diagnostics.Process]$Process) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        $Process.Refresh()
+        Require (!$Process.HasExited -and [DateTime]::UtcNow -lt $deadline) 'Isolated window did not become visible'
+        if ($Process.MainWindowHandle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+    } while ($Process.MainWindowHandle -eq [IntPtr]::Zero)
+}
+function Check-Duplicate([string]$Root, [string]$Tail, [IntPtr]$FirstWindow) {
+    $null = [SetupWindowClose]::ShowWindowAsync($FirstWindow, 6)
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    while (![SetupWindowClose]::IsIconic($FirstWindow) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+    Require ([SetupWindowClose]::IsIconic($FirstWindow)) 'Could not minimize the isolated test window'
+    $duplicate = Start-Isolated $desktop $Root $Tail
+    try {
+        Require ($duplicate.WaitForExit(10000) -and $duplicate.ExitCode -eq 0) 'A second GUI did not defer to the existing window'
+        $deadline = [DateTime]::UtcNow.AddSeconds(3)
+        while ([SetupWindowClose]::IsIconic($FirstWindow) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+        Require (![SetupWindowClose]::IsIconic($FirstWindow)) 'Duplicate launch did not restore the original window'
+    } finally {
+        if (!$duplicate.HasExited) { $null = $duplicate.CloseMainWindow() }
+        $duplicate.Dispose()
+    }
+}
 if (!$SkipGui) {
+    $root = Join-Path $testRoot 'no-page-script'
+    $null = [IO.Directory]::CreateDirectory($root)
+    $process = Start-Isolated $desktop $root '' $false $true $true
+    try {
+        Wait-Visible $process
+        Require ([IO.File]::Exists((Join-Path $root 'gui-entered.json'))) 'Expected a WebView window'
+        [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
+        Require ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'Window could not close before the page handshake'
+        Require (![IO.File]::Exists((Join-Path $root 'ui-ready.json'))) 'Expected the page handshake to be absent'
+    } finally {
+        if (!$process.HasExited) { $null = $process.CloseMainWindow() }
+        $process.Dispose()
+    }
+    Write-Host 'PASS window bootstrap: visible and closable with the page script disabled'
     foreach ($case in @(@('--compatibility', $false), @('"--compatibility" ', $true), @('', $true))) {
         $root = Join-Path $testRoot ('compatibility-' + $compatibility.Count)
         $null = [IO.Directory]::CreateDirectory($root)
         $timer = [Diagnostics.Stopwatch]::StartNew()
         $process = Start-Isolated $desktop $root $case[0] $case[1] $true
         try {
-            $deadline = [DateTime]::UtcNow.AddSeconds(20)
-            do {
-                $process.Refresh()
-                Require (!$process.HasExited) 'Compatibility window exited before showing'
-                Require ([DateTime]::UtcNow -lt $deadline) 'Compatibility window did not become ready'
-                if ($process.MainWindowHandle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
-            } while ($process.MainWindowHandle -eq [IntPtr]::Zero)
+            Wait-Visible $process
             $readyMs = $timer.Elapsed.TotalMilliseconds
+            Require ([SetupWindowClose]::HasClassIcons($process.MainWindowHandle)) 'Compatibility window is missing its large or small icon'
+            if ($compatibility.Count -eq 0) { Check-Duplicate $root '' $process.MainWindowHandle }
             Start-Sleep -Seconds 2
             Require ([IO.File]::Exists((Join-Path $root 'compatibility-entered.json'))) 'Native compatibility entry was not used'
             Require (![IO.File]::Exists((Join-Path $root 'gui-entered.json'))) 'Compatibility constructed Tauri state'
@@ -208,7 +266,10 @@ if (!$SkipGui) {
             [SetupWindowClose]::Request($process.MainWindowHandle, $process.Id)
             Require ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'Compatibility did not exit cleanly'
             Require (![IO.Directory]::Exists((Join-Path $root 'state'))) 'Compatibility preview wrote deployment data'
-        } finally { $process.Dispose() }
+        } finally {
+            if (!$process.HasExited) { $null = $process.CloseMainWindow() }
+            $process.Dispose()
+        }
     }
     Write-Host 'PASS compatibility: explicit/quoted switch and missing-runtime fallback, single process, no WebView, three normal closes'
     for ($cycle = 1; $cycle -le 3; $cycle++) {
@@ -218,12 +279,20 @@ if (!$SkipGui) {
         $process = Start-Isolated $desktop $root '' $false $true
         try {
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
-            while (![IO.File]::Exists((Join-Path $root 'ui-ready.json'))) {
+            while (![IO.File]::Exists((Join-Path $root 'ui-ready.json')) -or ![IO.File]::Exists((Join-Path $root 'read-ok.json'))) {
                 Require (!$process.HasExited) 'Desktop exited before the page became ready'
                 Require ([DateTime]::UtcNow -lt $deadline) 'Desktop did not become ready; inspect its test window'
                 Start-Sleep -Milliseconds 100
             }
             $readyMs = $timer.Elapsed.TotalMilliseconds
+            if ($cycle -eq 1) {
+                $process.Refresh()
+                Check-Duplicate $root '--compatibility' $process.MainWindowHandle
+                Check-Duplicate $root '' $process.MainWindowHandle
+                $output = Join-Path $root 'while-gui-open.json'
+                $run = Run-Cli $desktop $root ('--headless info --result ' + (Quote-Argument $output))
+                Require ($run.exitCode -eq 0 -and [IO.File]::Exists($output)) 'Open GUI intercepted a headless command'
+            }
             $before = Get-Content -LiteralPath (Join-Path $root 'read-ok.json') -Raw | ConvertFrom-Json
             Require ($before.reads -eq 1 -and $before.payloadBytes -gt 0) 'Native state did not reach the page exactly once'
             $seconds = if ($cycle -eq 1) { $IdleSeconds } else { 2 }
@@ -247,7 +316,10 @@ if (!$SkipGui) {
             Require ($remaining.Count -eq 0) 'A process from this UI tree remained after close'
             foreach ($handle in $handles) { $handle.Dispose() }
             Require (![IO.Directory]::Exists((Join-Path $root 'state'))) 'Read-only GUI wrote deployment state'
-        } finally { $process.Dispose() }
+        } finally {
+            if (!$process.HasExited) { $null = $process.CloseMainWindow() }
+            $process.Dispose()
+        }
     }
     Write-Host 'PASS desktop lifecycle: embedded page, real native command, idle without bridge polling, three normal closes with no remaining owned process'
 }

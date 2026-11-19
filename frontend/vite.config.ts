@@ -1,10 +1,27 @@
 import { defineConfig } from 'vitest/config'
+import { normalizePath } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
+import registry from '../locales/languages.json' with { type: 'json' }
+
+const localeModule = 'virtual:setup-locales'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), {
+    name: 'registered-setup-locales',
+    resolveId(id) { if (id === localeModule) return '\0' + localeModule },
+    load(id) {
+      if (id !== '\0' + localeModule) return
+      // Import only published catalogs. Drafts and other local JSON stay out of the executable.
+      const imports = registry.languages.map(({ tag }, index) => {
+        const path = normalizePath(fileURLToPath(new URL(`../locales/${tag}.json`, import.meta.url)))
+        return `import catalog${index} from ${JSON.stringify(path)}`
+      })
+      const names = registry.languages.map((_, index) => `catalog${index}`)
+      return [...imports, `export default [${names.join(', ')}]`].join('\n')
+    },
+  }],
   clearScreen: false,
   resolve: {
     dedupe: ['react', 'react-dom'],

@@ -22,7 +22,7 @@
 - `src/SetupArguments.cpp` 只处理启动参数的生成、解析和校验；`src/CodexEnv.cpp` 只合并 `.env` 字节。文件读写、所有权检查与回滚统一留在 `src/SetupCore.cpp`。
 - 构建：根目录运行 `cmd /c build.cmd`，产物在 `outputs/`。完整构建还需 Node.js、Rust MSVC、Clippy、rustfmt 和 `frontend` 的锁定依赖。`build.cmd native` 只构建旧 GUI 到 `work/ui-native/`，`build.cmd launcher` 只构建独立启动器；两者只需 C++ 工具和 Windows SDK。共用原生编译在 `tools/build-native.cmd`，不能再回调默认入口。
 - `tools/msvc-env.cmd` 定位 x64 工具链。`tools/msvc-common.rsp` 统一启动器、两种配置器、测试和静态分析的 C++ 标准、警告和字符集。
-- `locales/zh-CN.json` 是用户文本基准，`languages.json` 登记语言。`tools/locales.ps1` 校验后生成内置文本和 `setup.ps1` 的下载文案；`src/Localization.*` 负责匹配和查找。翻译指南见 `docs/translating.md`，测试为 `tests/localization-tests.*`。不要翻译机器接口字段、代码、固定文件名和管理标记。
+- `locales/zh-CN.json` 是用户文本基准，`locales/languages.json` 登记语言。`tools/locales.ps1` 校验后生成内置文本和 `setup.ps1` 的下载文案。`src/Localization.*` 负责原生匹配和查找。`frontend/vite.config.ts` 只打包已登记的语言，`frontend/src/i18n/` 提供菜单项和文本回退。翻译指南见 `docs/translating.md`，测试为 `tests/localization-tests.*`。不要翻译机器接口字段、代码、固定文件名和管理标记。
 - 用户文档的 `.en.md`、`.ja.md` 与中文同步，顶部提供语言链接。`tests/documentation-tests.ps1` 检查用户文档同步，也检查开发者文档的本地链接、章节锚点及 PowerShell/JSON 示例语法；新增文档同步 `tools/release-sources.ps1` 源码清单。
 - `src/NativeMemory.h` 管理 Windows 分配的内存。COM 接口使用 Windows SDK 的 `Microsoft::WRL::ComPtr`。`tests/memory-tests.cpp` 用分配失败替身检查释放。线程和内存审查见 `docs/memory-thread-review.md`。
 - 测试：根目录运行 `cmd /c tests\test-build.cmd`；包含 C++、C ABI、前端、Rust、后台对照及交付检查，只启动隔离测试子进程，不启动 ChatGPT。`tests/delivery-tests.ps1` 检查源码清单、正式 feature、EXE 配对、静态运行库及可选的本地 ZIP；GUI 生命周期另用 `tests/ui-prototype-tests.ps1 -Functional`。

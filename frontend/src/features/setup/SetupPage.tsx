@@ -9,7 +9,7 @@ import { ScrollBox } from '../../components/ScrollBox'
 import { ErrorDetails } from '../../components/ErrorDetails'
 import { NoticeToasts, createNoticeManager, type NoticeData } from '../../components/NoticeToasts'
 import { useAppearanceTransition } from '../../components/useAppearanceTransition'
-import { resolveLanguage, translator, type MessageKey } from '../../i18n'
+import { languageItems, resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeIssue, type ErrorInfo } from './errors'
 import { portErrorKey, sameOptions } from './options'
@@ -50,7 +50,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const requestedDark = useRef(true)
   const transitionAppearance = useAppearanceTransition()
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState(false)
+  const [loadError, setLoadError] = useState<MessageKey | null>(null)
   const [error, setError] = useState<ErrorInfo | null>(null)
   const [noticeManager] = useState(createNoticeManager)
   const [selectedNotice, setSelectedNotice] = useState<NoticeData | null>(null)
@@ -64,6 +64,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const adding = operation === 'program'
   const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>('idle')
   const detecting = detectionPhase === 'pending' || detectionPhase === 'scanning'
+  const appearanceLocked = busy || loading || detecting || loadError === 'setup.error.webviewstart'
   const [advanced, setAdvanced] = useState(showPrograms)
   const revealPrograms = useRef(showPrograms)
   const [inspectedProgram, setInspectedProgram] = useState<ListedProgram | null>(null)
@@ -151,7 +152,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const load = useCallback(async () => {
     const revision = ++loadRevision.current
     ++detectRevision.current; setDetectionPhase('idle')
-    setLoading(true); setLoadError(false)
+    setLoading(true); setLoadError(null)
     try {
       const data = await service.load()
       if (!alive.current || revision !== loadRevision.current) return
@@ -160,7 +161,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       requestedLanguage.current = data.preferences.language
       setError(null); setPreferenceWarnings([])
       setDark(data.preferences.dark); setResult(null); setNotice(null)
-    } catch (cause) { if (alive.current && revision === loadRevision.current) { setLoadError(true); setError(nativeIssue(cause)) } }
+    } catch (cause) { if (alive.current && revision === loadRevision.current) { setLoadError('ui.load.failed'); setError(nativeIssue(cause)) } }
     finally { if (alive.current && revision === loadRevision.current) setLoading(false) }
   }, [service, resetValidation])
   useEffect(() => {
@@ -170,12 +171,16 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     // Capture also covers Base UI portals and keyboard context-menu requests.
     const preventBrowserMenu = (event: MouseEvent) => event.preventDefault()
     window.addEventListener('contextmenu', preventBrowserMenu, true)
-    void host.connect(() => { if (active) closeRequest.current() }).then(remove => {
+    setLoading(true)
+    void host.connect(() => { if (active) closeRequest.current() }).then(async remove => {
       if (!active) return remove()
       disconnect = remove
-      return host.ready()
-    }).catch(cause => { if (active) reportFailure('ui.close.failed', cause) })
-    void load()
+      await host.ready()
+      if (active) await load()
+    }).catch(cause => {
+      if (!active) return
+      setError(nativeIssue(cause)); setLoadError('setup.error.webviewstart'); setLoading(false)
+    })
     return () => {
       active = false
       alive.current = false
@@ -307,14 +312,25 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     focusAfterSave.current = true; ++detectRevision.current; setDetectionPhase('idle'); setNotice(null); setResult(null)
     noticeManager.close('activity')
     const submitted = { ...options }
+    const revision = loadRevision.current
+    const currentPage = () => alive.current && revision === loadRevision.current
     try {
       const saved = await service.save(submitted)
-      if (!alive.current) return
+      if (!currentPage()) return
       setResult(saved); setError(null)
       if (saved.commit === 'saved') {
-        const committed = saved.options ?? submitted
-        setOptions(committed)
-        setSnapshot(current => current ? { ...current, options: committed, deployed: true, hasSettings: true, deployedVersion: current.setupVersion } : current)
+        try {
+          const state = await service.load()
+          if (!currentPage()) return
+          setSnapshot(state); setOptions({ ...state.options })
+        } catch (cause) {
+          if (!currentPage()) return
+          const committed = saved.options ?? submitted
+          setOptions(committed)
+          setSnapshot(current => current && { ...current, options: committed, deployed: true, hasSettings: true,
+            validArguments: true, notice: '', deployedVersion: '' })
+          reportFailure('ui.save.refreshfailed', cause)
+        }
         if (saved.tasks.length || saved.warnings?.length) {
           focusReturn.current = doneButton.current
           setDialog('result'); setDialogOpen(true)
@@ -322,7 +338,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       }
     } catch (cause) {
       // A lost response cannot establish whether writes happened.
-      if (alive.current) setResult({ commit: 'rollback-incomplete', message: 'ui.save.unknown', tasks: [], ...nativeIssue(cause) })
+      if (currentPage()) setResult({ commit: 'rollback-incomplete', message: 'ui.save.unknown', tasks: [], ...nativeIssue(cause) })
     } finally { finishOperation() }
   }
   useEffect(() => {
@@ -386,16 +402,17 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
         {snapshot ? <span className="version-badge" aria-label={t('setup.version', { version: snapshot.setupVersion })}>v{snapshot.setupVersion}</span>
           : loading && <span className="skeleton-bar skeleton-version" aria-hidden="true" />}</div>
-        <div className="appearance-controls" data-detect-pending={detectionPhase === 'pending' || undefined}><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={busy || loading || detecting}
-          items={[{ value: 'auto', label: t('setup.language.system') }, { value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }, { value: 'ja-JP', label: '日本語' }]} icon={<Globe2 size={16} />} variant="icon" />
+        <div className="appearance-controls" data-detect-pending={detectionPhase === 'pending' || undefined}><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={appearanceLocked}
+          items={[{ value: 'auto', label: t('setup.language.system') }, ...languageItems]} icon={<Globe2 size={16} />} variant="icon" />
           <Hint label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}><Button className="icon-button" onClick={() => {
             const next = !requestedDark.current; requestedDark.current = next
             transitionAppearance('theme', () => setDark(next)); void preferences(next, requestedLanguage.current)
-          }} disabled={busy || loading || detecting} aria-label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}>{dark ? <Sun size={16} /> : <Moon size={16} />}</Button></Hint>
+          }} disabled={appearanceLocked} aria-label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}>{dark ? <Sun size={16} /> : <Moon size={16} />}</Button></Hint>
         </div>
       </header>
       {loading ? <SetupSkeleton />
-        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t('ui.load.failed')}</p>{error && <ErrorDetails error={error} t={t} />}<Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button></div>
+        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError)}</p>{error && <ErrorDetails error={error} t={t} />}
+          {loadError === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}

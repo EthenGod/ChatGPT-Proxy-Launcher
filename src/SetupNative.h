@@ -10,7 +10,9 @@ inline bool IsCompatibilityCommand(std::wstring_view tail) noexcept {
     tail = tail.substr(0, end + 1);
     return tail == L"--compatibility" || tail == L"\"--compatibility\"";
 }
+// Both GUI entry points keep this handle until their message loop ends.
+DWORD AcquireGuiInstance(PCWSTR windowClass, HANDLE& instance) noexcept;
 // Internal isolated paths also lock the preview against writes and system actions.
 int RunNativeSetup(HINSTANCE instance, int show, bool compatibility,
-    const Paths* isolatedPaths = nullptr) noexcept;
+    PCWSTR windowClass, const Paths* isolatedPaths = nullptr) noexcept;
 }

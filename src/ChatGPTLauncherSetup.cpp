@@ -1493,17 +1493,23 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 } // namespace
 
-int setup::RunNativeSetup(HINSTANCE instance, int show, bool compatibility, const Paths* isolatedPaths) noexcept try {
-    const auto mutexName = isolatedPaths ? L"Local\\ChatGPTSetupPreview." + std::to_wstring(GetCurrentProcessId())
-        : std::wstring(L"Local\\Community.ChatGPTLauncherSetup.v1");
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
-    if (!mutex) return static_cast<int>(GetLastError());
-    struct MutexGuard { HANDLE value; ~MutexGuard() { CloseHandle(value); } } mutexGuard{mutex};
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND existing = FindWindowW(L"ChatGPTLauncherSetup", nullptr);
-        if (existing) { ShowWindow(existing, SW_RESTORE); SetForegroundWindow(existing); }
-        return 0;
+DWORD setup::AcquireGuiInstance(PCWSTR windowClass, HANDLE& instance) noexcept try {
+    const auto name = std::wstring(L"Local\\Community.") + windowClass + L".v1";
+    instance = CreateMutexW(nullptr, FALSE, name.c_str());
+    const DWORD status = GetLastError();
+    if (!instance) return status;
+    if (status != ERROR_ALREADY_EXISTS) return ERROR_SUCCESS;
+    CloseHandle(instance);
+    instance = nullptr;
+    if (const HWND existing = FindWindowW(windowClass, nullptr)) {
+        if (IsIconic(existing)) ShowWindowAsync(existing, SW_RESTORE);
+        SetForegroundWindow(existing);
     }
+    return ERROR_ALREADY_EXISTS;
+} catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
+catch (...) { return ERROR_INVALID_DATA; }
+
+int setup::RunNativeSetup(HINSTANCE instance, int show, bool compatibility, PCWSTR windowClass, const Paths* isolatedPaths) noexcept try {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com)) return static_cast<int>(com);
     struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
@@ -1534,13 +1540,13 @@ int setup::RunNativeSetup(HINSTANCE instance, int show, bool compatibility, cons
                 GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
             cls.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_CHATGPT), IMAGE_ICON,
                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
-            cls.lpfnWndProc = WindowProc; cls.lpszClassName = L"ChatGPTLauncherSetup"; RegisterClassExW(&cls);
+            cls.lpfnWndProc = WindowProc; cls.lpszClassName = windowClass; RegisterClassExW(&cls);
             cls.lpfnWndProc = BodyProc; cls.lpszClassName = L"ChatGPTSetupBody"; RegisterClassExW(&cls);
             const UINT dpi = GetDpiForSystem();
             RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
             const int width = MulDiv(700, static_cast<int>(dpi), 96);
             const int height = std::min(MulDiv(812, static_cast<int>(dpi), 96), static_cast<int>(work.bottom - work.top - 32));
-            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, L"ChatGPTLauncherSetup", l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window"),
+            HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, windowClass, l10n::Text(compatibility ? "setup.compatibility.window" : "setup.window"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left + (work.right - work.left - width) / 2,
                 work.top + (work.bottom - work.top - height) / 2, width, height, nullptr, nullptr, instance, &app);
             if (!window) exitCode = static_cast<int>(GetLastError());
@@ -1579,6 +1585,10 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR argu
     const bool compatibility = arguments && setup::IsCompatibilityCommand(arguments);
     // Dispatch before GUI mutex, foreground activation, GDI+ or any window creation.
     if (arguments && *arguments && !compatibility) return setup::RunSetupCommandLine(instance, arguments);
-    return setup::RunNativeSetup(instance, show, compatibility);
+    constexpr auto windowClass = L"ChatGPTLauncherSetup";
+    automation::Handle guiInstance;
+    const auto error = setup::AcquireGuiInstance(windowClass, guiInstance.value);
+    if (error) return error == ERROR_ALREADY_EXISTS ? 0 : static_cast<int>(error);
+    return setup::RunNativeSetup(instance, show, compatibility, windowClass);
 }
 #endif

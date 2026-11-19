@@ -364,6 +364,7 @@
     "download.keepfolder": "一時フォルダーを残しました：{path}",
     "download.incompletecleanup": "ダウンロードした一時ファイルをすべて削除できませんでした。",
     "ui.save.response": "設定は保存されましたが、結果の詳細を取得できませんでした。設定画面を開き直して設定と自動起動を確認し、必要に応じて ChatGPT を再起動してください。",
+    "ui.save.refreshfailed": "設定を再読み込みできませんでした。設定画面を開き直して確認してください。",
     "ui.notice.label": "通知",
     "ui.notice.dismiss": "通知を閉じる",
     "ui.detect.port": "ポート {port} を入力しました",

@@ -13,6 +13,14 @@ namespace setup {
 using automation::Json;
 using automation::Invalid;
 namespace rules = automation::contract;
+
+void CheckIsolatedPath(const Paths& paths, const std::wstring& path) {
+    const auto prefix = Join(automation::ParentPath(paths.defaultDirectory), L"");
+    const auto full = automation::FullPath(path);
+    if (full.size() <= prefix.size() || CompareStringOrdinal(full.data(), static_cast<int>(prefix.size()),
+        prefix.data(), static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL) throw Invalid("outside-test-root");
+    automation::CheckPlainPath(full);
+}
 namespace {
 Json NewResult(const std::wstring& operation) {
     auto j = Json::Object(); j[L"schemaVersion"] = Json::Number(rules::SetupApi); j[L"operation"] = Json(operation);
@@ -46,9 +54,10 @@ Json ParseProxy(std::wstring value) {
     if (port.size() > 5 || port.find_first_not_of(L"0123456789") != port.npos) throw Invalid("invalid-proxy-port");
     j[L"host"] = Json(host); j[L"port"] = Json::Number(wcstoul(port.c_str(), nullptr, 10)); return j;
 }
-void CheckResultLocation(const AutomationCommand& c, const Paths& p, const Options* options = nullptr) {
+void CheckOutputLocations(const AutomationCommand& c, const Paths& p, bool isolated, const Options* options = nullptr) {
     if (c.resultPath.empty()) throw Invalid("missing-result-path");
     const auto output = automation::FullPath(c.resultPath);
+    if (isolated) CheckIsolatedPath(p, output);
     if (output.size() < 5 || _wcsicmp(output.c_str() + output.size() - 5, L".json")) throw Invalid("result-must-be-json-file");
     const auto registry = Join(p.defaultDirectory, rules::RegistryFolder) + L"\\";
     if (output.size() >= registry.size() && automation::SamePath(output.substr(0, registry.size()), registry)) throw Invalid("result-is-registration");
@@ -57,7 +66,11 @@ void CheckResultLocation(const AutomationCommand& c, const Paths& p, const Optio
             Join(p.defaultDirectory, rules::DiscoveryFile), Join(p.defaultDirectory, rules::PolicyFile), Join(p.defaultDirectory, LauncherName)}) {
         if (!path.empty() && automation::SamePath(output, automation::FullPath(path))) throw Invalid("result-is-managed-file");
     }
-    if (options && automation::SamePath(output, automation::FullPath(Join(options->directory, LauncherName)))) throw Invalid("result-is-launcher");
+    if (options) {
+        const auto launcher = automation::FullPath(Join(options->directory, LauncherName));
+        if (isolated) CheckIsolatedPath(p, launcher);
+        if (automation::SamePath(output, launcher)) throw Invalid("result-is-launcher");
+    }
 }
 Json PlanData(const Options& o, const Paths& paths, const Json& request) {
     auto j = Json::Object(); j[L"directory"] = Json(o.directory); j[L"startup"] = Json(o.startup); j[L"desktop"] = Json(o.desktop);
@@ -195,11 +208,11 @@ Options ResolveAutomationOptions(const Json& request, const Paths& paths, const 
     if (!NormalizeDirectory(options.directory, normalized) || !BuildArguments(options, args)) throw Invalid("invalid-launcher-options");
     options.directory = normalized; return options;
 }
-Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload payload, StartupReport (*disableStartup)()) {
+Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload payload, StartupReport (*disableStartup)(), bool isolated) {
     auto result = NewResult(command.operation); automation::ResultFile output;
     bool applying = false, registryCommitted = false;
     try {
-        CheckResultLocation(command, paths);
+        CheckOutputLocations(command, paths, isolated);
         output.Reserve(command.resultPath);
         auto request = command.request;
         if (!command.requestPath.empty()) request = automation::ParseJson(automation::ReadBytes(command.requestPath));
@@ -221,7 +234,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
         if (!status) { FromCore(result, status); }
         Options options;
         if (status) options = ResolveAutomationOptions(request, paths, initial);
-        CheckResultLocation(command, paths, status ? &options : nullptr);
+        CheckOutputLocations(command, paths, isolated, status ? &options : nullptr);
         if (!initial.managedTarget.empty() && automation::SamePath(command.resultPath, automation::FullPath(initial.managedTarget))) throw Invalid("result-is-installed-launcher");
         if (status) {
             automation::UserLock lock;
@@ -232,7 +245,7 @@ Json RunAutomation(const AutomationCommand& command, const Paths& paths, Payload
                 if (!status) FromCore(result, status);
                 else {
                     options = ResolveAutomationOptions(request, paths, loaded);
-                    CheckResultLocation(command, paths, &options);
+                    CheckOutputLocations(command, paths, isolated, &options);
                     status = Preflight(paths, options, payload);
                     if (!status) FromCore(result, status);
                     else if (command.operation == L"plan") result[L"data"] = PlanData(options, paths, request);
@@ -297,7 +310,7 @@ int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail,
         HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_LAUNCHER), RT_RCDATA);
         HGLOBAL loaded = resource ? LoadResource(instance, resource) : nullptr;
         Payload payload{loaded ? static_cast<const BYTE*>(LockResource(loaded)) : nullptr, resource ? SizeofResource(instance, resource) : 0};
-        auto result = RunAutomation(command, paths, payload, disableStartup);
+        auto result = RunAutomation(command, paths, payload, disableStartup, isolatedPaths != nullptr);
         return static_cast<int>(result.At(L"exitCode").Integer(0, 255));
     } catch (const Invalid& e) {
         try {
@@ -307,7 +320,7 @@ int RunSetupCommandLine(HINSTANCE instance, const std::wstring& tail,
                 Paths paths;
                 if (isolatedPaths) paths = *isolatedPaths;
                 else if (!GetPaths(paths)) return 50;
-                CheckResultLocation(command, paths);
+                CheckOutputLocations(command, paths, isolatedPaths != nullptr);
                 automation::ResultFile file; file.Reserve(command.resultPath); file.Write(result);
             }
         } catch (...) { return 70; }

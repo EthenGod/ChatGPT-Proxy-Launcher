@@ -125,7 +125,7 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 >
 
 **For script and plugin authors:** v1.1.0 adds headless deployment, deployment queries, and companion startup with readiness checks and limited retries. Start with the [developer guide (Chinese)](docs/developer-guide.md) and [automation usage (Chinese)](docs/automation-usage.md). Online commands require the matching script and EXE to be published on GitHub. Other users can follow the setup steps above.
 
-A full build requires the Visual Studio 2022 Build Tools C++ tools, Windows SDK, Node.js 24.10 or newer, and a Rust 1.99 or newer MSVC toolchain with Clippy and rustfmt. Install the locked frontend dependencies first:
+A full build requires the Visual Studio 2022 Build Tools C++ tools, Windows SDK, Node.js (24.x starting at 24.15, or 26 and later), and a Rust 1.99 or newer MSVC toolchain with Clippy and rustfmt. Install the locked frontend dependencies first:
 
 ```powershell
 cd frontend

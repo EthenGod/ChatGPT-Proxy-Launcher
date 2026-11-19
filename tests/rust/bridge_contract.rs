@@ -22,7 +22,7 @@ fn only_one_close_can_be_admitted_and_failure_reopens_the_queue() {
     });
     let [first, second] = attempts.map(|thread| thread.join().unwrap());
     assert_ne!(first, second);
-    assert!(jobs.is_closing());
+    assert!(jobs.allow_native_close());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -36,6 +36,17 @@ fn only_one_close_can_be_admitted_and_failure_reopens_the_queue() {
         jobs.run(|_| Ok(())).await.unwrap();
         assert!(jobs.try_close());
     });
+}
+
+#[test]
+fn native_close_is_available_until_the_page_installs_its_listener() {
+    let unread = jobs::NativeJobs::new(None);
+    assert!(unread.allow_native_close());
+    let ready = jobs::NativeJobs::new(None);
+    ready.mark_close_listener_ready();
+    assert!(!ready.allow_native_close());
+    assert!(ready.try_close());
+    assert!(ready.allow_native_close());
 }
 
 #[test]

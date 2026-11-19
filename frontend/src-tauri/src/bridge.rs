@@ -1,7 +1,8 @@
 use crate::model::{Action, BridgeError, Options, SaveResult, Snapshot};
 use serde::de::DeserializeOwned;
+use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
 use std::{ptr, slice};
-use windows_sys::Win32::Foundation::ERROR_INVALID_DATA;
+use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_INVALID_DATA};
 
 const MAX_RESPONSE: usize = 1024 * 1024;
 #[repr(C)]
@@ -61,7 +62,9 @@ unsafe extern "C" {
         paths_length: usize,
     ) -> i32;
     fn setup_bridge_show_bootstrap_error(compatibility_failed: u32);
-    fn setup_bridge_compatibility(paths: *const u8, length: usize) -> i32;
+    fn setup_bridge_acquire_gui(window_class: *const u16, instance: *mut RawHandle) -> u32;
+    fn setup_bridge_compatibility(paths: *const u8, length: usize, window_class: *const u16)
+        -> i32;
 }
 fn bytes(value: Option<&[u8]>) -> (*const u8, usize) {
     value.map_or((ptr::null(), 0), |v| (v.as_ptr(), v.len()))
@@ -76,9 +79,20 @@ pub fn headless(tail: &[u16], paths: Option<&[u8]>) -> i32 {
     let (paths, length) = bytes(paths);
     unsafe { setup_bridge_headless(tail.as_ptr(), tail.len(), paths, length) }
 }
-pub fn compatibility(paths: Option<&[u8]>) -> i32 {
+pub fn acquire_gui(window_class: &str) -> Result<Option<OwnedHandle>, u32> {
+    let class: Vec<_> = window_class.encode_utf16().chain([0]).collect();
+    let mut handle = ptr::null_mut();
+    match unsafe { setup_bridge_acquire_gui(class.as_ptr(), &mut handle) } {
+        0 => Ok(Some(unsafe { OwnedHandle::from_raw_handle(handle) })),
+        ERROR_ALREADY_EXISTS => Ok(None),
+        error => Err(error),
+    }
+}
+
+pub fn compatibility(paths: Option<&[u8]>, window_class: &str) -> i32 {
     let (paths, length) = bytes(paths);
-    unsafe { setup_bridge_compatibility(paths, length) }
+    let class: Vec<_> = window_class.encode_utf16().chain([0]).collect();
+    unsafe { setup_bridge_compatibility(paths, length, class.as_ptr()) }
 }
 pub fn read_state(paths: Option<&[u8]>) -> Result<Snapshot, BridgeError> {
     let mut buffer = Buffer::default();

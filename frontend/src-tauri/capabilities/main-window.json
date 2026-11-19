@@ -7,7 +7,7 @@
   ],
   "permissions": [
     "allow-read-setup-state",
-    "allow-show-setup-window",
+    "allow-setup-window-ready",
     "allow-close-setup-window",
     "core:event:allow-listen",
     "core:event:allow-unlisten",

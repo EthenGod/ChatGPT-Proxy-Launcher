@@ -154,6 +154,7 @@ $files = @(
     'frontend/src/features/setup/SetupSkeleton.tsx'
     'frontend/src/features/setup/SetupStatus.tsx'
     'frontend/src/features/setup/useSetupValidation.ts'
+    'frontend/src/i18n/catalogs.d.ts'
     'frontend/src/i18n/index.ts'
     'frontend/src/main.tsx'
     'frontend/src/platform/desktop.ts'

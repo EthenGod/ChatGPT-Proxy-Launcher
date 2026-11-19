@@ -162,11 +162,14 @@ async fn set_setup_preferences(
     .await
 }
 #[tauri::command]
-fn show_setup_window(window: tauri::WebviewWindow) -> Result<(), String> {
+fn setup_window_ready(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, NativeState>,
+) -> Result<(), String> {
     if window.label() != "main" {
         return Err("unexpected-window".into());
     }
-    window.show().map_err(|e| e.to_string())?;
+    state.mark_close_listener_ready();
     #[cfg(feature = "test-harness")]
     if !harness::root().join("ui-ready.json").exists() {
         harness::mark("ui-ready");
@@ -206,22 +209,34 @@ fn main() {
     let paths: Option<Vec<u8>> = None;
     #[cfg(feature = "test-harness")]
     let paths = Some(harness::paths());
-    if bootstrap::is_compatibility(&tail) {
-        run_compatibility(paths.as_deref());
-    }
+    let compatibility = bootstrap::is_compatibility(&tail);
     // Same binary and CLI contract. Do this before constructing ANY Tauri state,
     // checking WebView2, creating a window, or acquiring a GUI instance lock.
-    if !tail.is_empty() {
+    if !tail.is_empty() && !compatibility {
         std::process::exit(bridge::headless(&tail, paths.as_deref()));
     }
-
+    #[cfg(not(feature = "test-harness"))]
+    let window_class = String::from("ChatGPTLauncherSetup");
+    #[cfg(feature = "test-harness")]
+    let window_class = harness::window_class();
+    let _gui_instance = match bridge::acquire_gui(&window_class) {
+        Ok(Some(handle)) => handle,
+        Ok(None) => return,
+        Err(code) => {
+            bridge::bootstrap_error(compatibility);
+            std::process::exit(code as i32);
+        }
+    };
+    if compatibility {
+        run_compatibility(paths.as_deref(), &window_class);
+    }
     if tauri::webview_version().is_err() {
         if cfg!(feature = "program-sample") {
             bridge::initialize();
             bridge::bootstrap_error(false);
             std::process::exit(1);
         }
-        run_compatibility(paths.as_deref());
+        run_compatibility(paths.as_deref(), &window_class);
     }
     #[cfg(feature = "test-harness")]
     harness::mark("gui-entered");
@@ -238,7 +253,7 @@ fn main() {
     let context = tauri::generate_context!();
     let result = tauri::Builder::default()
         .manage(Arc::new(jobs::NativeJobs::new(paths)))
-        .setup(|app| {
+        .setup(move |app| {
             let config = &app.config().app.windows[0];
             #[cfg(feature = "ui-prototype")]
             let config = &{
@@ -258,7 +273,10 @@ fn main() {
                     // is required for an absolute, fully isolated test profile.
                     #[cfg(feature = "test-harness")]
                     let builder = builder.data_directory(harness::root().join("webview"));
-                    builder.on_navigation(bootstrap::allows_navigation).build()
+                    builder
+                        .window_classname(window_class)
+                        .on_navigation(bootstrap::allows_navigation)
+                        .build()
                 });
             if result.is_err() {
                 bridge::bootstrap_error(false);
@@ -270,7 +288,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             read_setup_state,
-            show_setup_window,
+            setup_window_ready,
             close_setup_window,
             validate_setup,
             detect_setup_port,
@@ -284,7 +302,7 @@ fn main() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<NativeState>();
-                if !state.is_closing() {
+                if !state.allow_native_close() {
                     api.prevent_close();
                     #[cfg(feature = "test-harness")]
                     harness::record_close(false);
@@ -302,10 +320,10 @@ fn main() {
     }
 }
 
-fn run_compatibility(paths: Option<&[u8]>) -> ! {
+fn run_compatibility(paths: Option<&[u8]>, window_class: &str) -> ! {
     #[cfg(feature = "test-harness")]
     harness::mark("compatibility-entered");
-    let code = bridge::compatibility(paths);
+    let code = bridge::compatibility(paths, window_class);
     if code != 0 {
         bridge::bootstrap_error(true);
     }

@@ -125,7 +125,7 @@ ChatGPTProxyLauncher.exe --launcher-check --proxy-server=http://127.0.0.1:7897 >
 
 **スクリプト・プラグイン作者向け：** v1.1.0 以降は、バックグラウンドでの配置、配置情報の照会、起動確認と回数制限付き再試行に対応します。[開発者ガイド（中国語）](docs/developer-guide.md)と[自動化の使い方（中国語）](docs/automation-usage.md)を参照してください。オンラインコマンドには、対応するスクリプトと EXE の GitHub 公開が必要です。通常の利用では上の設定ツールの手順を使ってください。
 
-全体のビルドには Visual Studio 2022 Build Tools の C++ ツール、Windows SDK、Node.js 24.10 以上、Rust 1.99 以上の MSVC ツールチェーン（Clippy と rustfmt を含む）が必要です。まずロックファイルに従って依存関係をインストールします。
+全体のビルドには Visual Studio 2022 Build Tools の C++ ツール、Windows SDK、Node.js（24.x は 24.15 以降、または 26 以降）、Rust 1.99 以上の MSVC ツールチェーン（Clippy と rustfmt を含む）が必要です。まずロックファイルに従って依存関係をインストールします。
 
 ```powershell
 cd frontend

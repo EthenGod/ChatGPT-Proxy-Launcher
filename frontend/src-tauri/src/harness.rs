@@ -34,6 +34,12 @@ pub fn paths() -> Vec<u8> {
     }))
     .expect("serialize isolated paths")
 }
+pub fn window_class() -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hash = DefaultHasher::new();
+    root().to_string_lossy().to_uppercase().hash(&mut hash);
+    format!("ChatGPTLauncherSetupPreview{:016x}", hash.finish())
+}
 pub fn mark(name: &str) {
     if standalone_sample() {
         return;

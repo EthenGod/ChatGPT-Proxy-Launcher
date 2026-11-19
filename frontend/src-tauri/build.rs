@@ -130,7 +130,7 @@ fn main() {
             .windows_attributes(windows)
             .app_manifest(tauri_build::AppManifest::new().commands(&[
                 "read_setup_state",
-                "show_setup_window",
+                "setup_window_ready",
                 "close_setup_window",
                 "validate_setup",
                 "detect_setup_port",
