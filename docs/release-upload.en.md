@@ -1,19 +1,22 @@
-[简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.1/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.1/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.1/docs/release-upload.ja.md)
+[简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.2/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.2/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.2/docs/release-upload.ja.md)
 
-> This document may include machine-translated content. If anything differs, refer to the [Chinese original](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.1/docs/release-upload.md).
+> This document may include machine-translated content. If anything differs, refer to the [Chinese original](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.2/docs/release-upload.md).
 
-# v1.2.0 Beta 1
+# v1.2.0 Beta 2
 
-[![Download the Windows x64 configurator](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.0-beta.1/ChatGPTLauncherSetup.exe)
+[![Download the Windows x64 configurator](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.0-beta.2/ChatGPTLauncherSetup.exe)
 
-Double-click the download to open it. To update an existing installation, choose **Save changes**. [Direct download](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.0-beta.1/ChatGPTLauncherSetup.exe) | [User guide](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.1/README.en.md)
+Double-click the download to open it. To update an existing installation, choose **Save changes**. [Direct download](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.0-beta.2/ChatGPTLauncherSetup.exe) | [User guide](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.0-beta.2/README.en.md)
 
 ## What's new
 
-- The redesigned configurator supports Chinese, English, Japanese, and light and dark themes. Turning on the proxy detects its port once. Click the notification to see where the port came from.
-- Advanced settings lists companion programs and identifies those that support the launcher’s integration protocol.
-- If WebView2 is missing, PowerShell offers to install it or open the native compatibility interface. Double-clicking the configurator opens compatibility mode automatically.
-- The PowerShell command defaults to stable releases. Use `-Channel Preview` to include prereleases, `-Branch` to select a branch, and `-Tag` to pin a release.
+- In narrow windows, the proxy address and port move smoothly below the protocol selector. The active field keeps its focus and entered text. With reduced motion enabled, the layout changes immediately.
+
+## Fixes
+
+- The configurator no longer dims when you open the startup folder, and you can keep editing. Right-clicking no longer brings up a browser menu over settings or dialogs. Copy and paste shortcuts still work in text fields.
+- The disabled **Use default** button keeps its dimmed appearance when switching languages. Labels scrolled out of the companion program list no longer flash outside it.
+- Opening the language menu in a small window no longer leaves a scrollbar gap on the right. The arrow for expanding error details now matches the other controls.
 
 ## Before saving
 

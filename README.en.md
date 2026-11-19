@@ -40,7 +40,7 @@ $setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/
 & $setup -Channel Preview -Branch $branch
 ```
 
-`-Channel Preview` includes stable releases and prereleases and picks the most recently published one. `-Branch` limits the selection to published tags in that branch’s history. Append `-Tag v1.2.0-beta.1` to the last line to pin this beta. The updated script must be on the remote branch and the release must be published.
+`-Channel Preview` includes stable releases and prereleases and picks the most recently published one. `-Branch` limits the selection to published tags in that branch’s history. Append `-Tag v1.2.0-beta.2` to the last line to pin this beta. The updated script must be on the remote branch and the release must be published.
 
 ### Method 2: Download and open manually
 

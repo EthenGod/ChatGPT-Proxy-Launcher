@@ -38,7 +38,7 @@ $setup = [scriptblock]::Create((irm "https://raw.githubusercontent.com/EthenGod/
 & $setup -Channel Preview -Branch $branch
 ```
 
-`-Channel Preview` 包含测试版和正式版，按发布时间选择。`-Branch` 限定为该分支历史中已有发布的版本。要固定到本次 Beta，在最后一行追加 `-Tag v1.2.0-beta.1`。这些命令需要远端分支已有新版脚本，且目标 Release 已发布。
+`-Channel Preview` 包含测试版和正式版，按发布时间选择。`-Branch` 限定为该分支历史中已有发布的版本。要固定到本次 Beta，在最后一行追加 `-Tag v1.2.0-beta.2`。这些命令需要远端分支已有新版脚本，且目标 Release 已发布。
 
 ### 方式二：手动下载并打开
 
