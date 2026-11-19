@@ -9,6 +9,26 @@ $groups = @('README', 'docs/translating', 'docs/taskbar-repair', 'docs/release-u
 $releaseTag = 'v' + (ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $ProjectRoot 'frontend/package.json')))).version
 $repository = "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/$releaseTag/"
 $sources = @(& (Join-Path $ProjectRoot 'tools/release-sources.ps1') -ProjectRoot $ProjectRoot)
+$rootPrefix = $ProjectRoot.TrimEnd('\') + '\'
+
+function Resolve-PackagedLink([string]$Document, [string]$Target, [switch]$AllowDirectory) {
+    $page = Join-Path $ProjectRoot $Document
+    $relative = [Uri]::UnescapeDataString(($Target -split '#', 2)[0])
+    $resolved = if ($relative) { [IO.Path]::GetFullPath((Join-Path (Split-Path $page) $relative)) } else { $page }
+    if ($resolved.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $entry = $resolved.Substring($rootPrefix.Length).Replace('\', '/')
+        # The release manifest has already checked that each named file exists.
+        if ($sources -ccontains $entry) { return $resolved }
+        if ($AllowDirectory -and [IO.Directory]::Exists($resolved)) {
+            $directory = $entry.TrimEnd('/') + '/'
+            foreach ($file in $sources) {
+                if ($file.StartsWith($directory, [StringComparison]::Ordinal)) { return $resolved }
+            }
+        }
+    }
+    throw "Link target missing from source package in ${Document}: $Target"
+}
+
 $count = 0
 foreach ($group in $groups) {
     $baseName = ($group -split '/')[-1]
@@ -30,10 +50,7 @@ foreach ($group in $groups) {
         foreach ($match in [regex]::Matches($text, '\]\(([^)\r\n]+)\)')) {
             $target = $match.Groups[1].Value
             if ($target -match '^(https?://|#|mailto:)') { continue }
-            $relative = [Uri]::UnescapeDataString(($target -split '#', 2)[0])
-            $resolved = [IO.Path]::GetFullPath((Join-Path (Split-Path $path) $relative))
-            if (!$resolved.StartsWith($ProjectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-                !(Test-Path -LiteralPath $resolved -PathType Leaf)) { throw "Broken local link in ${name}: $target" }
+            $null = Resolve-PackagedLink $name $target
         }
         # Commands must remain identical across translations, including quotes and arguments.
         $blocks = @([regex]::Matches($text, '(?ms)^[ \t]*```[^\r\n]*\r?\n(.*?)^[ \t]*```'))
@@ -73,9 +90,7 @@ foreach ($name in $developerDocs) {
         $target = $link.Groups[1].Value
         if ($target -match '^(https?://|mailto:)') { continue }
         $parts = $target -split '#', 2
-        $resolved = if (!$parts[0]) { $path } else { [IO.Path]::GetFullPath((Join-Path (Split-Path $path) ([Uri]::UnescapeDataString($parts[0])))) }
-        if (!$resolved.StartsWith($ProjectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-            !(Test-Path -LiteralPath $resolved)) { throw "Broken developer link in ${name}: $target" }
+        $resolved = Resolve-PackagedLink $name $target -AllowDirectory
         if ($parts.Count -eq 2) {
             $headings = [regex]::Matches([IO.File]::ReadAllText($resolved), '(?m)^#{1,6}\s+(.+?)\r?$')
             $anchors = @($headings | ForEach-Object {

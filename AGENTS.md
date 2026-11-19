@@ -20,7 +20,7 @@
 - `src/SetupNative.h` 提供原生兼容入口，同一 EXE 用 `--compatibility` 在 WebView2 初始化前分流。`src/SetupUiCapabilities.json` 内嵌为资源 102，供 PowerShell 只读识别双界面构建；旧版无此资源，不探测运行库或传入新参数。下载选择与安装替身测试见 `tests/webview-download-tests.ps1`。
 - 用户可见名称为 `ChatGPT Launcher`。新旧快捷方式名在 `SetupCore.h`，读取、迁移和回滚在 `SetupCore.cpp`；EXE 文件名、配置根目录和协议标记保持兼容。测试须显式传入隔离的新旧路径。
 - `src/SetupArguments.cpp` 只处理启动参数的生成、解析和校验；`src/CodexEnv.cpp` 只合并 `.env` 字节。文件读写、所有权检查与回滚统一留在 `src/SetupCore.cpp`。
-- 构建：根目录运行 `cmd /c build.cmd`，产物在 `outputs/`。完整构建还需 Node.js、Rust MSVC、Clippy、rustfmt 和 `frontend` 的锁定依赖。`build.cmd native` 只构建旧 GUI 到 `work/ui-native/`，`build.cmd launcher` 只构建独立启动器；两者只需 C++ 工具和 Windows SDK。共用原生编译在 `tools/build-native.cmd`，不能再回调默认入口。
+- 根目录运行 `cmd /c build.cmd` 生成 `outputs/` 中配套的配置器和启动器。完整构建需要 C++ 工具、Windows SDK、Node.js、Rust MSVC 和 `frontend` 的锁定依赖。静态分析及测试还会用到 Clippy 和 rustfmt。`build.cmd native` 生成 `work/ui-native/` 中的旧 GUI，`build.cmd launcher` 单独构建正式启动器。两个原生入口只需 C++ 工具和 Windows SDK。三个入口共用构建锁，持锁后调用 `tools/build-native.cmd`。内层脚本回调 `build.cmd` 会等待自己持有的锁。并发回归入口为 `tests/build-lock-tests.ps1`。
 - `tools/msvc-env.cmd` 定位 x64 工具链。`tools/msvc-common.rsp` 统一启动器、两种配置器、测试和静态分析的 C++ 标准、警告和字符集。
 - `locales/zh-CN.json` 是用户文本基准，`locales/languages.json` 登记语言。`tools/locales.ps1` 校验后生成内置文本和 `setup.ps1` 的下载文案。`src/Localization.*` 负责原生匹配和查找。`frontend/vite.config.ts` 只打包已登记的语言，`frontend/src/i18n/` 提供菜单项和文本回退。翻译指南见 `docs/translating.md`，测试为 `tests/localization-tests.*`。不要翻译机器接口字段、代码、固定文件名和管理标记。
 - 用户文档的 `.en.md`、`.ja.md` 与中文同步，顶部提供语言链接。`tests/documentation-tests.ps1` 检查用户文档同步，也检查开发者文档的本地链接、章节锚点及 PowerShell/JSON 示例语法；新增文档同步 `tools/release-sources.ps1` 源码清单。

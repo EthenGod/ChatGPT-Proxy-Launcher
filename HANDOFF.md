@@ -5,8 +5,8 @@
 - `refactor/ui` 的第 4 阶段实现和本机隔离检查已完成。默认构建使用 Tauri，旧 GUI 保留独立入口。补充检查覆盖生命周期、三语、主题、短窗口、键盘和无障碍媒体模拟。正式包的只读加载、后台预检、真实端口发现和现有代理 HTTPS 连通检查也已通过。Windows 150% / 200% 缩放及系统高对比度按用户要求暂缓；其余外部环境验收见 `docs/ui-refactor.md` 顶部清单。不把公共 HTTPS 成功等同于 Codex 对话或 WebSocket 成功。当前打包版本为 `v1.2.0-beta.3`。只生成本地发布附件。
 - 真实退出验收可能关闭承载当前任务的 Codex 桌面应用。执行前须确认主机关系并安排独立观察和恢复，不能在当前任务还有未完成工作时触发。现有 WebView2 可运行，不代表在缺少运行库的机器上安装成功；不要为制造缺失环境而卸载共享运行库。正式包只读检查与隔离保存检查分开，不用测试包覆盖已有部署。
 - `frontend/desktop.ps1` 是新入口。用 `-RustBin` 或进程变量 `CHATGPT_RUST_BIN` 指定已有 Rust MSVC 工具链的 `bin` 目录。构建脚本把它和 `work/ui-toolchain/bin` 一起加入当前进程的 PATH。单独运行补充的 rustfmt 时也需要同版本编译器目录，否则 Windows 会提示缺少 `rustc_driver` DLL。完整检查需要 Cargo、Clippy 和 rustfmt。
-- 完整构建、`build.cmd launcher` 和 `build.cmd native` 由 `frontend/desktop.ps1` 取得同一把锁，再调用 `tools/build-native.cmd`。这把锁保护编译、内嵌和生成校验值的全过程。正式产物放 `outputs/`，旧 GUI 放 `work/ui-native/`。测试、原型和示例默认在 `work/ui-test-native/` 单独编译启动器。只有显式传入 `-ReuseNativeBuild` 才复用本轮正式构建的启动器。通用下载测试使用旧 GUI 样本。带 WebView2 安装提示的分支由专门的下载测试覆盖。
-- 正式资源只含实际设置入口，`CHATGPT_UI_PROTOTYPE=1` 只由原型构建设置。Rust 资源测试、交付脚本分别检查内嵌页面、测试标记、EXE 哈希和运行库导入。发布窗口只允许内嵌页面导航；开发地址仅在调试构建开放。
+- 正式产物放 `outputs/`，旧 GUI 放 `work/ui-native/`。测试、原型和示例默认在 `work/ui-test-native/` 单独编译启动器。显式传入 `-ReuseNativeBuild` 可复用本轮正式构建的启动器。通用下载测试使用旧 GUI 样本。带 WebView2 安装提示的分支由专门的下载测试覆盖。
+- 正式资源只含实际设置入口。原型和附加程序示例构建设置 `CHATGPT_UI_PROTOTYPE=1`。Rust 资源测试和交付脚本检查内嵌页面、测试标记、EXE 哈希和运行库导入。发布窗口只允许内嵌页面导航。开发地址仅在调试构建开放。
 - `release.cmd -TestPackage` 完成静态分析、完整回归和源码核验后，只创建新的 `work/release-stage-*`，不写旧 Release。打包期间不能修改源码；脚本会核对构建前后的清单哈希。`tests/delivery-tests.ps1` 复核两个 EXE、明确源码清单和校验文件。
 - 单文件检查拒绝额外的 VC++ 和 `WebView2Loader.dll` 依赖，但允许 Windows 10 以上自带的 UCRT/API-set。不要把 `api-ms-win-crt-*` 当作需要随包附带的 DLL。边界见[微软 UCRT 部署说明](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment)。
 - C++ 结果由 C++ 释放。Rust 的作用域对象负责调用释放函数。原始后台命令以 UTF-16 直接交给原解析器，必须在 WebView 检查和窗口初始化之前分流。普通 EXE 不接受测试路径环境变量；`test-harness` 产物必须单独保存在 `work/ui-stage1-test/`。
@@ -116,7 +116,7 @@
 - 配置器的文本规则分为 `SetupArguments.cpp` 和 `CodexEnv.cpp`。两者不读写用户文件，不执行系统操作。文件所有权、原子替换和回滚由 `SetupCore.cpp` 统一负责。新增模块须同时进入构建、测试链接、静态分析和发布源码清单。
 - `build.cmd`、测试和静态分析共用 `tools/msvc-env.cmd`。MSVC 公共参数放在 `tools/msvc-common.rsp`，每行一个，Rust 的原生构建也读取该文件。优先复用 x64 开发者终端，否则使用 `vswhere` 定位工具链，不在各入口分别写死安装路径。
 - `tests/analyze.cmd` 把 C++ 分析对象写入 `work/analysis/`，随后的桌面检查会重建原生启动器。验证交付时先运行静态分析，再运行 `tests/test-build.cmd`，最后核对同次构建的两个 EXE。性能复测方法见 `docs/performance-review.md`。
-- 各桌面构建共用原生资源和 Cargo 输出。工作区构建锁覆盖编译、复制 EXE 和写入哈希。并发验收要同时核对正式包和隔离包的实际 EXE。
+- `frontend/desktop.ps1` 为完整构建、`build.cmd launcher` 和 `build.cmd native` 取得同一把锁，覆盖编译、内嵌、复制和写入哈希。`tests/build-lock-tests.ps1` 检查三个入口是否持锁。并发验收同时核对正式包和隔离包的实际 EXE。
 - 启动器测试为每轮结果和子进程捕获新建独立目录。Windows 会复用进程号。仅按进程号命名会与旧结果冲突，也可能提前读到上轮捕获。
 - 代理进程快照和路径缓存只属于一次检测。重复查询和失败查询都复用结果，下次点击须重新获取；不能跨次保留 PID。v2rayN 的安装根目录可能就是本地配置目录，应先去重。
 - YAML 解析使用原文本的 `string_view`。视图不得逃逸出本次解析；不能为提前返回端口而跳过后续重复键或多文档检查。

@@ -80,21 +80,23 @@
 
 需要 Node.js（24.x 从 24.15 起，或 26 及以上版本）、Rust 1.99 以上的 MSVC 工具链、Clippy、rustfmt、Visual Studio C++ 工具和 Windows SDK。前端依赖使用锁文件。缓存和产物放在 `work/`，不改系统 PATH。
 
-先在 `frontend` 运行 `npm ci`，然后在根目录运行：
+先在 `frontend` 运行 `npm ci` 安装锁定的依赖。回到仓库根目录，按顺序运行静态分析和完整测试。
 
 ```powershell
-.\frontend\desktop.ps1 -Command build
-.\frontend\desktop.ps1 -Command test
-.\frontend\desktop.ps1 -Command harness
-cmd /c tests\test-bridge.cmd
-.\tests\ui-stage1-tests.ps1
+cmd /c tests\analyze.cmd
+cmd /c tests\test-build.cmd
 ```
 
 若 Cargo 不在 PATH，可用 `-RustBin` 指定现有 MSVC 工具链的 `bin` 目录，或设置进程变量 `CHATGPT_RUST_BIN`。脚本结束后恢复环境变量。
 
 根目录 `cmd /c build.cmd` 生成配套的正式配置器和启动器。`cmd /c build.cmd native` 在 `work/ui-native/` 编译旧 GUI 和内嵌的启动器。`cmd /c build.cmd launcher` 单独重建 `outputs/` 中的启动器。三个入口共用一把构建锁。旧 GUI 和独立启动器只需 C++ 工具和 Windows SDK。原型、功能测试版和示例版默认从 `work/ui-test-native/` 嵌入各自构建的启动器。如果最后一次只构建了正式启动器，交付前须再做一次完整构建，确保两个 EXE 配对。`tests/build-lock-tests.ps1` 检查编译和内嵌时是否持有同一把锁。
 
-`cmd /c tests\test-build.cmd` 包含原生、桥接、前端、Rust、后台对照和交付检查；`cmd /c tests\analyze.cmd` 包含 C++ 分析及正式/测试 feature 的 Clippy。桌面验收单独运行 `tests/ui-prototype-tests.ps1 -Functional`，默认观察 60 秒并正常关闭三次。
+静态分析覆盖 C++ 和 Rust 的正式及测试配置。完整测试构建正式 EXE 和隔离配置器，检查 C++、C ABI、前端、Rust、后台命令和交付文件。在有桌面会话的 Windows 上，使用完整测试生成的隔离配置器继续检查实际窗口。
+
+```powershell
+.\tests\ui-stage1-tests.ps1
+.\tests\ui-prototype-tests.ps1 -Functional
+```
 
 `cmd /c release.cmd -TestPackage` 运行完整检查后，只在新的 `work/release-stage-*` 目录生成两个 EXE、源码 ZIP 和校验文件，不改旧 Release 或已有部署。`tests/delivery-tests.ps1 -PackageDirectory <目录>` 可独立复核包内容。正式发布仍使用 `release.cmd`，本地打包不会上传。
 
@@ -144,7 +146,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\frontend\preview.ps1
 
 - 默认构建输出单个 Tauri 配置器和独立 C++ 启动器。旧 GUI 可单独构建，也继续内嵌为兼容模式。没有修改部署核心或新增常驻服务。
 - 正式包只包含实际设置页，不包含模拟页面和测试路径入口。主窗口只允许内嵌页面导航。前端、Rust、C++、资源版本及同次构建载荷在构建和交付检查中核对。
-- 完整检查接入 `test-build.cmd` 和 `analyze.cmd`。发布脚本先检查再生成两个 EXE、源码 ZIP 和 SHA-256；测试模式只写新的 `work/release-stage-*`。当前源码清单共 191 个文件，不收集缓存、依赖、本机数据或旧产物。
+- 完整检查接入 `test-build.cmd` 和 `analyze.cmd`。发布脚本先检查，再生成两个 EXE、源码 ZIP 和 SHA-256。测试模式写入新的 `work/release-stage-*`。源码包的文件范围由 [tools/release-sources.ps1](../tools/release-sources.ps1) 定义。
 - 三语 README 更新实际操作和构建前提；原生设计与性能文档保留为兼容实现基线。模块地图和交接说明已同步。
 
 ### 验证记录
