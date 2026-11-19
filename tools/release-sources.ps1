@@ -209,6 +209,7 @@ $files = @(
     'tests/ui-program-clip-checks.js'
     'tests/ui-program-sample-checks.js'
     'tests/ui-prototype-tests.ps1'
+    'tests/ui-response-checks.js'
     'tests/ui-responsive-checks.js'
     'tests/ui-stage1-tests.ps1'
     'tests/webview-download-tests.ps1'

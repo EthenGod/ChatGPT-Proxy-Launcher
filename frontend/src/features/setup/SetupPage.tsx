@@ -272,7 +272,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   }
 
   function update<K extends keyof SetupOptions>(key: K, value: SetupOptions[K]) {
-    if (!options || locked || activeOperation.current) return
+    if (!options || locked || activeOperation.current || options[key] === value) return
     if (['host', 'port', 'protocol', 'proxy'].includes(key)) { ++detectRevision.current; setDetectionPhase('idle'); noticeManager.close('activity') }
     setOptions({ ...options, [key]: value }); setResult(null); setNotice(null); setError(null)
   }

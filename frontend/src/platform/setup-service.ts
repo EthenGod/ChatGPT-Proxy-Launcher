@@ -39,8 +39,11 @@ export function parseSaveResult(value: unknown): SaveResult {
 /** One FIFO for all native work, including preferences. No polling or browser storage. */
 export function createSetupService(): SetupService {
   let tail = Promise.resolve()
-  const call = <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
-    const job = tail.then(() => invoke<T>(command, args))
+  const call = <T,>(command: string, args?: Record<string, unknown>, signal?: AbortSignal): Promise<T> => {
+    const job = tail.then(() => {
+      if (signal?.aborted) throw signal.reason
+      return invoke<T>(command, args)
+    })
     // Closing waits for completion. Keeping the reply here also retains the last list of PNGs.
     tail = job.then(() => {}, () => {})
     return job
@@ -49,7 +52,7 @@ export function createSetupService(): SetupService {
     native: true,
     settled: () => tail,
     load: async () => parseSnapshot(await call('read_setup_state')),
-    validate: options => call<Validation>('validate_setup', { options }),
+    validate: (options, signal) => call<Validation>('validate_setup', { options }, signal),
     detectPort: async (protocol, host) => {
       const result = await call<Detection>('detect_setup_port', { protocol, host })
       if (typeof result.port !== 'string' || typeof result.source !== 'string' || typeof result.message !== 'string') throw new Error('Invalid detection result')

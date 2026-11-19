@@ -9,7 +9,8 @@ param(
     [ValidateRange(1,600)][int]$IdleSeconds=60,
     [ValidateRange(1,30)][int]$Cycles=3,
     [ValidateRange(480,1600)][int]$Width=640,
-    [ValidateRange(400,1200)][int]$Height=760
+    [ValidateRange(400,1200)][int]$Height=760,
+    [ValidateRange(1,30)][int]$ExpectedReads=1
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot
@@ -114,7 +115,7 @@ function Owned-Process($Metadata) {
     $null=$process.Handle
     return $process
 }
-function Inspect-Preview($Metadata) {
+function Inspect-Preview($Metadata, [int]$Reads=1) {
     $owner=Owned-Process $Metadata
     Require ($null -ne $owner) 'Preview exited before inspection'
     try {
@@ -124,7 +125,7 @@ function Inspect-Preview($Metadata) {
     if(!$Functional) { Require (![IO.Directory]::Exists((Join-Path $Metadata.root 'state'))) 'Prototype wrote deployment state' }
     if($Functional) {
         $read=Get-Content -LiteralPath (Join-Path $Metadata.root 'read-ok.json') -Raw | ConvertFrom-Json
-        Require ($read.reads -eq 1) 'Operational page must load once, without polling'
+        Require ($read.reads -eq $Reads) 'Unexpected number of operational page loads'
     } else { Require (![IO.File]::Exists((Join-Path $Metadata.root 'read-ok.json'))) 'Prototype called the real read bridge' }
     $rows=@(Tree $Metadata.processId)
     $samples=@(foreach($row in $rows) {
@@ -173,7 +174,7 @@ function Verify-Closed($Metadata) {
 }
 switch($Action) {
     'Start' { Start-Preview | ConvertTo-Json }
-    'Inspect' { Inspect-Preview (Resolve-Session) | ConvertTo-Json }
+    'Inspect' { Inspect-Preview (Resolve-Session) $ExpectedReads | ConvertTo-Json }
     'Resize' {
         $process=Owned-Process (Resolve-Session)
         Require ($null -ne $process) 'Preview has already exited'

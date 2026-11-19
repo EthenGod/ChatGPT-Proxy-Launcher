@@ -29,6 +29,26 @@ describe('desktop window', () => {
   })
 })
 describe('desktop command boundary', () => {
+  it('skips obsolete queued previews and runs the current one after the pending native operation', async () => {
+    let finish!: () => void
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve(undefined) }))
+      .mockResolvedValue({ valid: true, arguments: '--latest', errors: {} })
+    const service = createSetupService()
+    const busy = service.openLocation('startup')
+    const obsolete = new AbortController()
+    const skipped = service.validate!(fixture.options, obsolete.signal)
+    const current = { ...fixture.options, extra: '--latest' }
+    const latest = service.validate!(current)
+    obsolete.abort()
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('open_setup_location', { location: 'startup' })
+    finish()
+    await expect(skipped).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(latest).resolves.toMatchObject({ arguments: '--latest' })
+    await Promise.all([busy, service.settled!()])
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenLastCalledWith('validate_setup', { options: current })
+  })
   it('serializes preferences, detection and save, then continues after an error', async () => {
     const calls: string[] = []
     let release!: () => void

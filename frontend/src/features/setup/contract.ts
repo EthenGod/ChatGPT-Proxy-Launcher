@@ -28,7 +28,7 @@ export interface SetupService {
     programs: ProgramEntry[]
     addProgram(entry: ProgramEntry): Promise<void>
   }
-  validate?(options: SetupOptions): Promise<Validation>
+  validate?(options: SetupOptions, signal?: AbortSignal): Promise<Validation>
   chooseDirectory?(initial: string): Promise<string | null>
   selectProgram?(): Promise<ProgramEntry | null>
   setPreferences?(dark: boolean, language: string): Promise<{ preferences: SetupSnapshot['preferences']; warnings: MessageKey[] }>

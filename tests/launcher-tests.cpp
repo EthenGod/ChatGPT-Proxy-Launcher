@@ -28,6 +28,7 @@ void RepairTaskbarShortcut(PCWSTR) noexcept { ++repairCalls; }
 
 // Compile-time substitutions live only in this test translation unit.
 static LONG WINAPI TestPackages(PCWSTR, UINT32*, PWSTR*, UINT32*, PWSTR);
+static LONG WINAPI TestIdentity(PCWSTR, UINT32, UINT32*, BYTE*);
 static LONG WINAPI TestPath(PCWSTR, UINT32*, PWSTR);
 static DWORD WINAPI TestAttributes(PCWSTR);
 static BOOL WINAPI TestCreate(PCWSTR, PWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
@@ -36,6 +37,7 @@ static DWORD WINAPI TestMessage(DWORD, LPCVOID, DWORD, DWORD, LPWSTR, DWORD, va_
 static LPVOID WINAPI TestAllocate(HANDLE, DWORD, SIZE_T);
 static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 #define GetPackagesByPackageFamily TestPackages
+#define PackageIdFromFullName TestIdentity
 #define GetPackagePathByFullName TestPath
 #define GetFileAttributesW TestAttributes
 #define CreateProcessW TestCreate
@@ -44,6 +46,7 @@ static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 #define HeapFree TestFree
 #include "../src/ChatGPTProxyLauncher.cpp"
 #undef GetPackagesByPackageFamily
+#undef PackageIdFromFullName
 #undef GetPackagePathByFullName
 #undef GetFileAttributesW
 #undef CreateProcessW
@@ -52,10 +55,12 @@ static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 #undef HeapFree
 
 enum class Scenario { Normal, Empty, GrowOnce, GrowAlways, PathGoneOnce, PathGoneAlways,
-    MissingExe, Denied, Directory, HugeCount, UnexpectedSuccess, BadIdentity, ResourcesOnly };
+    MissingExe, Denied, Directory, HugeCount, UnexpectedSuccess, BadIdentity, ResourcesOnly,
+    Single, LargeList, LargeIdentity, HugeIdentity };
 static bool fakePackages = false, fakeCreate = false;
 static Scenario scenario = Scenario::Normal;
-static unsigned enumerations = 0, messageCalls = 0;
+static unsigned messageCalls = 0;
+static unsigned packageCalls = 0, identityCalls = 0;
 static unsigned allocationCalls = 0, failAllocation = 0;
 static unsigned liveAllocations = 0, createCalls = 0;
 static bool createSuccess = false;
@@ -64,29 +69,43 @@ static std::wstring selected, workingDirectory, application, forwarded;
 static const wchar_t Newest[] = L"OpenAI.Codex_10.2.0.0_x64__2p2nqsd0c76g0";
 static const wchar_t Updated[] = L"OpenAI.Codex_11.0.0.0_x64__2p2nqsd0c76g0";
 
-static std::vector<std::wstring> Packages() {
-    if (scenario == Scenario::BadIdentity) return { L"invalid package identity" };
-    if (scenario == Scenario::ResourcesOnly) return { L"OpenAI.Codex_99.0.0.0_x64_en-us_2p2nqsd0c76g0" };
-    if (scenario == Scenario::PathGoneOnce && enumerations > 1) return { Updated };
-    return { L"OpenAI.Codex_9.99.0.0_x64__2p2nqsd0c76g0", Newest,
+static const std::vector<std::wstring>& Packages() {
+    static const std::vector<std::wstring> invalid{ L"invalid package identity" };
+    static const std::vector<std::wstring> resources{ L"OpenAI.Codex_99.0.0.0_x64_en-us_2p2nqsd0c76g0" };
+    static const std::vector<std::wstring> updated{ Updated }, single{ Newest };
+    static const std::vector<std::wstring> multiple{ L"OpenAI.Codex_9.99.0.0_x64__2p2nqsd0c76g0", Newest,
         L"OpenAI.Codex_99.0.0.0_x64_en-us_2p2nqsd0c76g0",
         L"OpenAI.Codex_10.1.999.0_x64__2p2nqsd0c76g0",
         L"OpenAI.Other_99.0.0.0_x64__2p2nqsd0c76g0",
         L"OpenAI.Codex_99.0.0.0_x64__aaaaaaaaaaaaa" };
+    static const auto large = [] {
+        auto catalog = multiple;
+        for (int i = 0; i < 4; ++i)
+            catalog.push_back(L"OpenAI.Codex_3." + std::to_wstring(i) + L".0.0_x64__2p2nqsd0c76g0");
+        return catalog;
+    }();
+    if (scenario == Scenario::BadIdentity) return invalid;
+    if (scenario == Scenario::ResourcesOnly) return resources;
+    if (scenario == Scenario::PathGoneOnce && packageCalls > 1) return updated;
+    if (scenario == Scenario::Single) return single;
+    if (scenario == Scenario::LargeList || scenario == Scenario::GrowOnce || scenario == Scenario::GrowAlways)
+        return large;
+    return multiple;
 }
 
 static LONG WINAPI TestPackages(PCWSTR family, UINT32* count, PWSTR* names, UINT32* chars, PWSTR buffer) {
     if (!fakePackages) return GetPackagesByPackageFamily(family, count, names, chars, buffer);
-    if (!names) ++enumerations;
+    ++packageCalls;
     if (scenario == Scenario::Empty) { *count = 0; return ERROR_SUCCESS; }
     if (scenario == Scenario::UnexpectedSuccess) { *count = 1; return ERROR_SUCCESS; }
     if (scenario == Scenario::HugeCount) { *count = 1025; *chars = 1; return ERROR_INSUFFICIENT_BUFFER; }
-    const auto packages = Packages();
+    const auto& packages = Packages();
     UINT32 needed = 0;
     for (const auto& name : packages) needed += static_cast<UINT32>(name.size() + 1);
-    if (!names || *count < packages.size() || *chars < needed
-        || scenario == Scenario::GrowAlways || (scenario == Scenario::GrowOnce && enumerations == 1)) {
-        *count = static_cast<UINT32>(packages.size()); *chars = needed;
+    // Store updates can add a package after a size report but before the retry.
+    const bool changed = scenario == Scenario::GrowAlways || (scenario == Scenario::GrowOnce && packageCalls == 2);
+    if (!names || *count < packages.size() || *chars < needed || changed) {
+        *count = static_cast<UINT32>(packages.size()) + (changed ? 1 : 0); *chars = needed + (changed ? 64 : 0);
         return ERROR_INSUFFICIENT_BUFFER;
     }
     for (size_t i = 0; i < packages.size(); ++i) {
@@ -98,10 +117,20 @@ static LONG WINAPI TestPackages(PCWSTR family, UINT32* count, PWSTR* names, UINT
     return ERROR_SUCCESS;
 }
 
+static LONG WINAPI TestIdentity(PCWSTR name, UINT32 flags, UINT32* length, BYTE* buffer) {
+    ++identityCalls;
+    if (scenario == Scenario::HugeIdentity) { *length = 131073; return ERROR_INSUFFICIENT_BUFFER; }
+    if (scenario == Scenario::LargeIdentity && *length < 1024) {
+        *length = 1024;
+        return ERROR_INSUFFICIENT_BUFFER;
+    }
+    return PackageIdFromFullName(name, flags, length, buffer);
+}
+
 static LONG WINAPI TestPath(PCWSTR name, UINT32* length, PWSTR path) {
     if (!fakePackages) return GetPackagePathByFullName(name, length, path);
     selected = name;
-    if (scenario == Scenario::PathGoneAlways || (scenario == Scenario::PathGoneOnce && enumerations == 1))
+    if (scenario == Scenario::PathGoneAlways || (scenario == Scenario::PathGoneOnce && packageCalls == 1))
         return ERROR_NOT_FOUND;
     if (scenario == Scenario::Denied) return ERROR_ACCESS_DENIED;
     const wchar_t root[] = L"C:\\Launcher Test\\Package";
@@ -165,7 +194,9 @@ static int CheckLookup() {
     struct Case { Scenario state; DWORD result; unsigned calls; };
     const Case cases[] = {
         { Scenario::Normal, 0, 1 }, { Scenario::Empty, ERROR_NOT_FOUND, 1 },
-        { Scenario::GrowOnce, 0, 2 }, { Scenario::GrowAlways, ERROR_RETRY, 3 },
+        { Scenario::LargeList, 0, 2 }, { Scenario::LargeIdentity, 0, 1 },
+        { Scenario::HugeIdentity, ERROR_INVALID_DATA, 1 },
+        { Scenario::GrowOnce, 0, 4 }, { Scenario::GrowAlways, ERROR_RETRY, 6 },
         { Scenario::PathGoneOnce, 0, 2 }, { Scenario::PathGoneAlways, ERROR_NOT_FOUND, 3 },
         { Scenario::MissingExe, ERROR_FILE_NOT_FOUND, 3 }, { Scenario::Denied, ERROR_ACCESS_DENIED, 1 },
         { Scenario::Directory, ERROR_FILE_NOT_FOUND, 1 }, { Scenario::HugeCount, ERROR_INVALID_DATA, 1 },
@@ -173,25 +204,32 @@ static int CheckLookup() {
     };
     wchar_t path[32768];
     for (const auto& item : cases) {
-        scenario = item.state; enumerations = 0; selected.clear();
+        scenario = item.state; packageCalls = identityCalls = allocationCalls = 0; selected.clear();
         REQUIRE(FindExecutable(path, 32768) == item.result);
         REQUIRE(liveAllocations == 0);
-        REQUIRE(enumerations == item.calls);
+        REQUIRE(packageCalls == item.calls);
+        if (scenario == Scenario::Normal) REQUIRE(identityCalls == Packages().size() && allocationCalls == 0);
         if (!item.result) {
             REQUIRE(selected == (scenario == Scenario::PathGoneOnce ? Updated : Newest));
             REQUIRE(wcscmp(path, L"C:\\Launcher Test\\Package\\app\\ChatGPT.exe") == 0);
         }
         if (scenario == Scenario::MissingExe) REQUIRE(selected == Newest);
     }
-    scenario = Scenario::BadIdentity; enumerations = 0;
+    scenario = Scenario::BadIdentity;
     REQUIRE(FindExecutable(path, 32768) != 0);
     scenario = Scenario::Normal;
     REQUIRE(FindExecutable(path, 2) == ERROR_INSUFFICIENT_BUFFER);
     REQUIRE(FindExecutable(path, 30) == ERROR_FILENAME_EXCED_RANGE);
-    for (unsigned failure = 1; failure <= 8; ++failure) {
-        allocationCalls = 0; failAllocation = failure;
-        REQUIRE(FindExecutable(path, 32768) == ERROR_NOT_ENOUGH_MEMORY);
-        REQUIRE(liveAllocations == 0);
+    for (auto overflow : { Scenario::LargeList, Scenario::LargeIdentity }) {
+        scenario = overflow;
+        failAllocation = allocationCalls = 0;
+        REQUIRE(FindExecutable(path, _countof(path)) == 0 && allocationCalls > 0);
+        const auto allocations = allocationCalls;
+        for (unsigned failure = 1; failure <= allocations; ++failure) {
+            allocationCalls = 0; failAllocation = failure;
+            REQUIRE(FindExecutable(path, _countof(path)) == ERROR_NOT_ENOUGH_MEMORY);
+            REQUIRE(liveAllocations == 0);
+        }
     }
     failAllocation = 0;
     fakePackages = false;
@@ -295,6 +333,26 @@ static int CheckRandomCommands(PCWSTR executable) {
 
 // Test-only child process: capture the actual Windows command line.
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && wcscmp(argv[1], L"--benchmark-lookup") == 0) {
+        fakePackages = true;
+        wchar_t path[32768];
+        LARGE_INTEGER frequency, begin, end;
+        REQUIRE(QueryPerformanceFrequency(&frequency));
+        constexpr unsigned iterations = 20000;
+        for (auto catalog : { Scenario::Single, Scenario::Normal }) {
+            scenario = catalog;
+            for (int warmup = 0; warmup < 100; ++warmup) REQUIRE(FindExecutable(path, _countof(path)) == 0);
+            packageCalls = identityCalls = allocationCalls = 0;
+            QueryPerformanceCounter(&begin);
+            for (unsigned i = 0; i < iterations; ++i) REQUIRE(FindExecutable(path, _countof(path)) == 0);
+            QueryPerformanceCounter(&end);
+            REQUIRE(selected == Newest && liveAllocations == 0);
+            printf("packages=%zu lookup_us=%.3f enumeration=%u identity=%u allocations=%u\n", Packages().size(),
+                1e6 * (end.QuadPart - begin.QuadPart) / frequency.QuadPart / iterations,
+                packageCalls / iterations, identityCalls / iterations, allocationCalls / iterations);
+        }
+        return 0;
+    }
     if (argc >= 3 && wcscmp(argv[1], L"--capture") == 0) {
         HANDLE file = CreateFileW(argv[2], GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE) return 1;

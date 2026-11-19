@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
 import { SetupPage } from '../../frontend/src/features/setup/SetupPage'
+import { useSetupValidation } from '../../frontend/src/features/setup/useSetupValidation'
 import { MockSetupService } from '../../frontend/src/platform/mock'
 import type { ProgramList, Validation, WindowHost } from '../../frontend/src/features/setup/contract'
 import type { SetupOptions } from '../../frontend/src/platform/types'
@@ -28,6 +29,37 @@ function mount(service = new MockSetupService('normal', 0), showPrograms = false
 async function loaded() { await screen.findByRole('textbox', { name: '端口' }) }
 
 describe('settings prototype behavior', () => {
+  it('validates initial settings and switches immediately and coalesces consecutive keystrokes', async () => {
+    const base = new MockSetupService('normal', 0)
+    const { options } = await base.load()
+    const validate = vi.fn(async (input: SetupOptions) => ({ valid: true, arguments: input.extra, errors: {} }))
+    const service = Object.assign(base, { validate })
+    vi.useFakeTimers()
+    try {
+      const advance = (milliseconds: number) => act(async () => { await vi.advanceTimersByTimeAsync(milliseconds) })
+      const { result, rerender, unmount } = renderHook((value: SetupOptions) =>
+        useSetupValidation(service, value, 'en-US', false), { initialProps: options })
+      await advance(0)
+      expect(validate).toHaveBeenCalledExactlyOnceWith(options, expect.any(AbortSignal))
+      const switched = { ...options, desktop: !options.desktop }
+      rerender(switched)
+      await advance(0)
+      expect(validate).toHaveBeenLastCalledWith(switched, expect.any(AbortSignal))
+      for (const extra of ['a', 'ab', 'abc']) {
+        rerender({ ...switched, extra })
+        await advance(15)
+      }
+      expect(validate).toHaveBeenCalledTimes(2)
+      expect(result.current.validation).toBeNull()
+      await advance(65)
+      expect(validate).toHaveBeenCalledTimes(3)
+      expect(result.current.validation?.arguments).toBe('abc')
+      rerender({ ...switched, extra: 'pending' })
+      unmount()
+      await advance(180)
+      expect(validate).toHaveBeenCalledTimes(3)
+    } finally { vi.useRealTimers() }
+  })
   it('keeps a noninteractive skeleton until a read or retry has a real snapshot', async () => {
     const service = new MockSetupService('normal', 0)
     const snapshot = await service.load()

@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <appmodel.h>
+#include <optional>
 #include <wchar.h>
 #include "TaskbarShortcut.h"
 #include "StartupApps.h"
@@ -28,46 +29,61 @@ static bool PathChanged(DWORD error) {
         || error == ERROR_NOT_FOUND || error == APPMODEL_ERROR_NO_PACKAGE;
 }
 
+static DWORD NewestPackage(PWSTR const* names, UINT32 count, PCWSTR& newest) {
+    UINT64 newestVersion = 0;
+    for (UINT32 i = 0; i < count; ++i) {
+        if (!names[i]) return ERROR_INVALID_DATA;
+        alignas(PACKAGE_ID) BYTE local[512];
+        BYTE* data = local;
+        UINT32 bytes = sizeof(local);
+        std::optional<Buffer> overflow;
+        LONG result = PackageIdFromFullName(names[i], PACKAGE_INFORMATION_BASIC, &bytes, data);
+        if (result == ERROR_INSUFFICIENT_BUFFER) {
+            if (bytes <= sizeof(local) || bytes > 131072) return ERROR_INVALID_DATA;
+            data = static_cast<BYTE*>(overflow.emplace(bytes).get());
+            if (!data) return ERROR_NOT_ENOUGH_MEMORY;
+            result = PackageIdFromFullName(names[i], PACKAGE_INFORMATION_BASIC, &bytes, data);
+        }
+        if (result != ERROR_SUCCESS) return result;
+        if (bytes < sizeof(PACKAGE_ID)) return ERROR_INVALID_DATA;
+        const auto* id = reinterpret_cast<const PACKAGE_ID*>(data);
+        if (!id->name || !id->publisherId || !id->resourceId) return ERROR_INVALID_DATA;
+        if (wcscmp(id->name, L"OpenAI.Codex") || wcscmp(id->publisherId, L"2p2nqsd0c76g0")
+            || *id->resourceId) continue;
+        if (!newest || id->version.Version > newestVersion) {
+            newest = names[i];
+            newestVersion = id->version.Version;
+        }
+    }
+    return newest ? ERROR_SUCCESS : ERROR_NOT_FOUND;
+}
+
 static DWORD FindExecutable(wchar_t* executable, size_t capacity) {
     DWORD lastError = ERROR_RETRY;
     // A store update can replace the package between enumeration and path lookup.
     for (int attempt = 0; attempt < 3; ++attempt) {
-        UINT32 count = 0, characters = 0;
-        LONG result = GetPackagesByPackageFamily(Family, &count, nullptr, &characters, nullptr);
-        if (result == ERROR_SUCCESS && count == 0) return ERROR_NOT_FOUND;
-        if (result != ERROR_INSUFFICIENT_BUFFER) return result == 0 ? ERROR_INVALID_DATA : result;
-        if (!count || count > 1024 || !characters || characters > 2097152)
-            return ERROR_INVALID_DATA;
-        Buffer names(count * sizeof(PWSTR)), strings(characters * sizeof(wchar_t));
-        if (!names.get() || !strings.get()) return ERROR_NOT_ENOUGH_MEMORY;
-        result = GetPackagesByPackageFamily(Family, &count, static_cast<PWSTR*>(names.get()),
-            &characters, static_cast<PWSTR>(strings.get()));
-        if (result == ERROR_INSUFFICIENT_BUFFER) { lastError = ERROR_RETRY; continue; }
-        if (result != ERROR_SUCCESS) return result;
-
-        PCWSTR newest = nullptr;
-        UINT64 newestVersion = 0;
-        for (UINT32 index = 0; index < count; ++index) {
-            PCWSTR fullName = static_cast<PWSTR*>(names.get())[index];
-            UINT32 bytes = 0;
-            result = PackageIdFromFullName(fullName, PACKAGE_INFORMATION_BASIC, &bytes, nullptr);
-            if (result != ERROR_INSUFFICIENT_BUFFER) return result == 0 ? ERROR_INVALID_DATA : result;
-            if (bytes < sizeof(PACKAGE_ID) || bytes > 131072) return ERROR_INVALID_DATA;
-            Buffer identity(bytes);
-            if (!identity.get()) return ERROR_NOT_ENOUGH_MEMORY;
-            result = PackageIdFromFullName(fullName, PACKAGE_INFORMATION_BASIC, &bytes,
-                static_cast<BYTE*>(identity.get()));
-            if (result != ERROR_SUCCESS) return result;
-            const PACKAGE_ID* id = static_cast<PACKAGE_ID*>(identity.get());
-            if (!id->name || !id->publisherId || !id->resourceId) return ERROR_INVALID_DATA;
-            if (wcscmp(id->name, L"OpenAI.Codex") || wcscmp(id->publisherId, L"2p2nqsd0c76g0")
-                || *id->resourceId) continue;
-            if (!newest || id->version.Version > newestVersion) {
-                newest = fullName;
-                newestVersion = id->version.Version;
-            }
+        PWSTR localNames[8]{};
+        wchar_t localStrings[_countof(localNames) * (PACKAGE_FULL_NAME_MAX_LENGTH + 1)];
+        PWSTR* names = localNames;
+        UINT32 nameCapacity = _countof(localNames), stringCapacity = _countof(localStrings);
+        UINT32 count = nameCapacity, characters = stringCapacity;
+        std::optional<Buffer> overflow;
+        LONG result = GetPackagesByPackageFamily(Family, &count, names, &characters, localStrings);
+        if (result == ERROR_INSUFFICIENT_BUFFER) {
+            if (!count || count > 1024 || !characters || characters > 2097152) return ERROR_INVALID_DATA;
+            nameCapacity = count;
+            stringCapacity = characters;
+            names = static_cast<PWSTR*>(overflow.emplace(count * sizeof(PWSTR) + characters * sizeof(wchar_t)).get());
+            if (!names) return ERROR_NOT_ENOUGH_MEMORY;
+            auto* strings = reinterpret_cast<PWSTR>(names + nameCapacity);
+            result = GetPackagesByPackageFamily(Family, &count, names, &characters, strings);
+            if (result == ERROR_INSUFFICIENT_BUFFER) { lastError = ERROR_RETRY; continue; }
         }
-        if (!newest) return ERROR_NOT_FOUND;
+        if (result != ERROR_SUCCESS) return result;
+        if (count > nameCapacity || characters > stringCapacity || (count && !characters)) return ERROR_INVALID_DATA;
+        PCWSTR newest = nullptr;
+        result = NewestPackage(names, count, newest);
+        if (result != ERROR_SUCCESS) return result;
         UINT32 pathLength = static_cast<UINT32>(capacity);
         result = GetPackagePathByFullName(newest, &pathLength, executable);
         if (PathChanged(result)) { lastError = result; continue; }
