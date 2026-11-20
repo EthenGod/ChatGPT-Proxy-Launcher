@@ -22,12 +22,18 @@ pub struct Options {
     pub desktop: bool,
     pub proxy: bool,
     pub codex_env: bool,
+    #[serde(default = "default_cloud_codex")]
+    pub cloud_codex: bool,
     pub protocol: String,
     pub host: String,
     pub port: String,
     pub bypass: String,
     pub extra: String,
     pub directory: String,
+}
+
+fn default_cloud_codex() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize)]

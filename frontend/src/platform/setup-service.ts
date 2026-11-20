@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { assertOptions, nativeRecord, parseSnapshot } from './types'
+import { nativeRecord, parseOptions, parseSnapshot } from './types'
 import type { DesktopSetupService, SaveResult, Validation, ProgramEntry, ListedProgram, ProgramList, Detection } from '../features/setup/contract'
 import type { MessageKey } from '../i18n'
 import catalog from '../../../locales/zh-CN.json'
@@ -32,8 +32,7 @@ export function parseSaveResult(value: unknown): SaveResult {
     || !Array.isArray(result.warnings) || result.warnings.some(k => !messageKey(k))
     || typeof result.conflictDirectory !== 'string'
     || !Number.isInteger(result.nativeError) || Number(result.nativeError) < 0 || Number(result.nativeError) > 0xffffffff) throw new Error('Invalid save result')
-  if (result.options !== null) assertOptions(result.options)
-  return value as SaveResult
+  return { ...(value as SaveResult), options: result.options === null ? null : parseOptions(result.options) }
 }
 
 /** One FIFO for all native work, including preferences. No polling or browser storage. */

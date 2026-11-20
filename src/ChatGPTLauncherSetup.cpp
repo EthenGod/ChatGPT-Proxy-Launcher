@@ -32,11 +32,12 @@ constexpr UINT_PTR MotionTimer = 1;
 constexpr UINT_PTR WorkerTimer = 2;
 constexpr int HeaderButtonHeight = 36, HeaderButtonRadius = 10;
 constexpr int LanguageMenuPadding = 6, LanguageRowHeight = 36, LanguageMenuRadius = 12;
+constexpr int ProxyOptionSpacing = 48;
 enum ControlId {
     Title = 1000, SetupVersion, ThemeToggle, LanguageButton, State, StartTitle, Startup, Silent, SilentHint, Desktop,
     ProxyTitle, Proxy, CodexEnv, CodexEnvHelp, ProtocolLabel, ProtocolHelp, Protocol, ProtocolHttps, ProtocolSocks, HostLabel, HostHelp, Host, PortLabel, PortHelp, Port,
     PreviewTitle, Preview, Advanced, DirectoryLabel, Directory, Browse, Reset,
-    DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Footer, ApplyButton, CloseButton
+    DirectoryHint, BypassLabel, Bypass, ExtraLabel, Extra, CompanionLabel, AddProgram, OpenCompanions, Footer, ApplyButton, CloseButton, CloudCodex, CloudCodexHelp
 };
 struct Palette {
     COLORREF background, surface, text, secondary, border, accent;
@@ -70,17 +71,21 @@ struct Completion {
     setup::ChatGPTCloseResult closeResult = setup::ChatGPTCloseResult::NeedsManualExit;
     setup::StartupReport startupReport;
 };
-bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop || id == CodexEnv; }
+bool IsSwitch(int id) { return id == Startup || id == Silent || id == Proxy || id == Desktop || id == CodexEnv || id == CloudCodex; }
 bool IsSegment(int id) { return id == Protocol || id == ProtocolHttps || id == ProtocolSocks; }
 bool IsField(int id) { return id == Host || id == Port || id == Directory || id == Bypass || id == Extra || id == Preview; }
-bool IsHelp(int id) { return id == CodexEnvHelp || id == ProtocolHelp || id == HostHelp || id == PortHelp; }
+bool IsHelp(int id) { return id == CodexEnvHelp || id == CloudCodexHelp || id == ProtocolHelp || id == HostHelp || id == PortHelp; }
 bool IsButton(int id) {
     return IsSwitch(id) || IsSegment(id) || IsHelp(id) || id == Advanced || id == Browse || id == Reset || id == CloseButton || id == ApplyButton || id == ThemeToggle || id == LanguageButton || id == AddProgram || id == OpenCompanions;
 }
 bool IsActionButton(int id) { return IsButton(id) && !IsSwitch(id) && !IsSegment(id); }
 bool IsOwnerDrawButton(int id) { return IsActionButton(id) || IsSegment(id); }
 constexpr wchar_t AppearanceKey[] = L"Software\\Community\\ChatGPTLauncherSetup";
-PCWSTR HelpText(int id) { return l10n::Text(id == CodexEnvHelp ? "help.codex" : id == PortHelp ? "help.port" : "help.protocol"); }
+PCWSTR HelpText(int id) {
+    if (id == CodexEnvHelp) return l10n::Text("help.codex");
+    if (id == CloudCodexHelp) return l10n::Text("help.cloudcodex");
+    return l10n::Text(id == PortHelp ? "help.port" : "help.protocol");
+}
 PCWSTR ChatGPTCloseMessage(setup::ChatGPTCloseResult result) {
     if (result == setup::ChatGPTCloseResult::Closed) return l10n::Text("setup.quit.closed");
     if (result == setup::ChatGPTCloseResult::NotRunning) return l10n::Text("setup.quit.absent");
@@ -176,6 +181,7 @@ struct App {
         if (!loading) ResizeCaption(id);
     }
     bool Checked(int id) const { return SendMessageW(Get(id), BM_GETCHECK, 0, 0) == BST_CHECKED; }
+    bool CloudProxyAvailable() const { return Checked(Proxy) && (Checked(Protocol) || Checked(ProtocolHttps)); }
     void Check(int id, bool value) { SendMessageW(Get(id), BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0); }
     void Theme(int mode = -1);
     int CaptionWidth(int id, int font) const;
@@ -319,6 +325,9 @@ void App::CreateControls() {
     // The help button sits above the full-width switch, next to its label.
     SetWindowPos(Get(CodexEnvHelp), Get(Proxy), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     Check(CodexEnv, ReadCodexEnvPreference());
+    add(CloudCodex, L"BUTTON", l10n::Text("setup.option.cloudcodex"), WS_TABSTOP | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX);
+    add(CloudCodexHelp, L"BUTTON", l10n::Text("setup.help.cloudcodex"), WS_TABSTOP | BS_OWNERDRAW);
+    SetWindowPos(Get(CloudCodexHelp), Get(CodexEnv), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     add(ProtocolLabel, L"STATIC", l10n::Text("setup.label.protocol"), label, 3);
     add(ProtocolHelp, L"BUTTON", l10n::Text("setup.help.protocol"), WS_TABSTOP | BS_OWNERDRAW);
     add(Protocol, L"BUTTON", L"HTTP", WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON, 3);
@@ -359,7 +368,7 @@ void App::CreateControls() {
     tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr, instance, nullptr);
     // No reserved v6 fields are used; this size also works without a visual-styles manifest.
-    for (int id : {CodexEnvHelp, ProtocolHelp, HostHelp, PortHelp}) {
+    for (int id : {CodexEnvHelp, CloudCodexHelp, ProtocolHelp, HostHelp, PortHelp}) {
         TOOLINFOW tip{ TTTOOLINFOW_V2_SIZE };
         tip.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
         tip.hwnd = body; tip.uId = reinterpret_cast<UINT_PTR>(Get(id));
@@ -376,7 +385,7 @@ void App::UpdateTooltip() {
     SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, S(460));
     SendMessageW(tooltip, TTM_SETTIPBKCOLOR, colors.surface, 0);
     SendMessageW(tooltip, TTM_SETTIPTEXTCOLOR, colors.text, 0);
-    for (int id : {CodexEnvHelp, ProtocolHelp, HostHelp, PortHelp}) {
+    for (int id : {CodexEnvHelp, CloudCodexHelp, ProtocolHelp, HostHelp, PortHelp}) {
         TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = body;
         tip.uId = reinterpret_cast<UINT_PTR>(Get(id)); tip.lpszText = const_cast<PWSTR>(HelpText(id));
         SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tip));
@@ -598,6 +607,7 @@ void App::TranslateControls() {
         {StartTitle,"setup.section.startup"}, {Startup,"setup.option.startup"}, {Desktop,"setup.option.desktop"},
         {Silent,"setup.option.silent"}, {SilentHint,"setup.hint.startup"}, {ProxyTitle,"setup.section.proxy"},
         {Proxy,"setup.option.proxy"}, {CodexEnv,"setup.option.codex"}, {CodexEnvHelp,"setup.help.codex"},
+        {CloudCodex,"setup.option.cloudcodex"}, {CloudCodexHelp,"setup.help.cloudcodex"},
         {ProtocolLabel,"setup.label.protocol"}, {ProtocolHelp,"setup.help.protocol"}, {HostLabel,"setup.label.host"},
         {HostHelp,"setup.help.host"}, {PortLabel,"setup.label.port"}, {PortHelp,"setup.help.port"},
         {PreviewTitle,"setup.section.preview"}, {DirectoryLabel,"setup.label.directory"}, {Browse,"setup.action.browse"},
@@ -634,7 +644,7 @@ void App::Layout() {
     const int footerHeight = S(footerTextHeight + 64);
     SetWindowPos(body, nullptr, 0, 0, root.right, std::max(1L, root.bottom - footerHeight), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     RECT area{}; GetClientRect(body, &area);
-    const int envOffset = Checked(Proxy) ? 48 : 0;
+    const int envOffset = Checked(Proxy) ? 2 * ProxyOptionSpacing : 0;
     const int width = MulDiv(area.right, 96, static_cast<int>(dpi));
     const int inner = width - 96;
     const int languageWidth = std::clamp(CaptionWidth(LanguageButton, 0) + 40, 112, 180);
@@ -665,12 +675,12 @@ void App::Layout() {
     place(Silent, 48, 268, inner, 32, !advanced);
     place(ProxyTitle, 32, 340, width - 64, 20, !advanced);
     place(Proxy, 48, 384, inner, 36, !advanced);
-    place(CodexEnv, 48, 432, inner, 36, !advanced && envOffset);
-    HDC measure = GetDC(body); HGDIOBJ oldFont = SelectObject(measure, fonts[0]); SIZE labelSize{};
-    const auto envLabel = Text(CodexEnv);
-    GetTextExtentPoint32W(measure, envLabel.c_str(), static_cast<int>(envLabel.size()), &labelSize);
-    SelectObject(measure, oldFont); ReleaseDC(body, measure);
-    place(CodexEnvHelp, std::min(48 + MulDiv(labelSize.cx, 96, static_cast<int>(dpi)) + 6, width - 128), 438, 24, 24, !advanced && envOffset);
+    const auto proxyOption = [&](int option, int help, int y) {
+        place(option, 48, y, inner, 36, !advanced && envOffset);
+        place(help, std::min(48 + CaptionWidth(option, 0) + 4, width - 128), y + 6, 24, 24, !advanced && envOffset);
+    };
+    proxyOption(CodexEnv, CodexEnvHelp, 432);
+    proxyOption(CloudCodex, CloudCodexHelp, 432 + ProxyOptionSpacing);
     const auto proxyLabel = [&](int label, int help, int x) {
         const int labelWidth = CaptionWidth(label, 3);
         place(label, x, 432 + envOffset, labelWidth, 20, !advanced);
@@ -757,6 +767,7 @@ setup::Options App::Options() const {
     options.desktop = Checked(Desktop);
     options.codexEnv = Checked(CodexEnv);
     options.protocol = Checked(ProtocolSocks) ? L"socks5" : Checked(ProtocolHttps) ? L"https" : L"http";
+    options.cloudCodex = Checked(CloudCodex);
     options.host = Text(Host); options.port = Text(Port); options.directory = Text(Directory);
     options.bypass = Text(Bypass); options.extra = Text(Extra);
     return options;
@@ -776,6 +787,8 @@ void App::Refresh(bool edited) {
     EnableWindow(Get(Port), options.proxy && !busy);
     EnableWindow(Get(CodexEnv), options.proxy && !busy);
     EnableWindow(Get(CodexEnvHelp), options.proxy && !busy);
+    EnableWindow(Get(CloudCodex), CloudProxyAvailable() && !busy);
+    EnableWindow(Get(CloudCodexHelp), options.proxy && !busy);
     EnableWindow(Get(ProtocolHelp), !busy);
     EnableWindow(Get(HostHelp), !busy);
     EnableWindow(Get(PortHelp), !busy);
@@ -797,7 +810,7 @@ void App::Refresh(bool edited) {
     Set(ApplyButton, busy ? l10n::Text("setup.status.saving") : savedThisSession && !dirty ? l10n::Text("setup.action.saved") : savedTarget.empty() ? l10n::Text("setup.action.deploy") : l10n::Text("setup.action.save"));
     Set(CloseButton, savedThisSession && !dirty ? l10n::Text("common.done") : l10n::Text("common.close"));
     if (isolatedPreview) {
-        for (int id : {Startup, Silent, Desktop, Proxy, CodexEnv, Protocol, ProtocolHttps,
+        for (int id : {Startup, Silent, Desktop, Proxy, CodexEnv, CloudCodex, Protocol, ProtocolHttps,
             ProtocolSocks, Host, Port, Directory, Browse, Reset, Bypass, Extra, AddProgram,
             OpenCompanions, ApplyButton, ThemeToggle, LanguageButton}) EnableWindow(Get(id), FALSE);
     }
@@ -866,6 +879,7 @@ void App::RestoreOptions(const setup::Loaded& loaded) {
     Check(Startup, loaded.options.startup); Check(Silent, loaded.options.silent); Check(Proxy, loaded.options.proxy);
     Check(Desktop, loaded.options.desktop);
     Check(CodexEnv, ReadCodexEnvPreference());
+    Check(CloudCodex, loaded.options.cloudCodex);
     Check(Protocol, loaded.options.protocol == L"http");
     Check(ProtocolHttps, loaded.options.protocol == L"https");
     Check(ProtocolSocks, loaded.options.protocol == L"socks5");
@@ -891,7 +905,8 @@ void App::Command(int id, int notification) {
     if (isolatedPreview && id != Advanced && id != CloseButton && !IsHelp(id)) return;
     if (id == LanguageButton && notification == BN_CLICKED) { LanguageMenu(); return; }
     if (IsHelp(id) && notification == BN_CLICKED) {
-        MessageBoxW(window, HelpText(id), id == CodexEnvHelp ? l10n::Text("setup.dialog.codex") : l10n::Text("setup.dialog.proxy"), MB_OK | MB_ICONINFORMATION); return;
+        const auto title = id == CodexEnvHelp ? "setup.dialog.codex" : id == CloudCodexHelp ? "setup.dialog.cloudcodex" : "setup.dialog.proxy";
+        MessageBoxW(window, HelpText(id), l10n::Text(title), MB_OK | MB_ICONINFORMATION); return;
     }
     if (id == ThemeToggle && notification == BN_CLICKED) {
         if (contrast) return;
@@ -1052,7 +1067,7 @@ void App::DrawSurface(HWND target, HDC dc) {
         };
         if (advanced) card(140, 256);
         else {
-            const int offset = Checked(Proxy) ? 48 : 0;
+            const int offset = Checked(Proxy) ? 2 * ProxyOptionSpacing : 0;
             card(140, 316); card(372, 518 + offset);
             RECT segments{S(48), S(458 + offset + headerOffset) - scroll, S(256), S(494 + offset + headerOffset) - scroll};
             Rounded(dc, segments, S(10), colors.field, colors.border);

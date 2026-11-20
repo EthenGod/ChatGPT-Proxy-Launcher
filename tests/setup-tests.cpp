@@ -416,6 +416,20 @@ static int ParameterTests() {
     REQUIRE(BuildArguments(parsed, args));
     REQUIRE(DecodeArguments(args, restoredTokens));
     REQUIRE(originalTokens == restoredTokens);
+    const std::wstring legacyArgs = args;
+    REQUIRE(parsed.cloudCodex);
+    options.cloudCodex = false;
+    REQUIRE(BuildArguments(options, args) && args == L"--launcher-no-cloud-proxy " + legacyArgs);
+    REQUIRE(ParseArguments(args, parsed) && !parsed.cloudCodex && parsed.extra == options.extra);
+    REQUIRE(BuildArguments(parsed, args) && args == L"--launcher-no-cloud-proxy " + legacyArgs);
+    REQUIRE(ParseArguments(legacyArgs, parsed) && parsed.cloudCodex);
+    REQUIRE(BuildArguments(parsed, args) && args == legacyArgs);
+    for (const auto useProxy : {false, true}) {
+        Options off;
+        off.cloudCodex = false; off.proxy = useProxy; off.protocol = L"socks5"; off.port = L"1080";
+        REQUIRE(BuildArguments(off, args) && ParseArguments(args, parsed));
+        REQUIRE(!parsed.cloudCodex && parsed.proxy == useProxy);
+    }
     for (const std::wstring& sample : { L"", L"plain", L"two words", L"中文 引号\"尾部\\", L"\\\"", L"\"\"", L"ends with \\\\" }) {
         int count = 0;
         LPWSTR* argv = CommandLineToArgvW((L"stub " + QuoteArgument(sample)).c_str(), &count);

@@ -63,6 +63,7 @@ Json Options(const setup::Options& o) {
     auto j = Json::Object();
     j[L"startup"] = Json(o.startup); j[L"silent"] = Json(o.silent);
     j[L"proxy"] = Json(o.proxy); j[L"desktop"] = Json(o.desktop); j[L"codexEnv"] = Json(o.codexEnv);
+    j[L"cloudCodex"] = Json(o.cloudCodex);
     j[L"protocol"] = Json(o.protocol); j[L"host"] = Json(o.host); j[L"port"] = Json(o.port);
     j[L"bypass"] = Json(o.bypass); j[L"extra"] = Json(o.extra); j[L"directory"] = Json(o.directory);
     return j;
@@ -227,10 +228,11 @@ Json Programs(const setup::Paths& paths, bool isolated) {
     return response;
 }
 setup::Options ParseOptions(const Json& value) {
-    value.Fields({L"startup", L"silent", L"desktop", L"proxy", L"codexEnv", L"protocol", L"host", L"port", L"bypass", L"extra", L"directory"});
+    value.Fields({L"startup", L"silent", L"desktop", L"proxy", L"codexEnv", L"cloudCodex", L"protocol", L"host", L"port", L"bypass", L"extra", L"directory"});
     setup::Options result;
     result.startup = value.At(L"startup").Bool(); result.silent = value.At(L"silent").Bool();
     result.desktop = value.At(L"desktop").Bool(); result.proxy = value.At(L"proxy").Bool(); result.codexEnv = value.At(L"codexEnv").Bool();
+    if (value.Has(L"cloudCodex")) result.cloudCodex = value.At(L"cloudCodex").Bool();
     result.protocol = value.At(L"protocol").String(); result.host = value.At(L"host").String(); result.port = value.At(L"port").String();
     result.bypass = value.At(L"bypass").String(); result.extra = value.At(L"extra").String(); result.directory = value.At(L"directory").String();
     return result;

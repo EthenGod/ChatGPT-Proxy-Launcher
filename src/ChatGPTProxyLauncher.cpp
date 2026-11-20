@@ -9,6 +9,7 @@
 #include "StartupApps.h"
 #include "LauncherAutomation.h"
 #include "Localization.h"
+#include "ProcessEnvironment.h"
 
 // Local tool, not an OpenAI product. No proxy settings are compiled in.
 static const wchar_t Family[] = L"OpenAI.Codex_2p2nqsd0c76g0";
@@ -125,7 +126,7 @@ static DWORD BuildCommand(PCWSTR executable, PCWSTR arguments, wchar_t* command,
     return ERROR_SUCCESS;
 }
 
-static DWORD StartApplication(PCWSTR executable, PCWSTR arguments, PCWSTR cwd = nullptr, int show = -1) {
+static DWORD StartWithEnvironment(PCWSTR executable, PCWSTR arguments, PCWSTR cwd, int show, wchar_t* environment) {
     const size_t required = CommandCapacity(executable, arguments);
     if (!required) return ERROR_FILENAME_EXCED_RANGE;
     const size_t length = wcslen(executable);
@@ -151,10 +152,23 @@ static DWORD StartApplication(PCWSTR executable, PCWSTR arguments, PCWSTR cwd = 
     if (show >= 0) { startup.dwFlags = STARTF_USESHOWWINDOW; startup.wShowWindow = static_cast<WORD>(show); }
     PROCESS_INFORMATION process = {};
     if (!CreateProcessW(executable, command, nullptr, nullptr, FALSE,
-        0, nullptr, cwd, &startup, &process)) return GetLastError();
+        environment ? CREATE_UNICODE_ENVIRONMENT : 0, environment, cwd, &startup, &process)) return GetLastError();
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     return ERROR_SUCCESS;
+}
+
+static DWORD StartApplication(PCWSTR executable, PCWSTR arguments, PCWSTR cwd = nullptr, int show = -1) {
+    return StartWithEnvironment(executable, arguments, cwd, show, nullptr);
+}
+
+static DWORD StartChat(PCWSTR executable, const chain::Invocation& invocation) {
+    if (invocation.cloudProxy.empty()) return StartApplication(executable, invocation.forwarded);
+    try {
+        auto environment = native::Environment({{L"HTTPS_PROXY", invocation.cloudProxy}, {L"NODE_USE_ENV_PROXY", L"1"}});
+        return StartWithEnvironment(executable, invocation.forwarded, nullptr, -1, environment.data());
+    } catch (const automation::IoError& error) { return error.code; }
+      catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }
 }
 
 static void WriteText(DWORD stream, PCWSTR text) {
@@ -216,7 +230,7 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _I
         return error(ERROR_FILENAME_EXCED_RANGE);
     RepairTaskbarShortcut(static_cast<PCWSTR>(executable.get()));
     const PCWSTR chat = static_cast<PCWSTR>(executable.get());
-    result = StartApplication(chat, forwarded);
+    result = StartChat(chat, invocation);
     if (result) return error(result);
     try {
         if (invocation.options.root.empty()) invocation.options.root = chain::RootDirectory();

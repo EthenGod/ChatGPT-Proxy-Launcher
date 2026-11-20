@@ -5,6 +5,7 @@ namespace chain {
 struct Invocation {
     enum class Mode { Normal, Check, Info, Chain } mode = Mode::Normal;
     PCWSTR forwarded = nullptr;
+    std::wstring cloudProxy;
     RunOptions options;
     automation::ResultFile output;
     int Parse(PCWSTR raw) noexcept;

@@ -61,7 +61,7 @@ foreach ($group in $groups) {
             $tag = $localeTags[[Array]::IndexOf($suffixes, $suffix)]
             $catalog = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $ProjectRoot ('locales/' + $tag + '.json'))))
             foreach ($key in @('setup.language.system', 'ui.startup', 'ui.desktop',
-                'ui.proxy', 'ui.codex', 'ui.arguments', 'setup.section.advanced',
+                'ui.proxy', 'setup.option.codex', 'setup.option.cloudcodex', 'ui.arguments', 'setup.section.advanced',
                 'setup.action.add', 'setup.action.openstartup', 'setup.action.deploy', 'setup.action.save')) {
                 if (!$text.Contains($catalog.strings.$key)) { throw "README no longer matches UI caption ${key}: $name" }
             }

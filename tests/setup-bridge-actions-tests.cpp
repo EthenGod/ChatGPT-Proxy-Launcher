@@ -222,11 +222,36 @@ int wmain(int argc, wchar_t** argv) {
         malformed = Options(options); malformed[L"extraKey"] = Json(true);
         REQUIRE(call(SETUP_SAVE, malformed) != 0 && commit == 0);
         REQUIRE(GetFileAttributesW(paths.defaultDirectory.c_str()) == INVALID_FILE_ATTRIBUTES);
-        REQUIRE(call(SETUP_SAVE, Options(options)) == 0 && commit == 1);
+        auto legacyRequest = Options(options);
+        legacyRequest.object.erase(L"cloudCodex");
+        REQUIRE(call(SETUP_SAVE, legacyRequest) == 0 && commit == 1);
+        REQUIRE(reply.At(L"options").At(L"cloudCodex").Bool());
         REQUIRE(reply.At(L"commit").String() == L"saved");
         REQUIRE(reply.At(L"tasks").array.size() == 1 && reply.At(L"tasks").array[0].String() == L"restart");
         auto env = automation::ReadBytes(paths.codexEnvFile);
         REQUIRE(env.find("7890") != std::string::npos);
+        // Follow the normal save and reload paths for both independent choices.
+        const std::string sentinel = "KEEP_MATRIX=yes\r\n";
+        for (const bool writeEnv : {false, true}) {
+            for (const bool cloud : {false, true}) {
+                auto selected = options;
+                selected.codexEnv = writeEnv;
+                selected.cloudCodex = cloud;
+                Put(paths.codexEnvFile, sentinel);
+                REQUIRE(call(SETUP_SAVE, Options(selected)) == 0 && commit == 1);
+                REQUIRE(reply.At(L"tasks").array.empty() == !writeEnv);
+                const auto bytes = automation::ReadBytes(paths.codexEnvFile);
+                REQUIRE(writeEnv ? bytes.find("HTTPS_PROXY=http://127.0.0.1:7890") != bytes.npos : bytes == sentinel);
+                REQUIRE(bytes.find("NODE_USE_ENV_PROXY") == bytes.npos);
+                SetupBridgeBuffer buffer{};
+                REQUIRE(setup_bridge_read_state(reinterpret_cast<const uint8_t*>(pathJson.data()), pathJson.size(), &buffer) == 0);
+                const auto state = automation::ParseJson({reinterpret_cast<const char*>(buffer.data), buffer.length});
+                setup_bridge_free(&buffer);
+                REQUIRE(state.At(L"options").At(L"cloudCodex").Bool() == cloud);
+                REQUIRE(state.At(L"options").At(L"codexEnv").Bool() == writeEnv);
+                REQUIRE(state.At(L"options").At(L"extra").String() == options.extra);
+            }
+        }
         const auto envWithUnmanaged = std::string("KEEP_ME=yes\r\n") + env;
         { HANDLE file = CreateFileW(paths.codexEnvFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
           REQUIRE(file != INVALID_HANDLE_VALUE); automation::Handle owned(file); automation::WriteBytes(file, envWithUnmanaged); }

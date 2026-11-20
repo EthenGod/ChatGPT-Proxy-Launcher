@@ -13,12 +13,15 @@
 #include "MemoryFault.h"
 static unsigned companionCalls = 0;
 static unsigned companionFailure = 0;
+static bool testCompanion = false;
+static DWORD companionStartCode = 0;
 void companions::Run(PCWSTR, Start) noexcept { ++companionCalls; }
-automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start) {
+automation::Json chain::Run(const RunOptions&, PCWSTR, companions::Start start) {
     if (companionFailure) {
         if (companionFailure == 2) memory_fault::remaining = 0;
         throw std::bad_alloc();
     }
+    if (testCompanion) companionStartCode = start(L"C:\\Fixture\\companion.exe", L"", nullptr, -1);
     ++companionCalls; auto result = automation::Json::Object(); result[L"entries"] = automation::Json::Array();
     result[L"chainStatus"] = automation::Json(L"completed"); result[L"exitCode"] = automation::Json::Number(0); return result;
 }
@@ -36,6 +39,20 @@ static BOOL WINAPI TestCreate(PCWSTR, PWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_A
 static DWORD WINAPI TestMessage(DWORD, LPCVOID, DWORD, DWORD, LPWSTR, DWORD, va_list*);
 static LPVOID WINAPI TestAllocate(HANDLE, DWORD, SIZE_T);
 static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
+static unsigned environmentReads = 0, environmentFrees = 0;
+static bool failEnvironment = false;
+static wchar_t inherited[] = L"z=last\0nOdE_uSe_EnV_pRoXy=0\0https_proxy=old\0HTTPS_PROXY=duplicate\0"
+    L"HTTP_PROXY=http://http.invalid:3128\0no_proxy=.internal.invalid\0=C:=C:\\fixture\0";
+static LPWCH WINAPI TestEnvironment() {
+    ++environmentReads;
+    if (failEnvironment) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
+    return inherited;
+}
+static BOOL WINAPI TestFreeEnvironment(LPWCH value) {
+    if (value != inherited) return FALSE;
+    ++environmentFrees;
+    return TRUE;
+}
 #define GetPackagesByPackageFamily TestPackages
 #define PackageIdFromFullName TestIdentity
 #define GetPackagePathByFullName TestPath
@@ -44,6 +61,8 @@ static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 #define FormatMessageW TestMessage
 #define HeapAlloc TestAllocate
 #define HeapFree TestFree
+#define GetEnvironmentStringsW TestEnvironment
+#define FreeEnvironmentStringsW TestFreeEnvironment
 #include "../src/ChatGPTProxyLauncher.cpp"
 #undef GetPackagesByPackageFamily
 #undef PackageIdFromFullName
@@ -53,6 +72,8 @@ static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 #undef FormatMessageW
 #undef HeapAlloc
 #undef HeapFree
+#undef GetEnvironmentStringsW
+#undef FreeEnvironmentStringsW
 
 enum class Scenario { Normal, Empty, GrowOnce, GrowAlways, PathGoneOnce, PathGoneAlways,
     MissingExe, Denied, Directory, HugeCount, UnexpectedSuccess, BadIdentity, ResourcesOnly,
@@ -66,6 +87,11 @@ static unsigned liveAllocations = 0, createCalls = 0;
 static bool createSuccess = false;
 static HANDLE createdProcess = nullptr, createdThread = nullptr;
 static std::wstring selected, workingDirectory, application, forwarded;
+static unsigned customEnvironmentCalls = 0;
+static std::wstring environmentRecipient, environmentCommand;
+static std::vector<std::wstring> environmentEntries;
+static bool observeChild = false;
+static HANDLE observedChild = nullptr;
 static const wchar_t Newest[] = L"OpenAI.Codex_10.2.0.0_x64__2p2nqsd0c76g0";
 static const wchar_t Updated[] = L"OpenAI.Codex_11.0.0.0_x64__2p2nqsd0c76g0";
 
@@ -148,11 +174,24 @@ static DWORD WINAPI TestAttributes(PCWSTR path) {
 
 static BOOL WINAPI TestCreate(PCWSTR exe, PWSTR command, LPSECURITY_ATTRIBUTES pa, LPSECURITY_ATTRIBUTES ta,
     BOOL inherit, DWORD flags, LPVOID environment, PCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION process) {
-    if (!fakeCreate) return CreateProcessW(exe, command, pa, ta, inherit, flags, environment, directory, startup, process);
+    if (!fakeCreate) {
+        const BOOL ok = CreateProcessW(exe, command, pa, ta, inherit, flags, environment, directory, startup, process);
+        if (ok && observeChild) DuplicateHandle(GetCurrentProcess(), process->hProcess, GetCurrentProcess(),
+            &observedChild, 0, FALSE, DUPLICATE_SAME_ACCESS);
+        return ok;
+    }
     ++createCalls;
     application = exe; forwarded = command; workingDirectory = directory;
-    if (inherit || flags || pa || ta || environment || startup->dwFlags) {
+    if (inherit || flags != (environment ? CREATE_UNICODE_ENVIRONMENT : 0u) || pa || ta || startup->dwFlags) {
         SetLastError(ERROR_INVALID_PARAMETER); return FALSE;
+    }
+    if (environment) {
+        ++customEnvironmentCalls;
+        environmentRecipient = exe;
+        environmentCommand = command;
+        environmentEntries.clear();
+        for (PCWSTR entry = static_cast<PCWSTR>(environment); *entry; entry += wcslen(entry) + 1)
+            environmentEntries.emplace_back(entry);
     }
     if (createSuccess) {
         createdProcess = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -236,6 +275,59 @@ static int CheckLookup() {
     return 0;
 }
 
+static int CheckCloudDispatch(const std::wstring& outputDir) {
+    const std::wstring args = L"\"--proxy-server=https://[::1]:9443\"\t --text=\"中文 空格\" \"\" -- --no-proxy-server";
+    const std::wstring disabled = L"\"--launcher-no-cloud-proxy\"   " + args;
+    const std::vector<std::wstring> expected{L"=C:=C:\\fixture", L"https_proxy=https://[::1]:9443",
+        L"HTTP_PROXY=http://http.invalid:3128", L"nOdE_uSe_EnV_pRoXy=1", L"no_proxy=.internal.invalid", L"z=last"};
+    testCompanion = true;
+    for (auto command : {args, L"--launcher-chain --result \"" + outputDir + L"\\cloud.json\" -- " + args}) {
+        createCalls = customEnvironmentCalls = environmentReads = environmentFrees = 0;
+        REQUIRE(wWinMain(nullptr, nullptr, command.data(), 0) == 0);
+        REQUIRE(createCalls == 2 && customEnvironmentCalls == 1 && companionStartCode == 0);
+        REQUIRE(environmentRecipient == L"C:\\Launcher Test\\Package\\app\\ChatGPT.exe");
+        REQUIRE(environmentCommand == L"\"" + environmentRecipient + L"\" " + args);
+        REQUIRE(environmentEntries == expected && environmentReads == 1 && environmentFrees == 1);
+    }
+    testCompanion = false;
+    for (auto command : {disabled, L"--launcher-chain --result \"" + outputDir + L"\\no-cloud.json\" -- " + disabled}) {
+        createCalls = customEnvironmentCalls = environmentReads = 0;
+        REQUIRE(wWinMain(nullptr, nullptr, command.data(), 0) == 0);
+        REQUIRE(createCalls == 1 && !customEnvironmentCalls && !environmentReads);
+        REQUIRE(forwarded == L"\"" + environmentRecipient + L"\" " + args);
+    }
+    createCalls = repairCalls = companionCalls = environmentReads = customEnvironmentCalls = 0;
+    for (auto check : {L"--launcher-check " + args, L"--launcher-check " + disabled}) {
+        REQUIRE(wWinMain(nullptr, nullptr, check.data(), 0) == 0);
+        chain::Invocation diagnostic;
+        REQUIRE(diagnostic.Parse(check.c_str()) == 0 && diagnostic.forwarded == args);
+    }
+    std::wstring nested = L"--launcher-no-cloud-proxy \"--launcher-check\"";
+    REQUIRE(wWinMain(nullptr, nullptr, nested.data(), 0) == 20);
+    REQUIRE(!environmentReads && !repairCalls && !createCalls && !companionCalls);
+    for (PCWSTR tail : {L"", L"--", L"--no-proxy-server", L"--proxy-server=socks5://proxy.invalid:1080",
+        L"--proxy-server=http://userinfo@proxy.invalid:3128", L"--proxy-server=http://proxy.invalid:0",
+        L"--proxy-server=http://proxy.invalid:3128 --proxy-server=http://second.invalid:3128",
+        L"--proxy-server=http://proxy.invalid:3128 \"-NO-PROXY-SERVER\"",
+        L"--proxy-server=http://proxy.invalid:3128 /proxy-auto-detect",
+        L"--proxy-server=http://proxy.invalid:3128 --proxy-pac-url=fixture", L"--proxy-server=http://host.0xff:80",
+        L"--proxy-server=http://proxy.invalid:3128 --text=\"unfinished",
+        L"\"--proxy-server=http://proxy.invalid:3128", L"--unrelated --proxy-server=http://proxy.invalid:3128",
+        L"--proxy-server=http://proxy.invalid:3128 --launcher-no-cloud-proxy"}) {
+        std::wstring command = tail;
+        REQUIRE(wWinMain(nullptr, nullptr, command.data(), 0) == 0);
+        REQUIRE(forwarded == L"\"" + environmentRecipient + L"\"" + (*tail ? L" " : L"") + tail);
+    }
+    REQUIRE(!environmentReads && !customEnvironmentCalls);
+    createCalls = companionCalls = 0;
+    failEnvironment = true;
+    std::wstring command = args;
+    REQUIRE(wWinMain(nullptr, nullptr, command.data(), 0) == ERROR_ACCESS_DENIED);
+    REQUIRE(!createCalls && !companionCalls && environmentReads == 1);
+    failEnvironment = false;
+    return 0;
+}
+
 static int CheckEntryAndLifetime(const std::wstring& outputDir) {
     fakePackages = true; fakeCreate = true; createSuccess = true; scenario = Scenario::Normal;
     const HANDLE oldOut = GetStdHandle(STD_OUTPUT_HANDLE), oldError = GetStdHandle(STD_ERROR_HANDLE);
@@ -274,6 +366,8 @@ static int CheckEntryAndLifetime(const std::wstring& outputDir) {
     REQUIRE(diagnostic.Parse(L" \t\"--launcher-check\"\t \"\"  --value=\"中文 空格\"  ") == 0);
     REQUIRE(diagnostic.mode == chain::Invocation::Mode::Check
         && std::wstring_view(diagnostic.forwarded) == L"\"\"  --value=\"中文 空格\"  ");
+    REQUIRE(environmentReads == 1 && customEnvironmentCalls == 1);
+    REQUIRE(CheckCloudDispatch(outputDir) == 0);
     createSuccess = false; createCalls = 0; companionCalls = 0;
     std::wstring launch = L"--test";
     REQUIRE(wWinMain(nullptr, nullptr, &launch[0], 0) == ERROR_ACCESS_DENIED);
@@ -339,8 +433,48 @@ static int CheckRandomCommands(PCWSTR executable) {
     return 0;
 }
 
-// Test-only child process: capture the actual Windows command line.
+static bool VariableEquals(PCWSTR name, PCWSTR expected) {
+    wchar_t actual[128]{};
+    const auto count = GetEnvironmentVariableW(name, actual, _countof(actual));
+    return count && count < _countof(actual) && wcscmp(actual, expected) == 0;
+}
+static bool HasFixtureEnvironment(bool enabled) {
+    return VariableEquals(L"HTTPS_PROXY", enabled ? L"http://proxy.invalid:3128" : L"http://old.invalid:8080") &&
+        VariableEquals(L"NODE_USE_ENV_PROXY", enabled ? L"1" : L"0") &&
+        VariableEquals(L"HTTP_PROXY", L"http://http.invalid:3128") && VariableEquals(L"NO_PROXY", L".internal.invalid");
+}
+static int CheckCloudChildren(PCWSTR executable) {
+    // This test process and its children use synthetic proxy values throughout the probe.
+    REQUIRE(SetEnvironmentVariableW(L"HTTPS_PROXY", L"http://old.invalid:8080"));
+    REQUIRE(SetEnvironmentVariableW(L"NODE_USE_ENV_PROXY", L"0"));
+    REQUIRE(SetEnvironmentVariableW(L"HTTP_PROXY", L"http://http.invalid:3128"));
+    REQUIRE(SetEnvironmentVariableW(L"NO_PROXY", L".internal.invalid"));
+    observeChild = true;
+    for (PCWSTR command : {
+        L"--proxy-server=http://proxy.invalid:3128 --test-cloud-enabled",
+        L"--launcher-no-cloud-proxy --proxy-server=http://proxy.invalid:3128 --test-cloud-disabled",
+        L"--proxy-server=socks5://proxy.invalid:1080 --test-cloud-disabled", L"--test-cloud-disabled"}) {
+        chain::Invocation invocation;
+        REQUIRE(invocation.Parse(command) == 0);
+        REQUIRE(StartChat(executable, invocation) == 0 && observedChild);
+        automation::Handle child(observedChild);
+        observedChild = nullptr;
+        REQUIRE(WaitForSingleObject(child.value, 10000) == WAIT_OBJECT_0);
+        DWORD code = 0;
+        REQUIRE(GetExitCodeProcess(child.value, &code) && code == 0);
+        REQUIRE(HasFixtureEnvironment(false));
+    }
+    observeChild = false;
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && !wcscmp(argv[1], L"--test-cloud-disabled")) return HasFixtureEnvironment(false) ? 0 : 1;
+    if (argc == 3 && (!wcscmp(argv[1], L"--proxy-server=http://proxy.invalid:3128") ||
+        !wcscmp(argv[1], L"--proxy-server=socks5://proxy.invalid:1080"))) {
+        if (!wcscmp(argv[2], L"--test-cloud-enabled")) return HasFixtureEnvironment(true) ? 0 : 1;
+        if (!wcscmp(argv[2], L"--test-cloud-disabled")) return HasFixtureEnvironment(false) ? 0 : 1;
+    }
     if (argc == 2 && wcscmp(argv[1], L"--benchmark-lookup") == 0) {
         fakePackages = true;
         wchar_t path[32768];
@@ -446,7 +580,9 @@ int wmain(int argc, wchar_t** argv) {
         const std::wstring expected = std::wstring(L"\"") + executable + L"\" " + args;
         if (!read || expected != command) return 9;
     }
+    REQUIRE(CheckCloudChildren(executable) == 0);
     REQUIRE(liveAllocations == 0);
     puts("PASS: package selection, retries, entry dispatch, allocation/handle lifetime, 500 randomized commands, boundaries and real child forwarding.");
+    puts("PASS: cloud proxy parsing, child-only environment, companion scope and isolated child probes.");
     return 0;
 }
