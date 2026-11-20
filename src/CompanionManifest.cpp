@@ -37,8 +37,8 @@ Policy ReadPolicy(const std::wstring& root) {
     if (feedback != L"quiet" && feedback != L"notify") throw Invalid("invalid-feedback");
     return {budget, feedback == L"notify"};
 }
-bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order, ManifestPathFilter canRead) {
-    records = ReadRegistry(root, canRead);
+bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order, RegistrationJson registration, ManifestPathFilter canRead) {
+    records = ReadRegistry(root, registration, canRead);
     return SortEntries(records, order);
 }
 namespace {
@@ -180,7 +180,7 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides, ManifestPath
     if ((e.attempts > 1 && !e.safe) || (e.safe && !capabilities.count(rules::RetryCapability))) throw Invalid("unsafe-retry");
     return e;
 }
-std::vector<Record> ReadRegistry(const std::wstring& root, ManifestPathFilter canRead) {
+std::vector<Record> ReadRegistry(const std::wstring& root, RegistrationJson registration, ManifestPathFilter canRead) {
     const auto folder = Join(root, rules::RegistryFolder); automation::CheckPlainPath(folder);
     std::vector<Record> records;
     WIN32_FIND_DATAW data{}; HANDLE raw = FindFirstFileW(Join(folder, L"*.json").c_str(), &data);
@@ -201,6 +201,7 @@ std::vector<Record> ReadRegistry(const std::wstring& root, ManifestPathFilter ca
             r.entry = ReadRegisteredEntry(r.id, r.json.At(L"manifestPath").String(), r.json.At(L"overrides"), canRead);
         } catch (const Invalid& ex) { r.error = automation::FromUtf8(ex.what()); }
         catch (const automation::IoError&) { r.error = L"read-failed"; }
+        if (registration == RegistrationJson::Discard) r.json = Json{};
         records.push_back(std::move(r));
     } while (FindNextFileW(raw, &data));
     if (GetLastError() != ERROR_NO_MORE_FILES) throw automation::IoError(GetLastError());

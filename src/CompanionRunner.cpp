@@ -306,7 +306,7 @@ Json Run(const RunOptions& options, PCWSTR chat, companions::Start legacyStart) 
         auto& items = report[L"entries"];
         std::vector<Record> records; std::vector<size_t> order;
         if (policyError.empty()) {
-            try { if (!ReadRegistryOrder(options.root, records, order)) policyError = L"invalid-graph"; }
+            try { if (!ReadRegistryOrder(options.root, records, order, RegistrationJson::Discard)) policyError = L"invalid-graph"; }
             catch (const Invalid& ex) { policyError = automation::FromUtf8(ex.what()); }
             catch (...) { policyError = L"registry-read-failed"; }
         }
