@@ -26,6 +26,11 @@ static PCWSTR rejectedDestination = nullptr;
 static std::function<void()> beforeRejection;
 static bool inspectEnvStage = false;
 static std::wstring stagedDacl;
+enum class EnvReplaceFault { None, Partial, PartialUnknown, Unknown };
+static EnvReplaceFault envReplaceFault = EnvReplaceFault::None;
+static bool mismatchBackupId = false;
+static unsigned deniedEnvRenames = 0;
+static std::wstring envBackupPath, envStagePath;
 static std::wstring FileDacl(PCWSTR path) {
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
@@ -118,15 +123,46 @@ static BOOL WINAPI TestMove(PCWSTR from, PCWSTR to, DWORD flags) {
 static BOOL WINAPI TestReplace(PCWSTR to, PCWSTR from, PCWSTR backup, DWORD flags, LPVOID exclude, LPVOID reserved) {
     if (!AllowFileCommit()) return FALSE;
     if (inspectEnvStage) stagedDacl = FileDacl(from);
-    return ReplaceFileW(to, from, backup, flags, exclude, reserved);
+    if (envReplaceFault != EnvReplaceFault::None || deniedEnvRenames) {
+        envBackupPath = backup;
+        envStagePath = from;
+    }
+    if (envReplaceFault == EnvReplaceFault::Partial || envReplaceFault == EnvReplaceFault::PartialUnknown) {
+        // Return the layout documented for partial replacement using only the isolated fixture.
+        if (!MoveFileW(to, backup)) return FALSE;
+        mismatchBackupId = envReplaceFault == EnvReplaceFault::PartialUnknown;
+        SetLastError(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2);
+        return FALSE;
+    }
+    const BOOL replaced = ReplaceFileW(to, from, backup, flags, exclude, reserved);
+    mismatchBackupId = replaced && envReplaceFault == EnvReplaceFault::Unknown;
+    return replaced;
 }
 static BOOL WINAPI TestSetInfo(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kind, LPVOID data, DWORD size) {
-    if (kind == FileRenameInfo && !AllowFileCommit()) return FALSE;
+    if (kind == FileRenameInfo) {
+        if (!AllowFileCommit()) return FALSE;
+        const auto& name = *static_cast<FILE_RENAME_INFO*>(data);
+        const std::wstring_view target(name.FileName, name.FileNameLength / sizeof(wchar_t));
+        if (deniedEnvRenames && target.size() >= 5 && target.substr(target.size() - 5) == L"\\.env") {
+            --deniedEnvRenames;
+            SetLastError(ERROR_ACCESS_DENIED);
+            return FALSE;
+        }
+    }
     return SetFileInformationByHandle(file, kind, data, size);
+}
+static BOOL WINAPI TestGetInfo(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kind, LPVOID data, DWORD size) {
+    const BOOL ok = GetFileInformationByHandleEx(file, kind, data, size);
+    if (ok && kind == FileIdInfo && mismatchBackupId) {
+        static_cast<FILE_ID_INFO*>(data)->FileId.Identifier[0] ^= 1;
+        mismatchBackupId = false;
+    }
+    return ok;
 }
 #define MoveFileExW TestMove
 #define ReplaceFileW TestReplace
 #define SetFileInformationByHandle TestSetInfo
+#define GetFileInformationByHandleEx TestGetInfo
 #define RemoveUnchangedFile TestRemoveUnchangedFile
 #define CheckPlainPath TestCheckPlainPath
 #define SHChangeNotify TestNotify
@@ -136,6 +172,7 @@ static BOOL WINAPI TestSetInfo(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kind, LPVO
 #undef MoveFileExW
 #undef ReplaceFileW
 #undef SetFileInformationByHandle
+#undef GetFileInformationByHandleEx
 #undef RemoveUnchangedFile
 #include "../src/SetupResources.h"
 #include "../src/AppVersion.h"
@@ -497,8 +534,10 @@ static int EnvTransactionTests(const std::wstring& root, setup::Payload payload)
     PSECURITY_DESCRIPTOR raw = nullptr;
     REQUIRE(ConvertStringSecurityDescriptorToSecurityDescriptorW(acl.c_str(), SDDL_REVISION_1, &raw, nullptr));
     native::LocalPtr<void> descriptor(raw);
-    enum Outcome { Save, Undo, Edited, Replaced, AttributesChanged };
-    for (bool existing : {false, true}) for (const auto outcome : {Save, Undo, Edited, Replaced, AttributesChanged}) {
+    enum Outcome { Save, Undo, Edited, Replaced, AttributesChanged, Locked, RestoreDenied, RecoveryDenied };
+    for (bool existing : {false, true}) for (const auto outcome : {Save, Undo, Edited, Replaced, AttributesChanged,
+        Locked, RestoreDenied, RecoveryDenied}) {
+        if (!existing && (outcome == RestoreDenied || outcome == RecoveryDenied)) continue;
         const auto base = Join(root, L"env-transaction-" + std::to_wstring(existing) + std::to_wstring(outcome));
         REQUIRE(EnsureDirectory(base));
         Paths paths{base, Join(base, L"start.lnk"), Join(base, L"settings.lnk"), {}, Join(base, L".env")};
@@ -521,6 +560,7 @@ static int EnvTransactionTests(const std::wstring& root, setup::Payload payload)
         if (outcome != Save) rejectedDestination = discovery.c_str();
         Snapshot foreign;
         bool updated = false;
+        automation::Handle reader;
         beforeRejection = [&] {
             if (outcome == Edited) {
                 automation::Handle editor(CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
@@ -534,12 +574,19 @@ static int EnvTransactionTests(const std::wstring& root, setup::Payload payload)
                     || !WriteAtomic(file, foreign.data, false)) return;
             }
             if (outcome == AttributesChanged && !SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)) return;
+            if (outcome == Locked) {
+                reader.Reset(CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr));
+                if (!reader) return;
+            }
             if (outcome != Undo) updated = ReadFileBytes(file, foreign) && foreign.exists;
         };
+        deniedEnvRenames = outcome == RestoreDenied ? 1 : outcome == RecoveryDenied ? 2 : 0;
         inspectEnvStage = existing;
         stagedDacl.clear();
         std::wstring target;
         const auto result = Apply(paths, options, payload, target, true);
+        reader.Reset();
+        REQUIRE(!deniedEnvRenames);
         inspectEnvStage = false; beforeRejection = {};
         REQUIRE(!rejectedDestination);
         if (existing) REQUIRE(stagedDacl == originalDacl);
@@ -566,12 +613,56 @@ static int EnvTransactionTests(const std::wstring& root, setup::Payload payload)
             } else if (outcome == Save) REQUIRE(FileDacl(file.c_str()).find(L"D:P") == 0);
         } else {
             REQUIRE(!result && result.commit == CommitState::Incomplete && target.empty());
-            REQUIRE(updated && after.exists && after.data == foreign.data);
+            REQUIRE(updated);
+            if (outcome == RecoveryDenied) {
+                Snapshot retained;
+                REQUIRE(!after.exists && ReadFileBytes(envStagePath, retained) && retained.exists && retained.data == foreign.data);
+                REQUIRE(result.message.find(envStagePath) != std::wstring::npos);
+            } else REQUIRE(after.exists && after.data == foreign.data);
             if (outcome == AttributesChanged) REQUIRE(GetFileAttributesW(file.c_str()) & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED);
+            if (outcome == RestoreDenied || outcome == RecoveryDenied) {
+                Snapshot saved;
+                REQUIRE(ReadFileBytes(envBackupPath, saved) && saved.exists && saved.data == original);
+                REQUIRE(FileDacl(envBackupPath.c_str()) == originalDacl);
+                REQUIRE(result.message.find(envBackupPath) != std::wstring::npos);
+            }
             REQUIRE(!Exists(paths.settingsLink) && !Exists(Join(base, LauncherName)));
         }
     }
-    puts("PASS isolated env: protected staging and final ACL, metadata, undo, edited files and same-byte replacements");
+    for (const auto fault : {EnvReplaceFault::Partial, EnvReplaceFault::PartialUnknown, EnvReplaceFault::Unknown}) {
+        const auto base = Join(root, L"env-replace-fault-" + std::to_wstring(static_cast<int>(fault)));
+        REQUIRE(EnsureDirectory(base));
+        Paths paths{base, Join(base, L"start.lnk"), Join(base, L"settings.lnk"), {}, Join(base, L".env")};
+        const std::vector<BYTE> original{'#', 't', '\n'};
+        REQUIRE(WriteAtomic(paths.codexEnvFile, original));
+        REQUIRE(SetFileSecurityW(paths.codexEnvFile.c_str(), PROTECTED_DACL_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, raw));
+        const auto protectedAcl = FileDacl(paths.codexEnvFile.c_str());
+        Options options; options.directory = base; options.startup = options.desktop = false;
+        options.proxy = options.codexEnv = true; options.port = L"12345";
+        envReplaceFault = fault;
+        std::wstring target;
+        const auto result = Apply(paths, options, payload, target, true);
+        envReplaceFault = EnvReplaceFault::None;
+        REQUIRE(!result && target.empty() && !mismatchBackupId);
+        Snapshot published, backup, stage;
+        REQUIRE(ReadFileBytes(paths.codexEnvFile, published));
+        REQUIRE(ReadFileBytes(envBackupPath, backup) && ReadFileBytes(envStagePath, stage));
+        if (fault == EnvReplaceFault::Partial) {
+            REQUIRE(result.commit == CommitState::RolledBack);
+            REQUIRE(published.exists && published.data == original && !backup.exists && !stage.exists);
+            REQUIRE(FileDacl(paths.codexEnvFile.c_str()) == protectedAcl);
+        } else {
+            REQUIRE(result.commit == CommitState::Incomplete);
+            REQUIRE(backup.exists && backup.data == original && FileDacl(envBackupPath.c_str()) == protectedAcl);
+            REQUIRE(result.message.find(envBackupPath) != std::wstring::npos);
+            if (fault == EnvReplaceFault::PartialUnknown) {
+                REQUIRE(!published.exists && stage.exists && stage.data != original);
+                REQUIRE(FileDacl(envStagePath.c_str()) == protectedAcl);
+                REQUIRE(result.message.find(envStagePath) != std::wstring::npos);
+            } else REQUIRE(published.exists && published.data != original && !stage.exists);
+        }
+    }
+    puts("PASS isolated env: protected copies, verified backup identity, locked destination and recovery after failed restore");
     return 0;
 }
 

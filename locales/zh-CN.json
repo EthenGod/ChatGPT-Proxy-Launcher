@@ -302,6 +302,8 @@
     "error.env.concurrent": "保存期间 Codex 的 .env 被其他程序更改，请重试。",
     "error.env.protection": "无法保留 Codex .env 的文件保护。",
     "error.env.restore": "无法恢复 Codex .env。原文件保留在 {path}。",
+    "error.env.backupunverified": "无法验证 {path} 处的 Codex .env 备份。恢复前请检查该文件。",
+    "error.env.retainedstage": "暂存副本保留在 {path}。",
     "error.env.verify": "Codex 的 .env 保存校验失败。",
     "error.discovery.concurrent": "保存期间发现信息文件发生变化。",
     "error.discovery.verify": "发现信息保存校验失败。",

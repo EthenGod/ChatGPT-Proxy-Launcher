@@ -29,7 +29,7 @@ function ProgramIcon({ program }: { program: ListedProgram }) {
 
 type StatusProps = { status: ListedProgram['status']; t: Translate }
 function AdaptedBadge({ status, t }: StatusProps) {
-  if (status !== 'adapted' && status !== 'adapted-disabled') return null
+  if (status !== 'adapted' && status !== 'adapted-disabled' && status !== 'dependency-blocked') return null
   return <span className="program-badge"><BadgeCheck size={13} aria-hidden="true" /><span data-motion-text>{t('ui.programs.adapted')}</span></span>
 }
 function ProgramState({ status, t }: StatusProps) {
@@ -151,7 +151,8 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
       {entries.length > 0 && <ScrollBox className="program-scroll" label={t('ui.programs')}>
         <ProgramHints><ul className="program-list">{entries.map(program => <li key={program.id} data-program-id={program.id}>
           <Tooltip.Trigger payload={program} delay={500} render={
-            <Button className="program-row" disabled={locked} aria-haspopup="dialog" onClick={() => onDetails(program)}>
+            <Button className="program-row" data-dependency-blocked={program.status === 'dependency-blocked' || undefined}
+              disabled={locked} aria-haspopup="dialog" onClick={() => onDetails(program)}>
               <ProgramIcon program={program} /><span className="program-title"><span className="program-name" dir="auto">{program.name}</span>
                 <AdaptedBadge status={program.status} t={t} /></span>
               <ProgramState status={program.status} t={t} /><ChevronRight className="program-chevron" size={14} aria-hidden="true" />

@@ -205,7 +205,8 @@ DWORD CheckStageAccess(HANDLE stage, PSECURITY_DESCRIPTOR expected, bool existin
 // Keep the replaced file itself until the transaction ends. This also preserves its streams and security on undo.
 struct EnvChange {
     std::wstring backupPath;
-    std::vector<BYTE> restoreName;
+    std::wstring stagedPath;
+    std::vector<BYTE> restoreName, retainName;
     automation::Handle original; // Deny writes and renames to the backup until commit or undo.
     automation::Handle pin; // Attribute-only handle keeps the published file ID from being recycled.
     automation::FileRevision revision;
@@ -221,26 +222,63 @@ struct EnvChange {
     }
 
     Result Undo(const std::wstring& path, const std::vector<BYTE>& expected) {
-        auto retained = [&](DWORD code) { return Fail(code, l10n::Format("error.env.restore", {{"path", backupPath}})); };
-        if (!backupPath.empty() && !original) return retained(ERROR_SHARING_VIOLATION);
-        if (installed) {
+        bool stagedCopy = !installed && !backupPath.empty();
+        auto retained = [&](DWORD code) {
+            auto result = Fail(code, l10n::Format(original ? "error.env.restore" : "error.env.backupunverified",
+                {{"path", backupPath}}));
+            if (stagedCopy) result.message += L"\n" + l10n::Format("error.env.retainedstage", {{"path", stagedPath}});
+            return result;
+        };
+        if (!backupPath.empty() && !original) return retained(ERROR_RETRY);
+        if (!original) {
             try { automation::RemoveUnchangedFile(path, Bytes(expected), &revision); }
-            catch (const automation::IoError& e) {
-                return original ? retained(e.code) : Fail(e.code, l10n::Text("error.env.concurrent"));
-            }
-            pin.Reset(); // Complete the verified deletion before restoring the original name.
+            catch (const automation::IoError& e) { return Fail(e.code, l10n::Text("error.env.concurrent")); }
+            pin.Reset();
+            return {};
         }
-        // Restore by handle, without replacement. A new arrival keeps its name and contents.
-        if (original && !SetFileInformationByHandle(original.value, FileRenameInfo, restoreName.data(),
-            static_cast<DWORD>(restoreName.size()))) return retained(GetLastError());
+        automation::Handle published;
+        auto rename = [](HANDLE file, std::vector<BYTE>& name) {
+            return SetFileInformationByHandle(file, FileRenameInfo, name.data(), static_cast<DWORD>(name.size()));
+        };
+        if (installed) {
+            published.Reset(CreateFileW(path.c_str(), GENERIC_READ | DELETE, FILE_SHARE_READ,
+                nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+            if (!published) return retained(GetLastError());
+            try { automation::CheckFileContents(published.value, Bytes(expected), &revision); }
+            catch (const automation::IoError& e) { return retained(e.code); }
+            // Keep the verified version and its handle until the original has recovered its name.
+            if (!rename(published.value, retainName)) return retained(GetLastError());
+            stagedCopy = true;
+        }
+        // Neither rename may replace a file that arrived while the name was vacant.
+        if (!rename(original.value, restoreName)) {
+            const DWORD error = GetLastError();
+            if (published && rename(published.value, restoreName)) stagedCopy = false;
+            return retained(error);
+        }
+        if (published) {
+            FILE_DISPOSITION_INFO dispose{TRUE};
+            if (!SetFileInformationByHandle(published.value, FileDispositionInfo, &dispose, sizeof(dispose)))
+                return Fail(GetLastError(), l10n::Format("error.env.retainedstage", {{"path", stagedPath}}));
+        } else {
+            try { automation::RemoveUnchangedFile(stagedPath, Bytes(expected), &revision); }
+            catch (const automation::IoError& e) {
+                return Fail(e.code, l10n::Format("error.env.retainedstage", {{"path", stagedPath}}));
+            }
+        }
         return {};
     }
 };
+void PrepareEnvRename(std::vector<BYTE>& buffer, const std::wstring& path) {
+    buffer.resize(sizeof(FILE_RENAME_INFO) + path.size() * sizeof(wchar_t));
+    auto& rename = *reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());
+    rename.FileNameLength = static_cast<DWORD>(path.size() * sizeof(wchar_t));
+    memcpy(rename.FileName, path.data(), rename.FileNameLength);
+}
 Result WriteEnv(const std::wstring& path, const Snapshot& before, const std::vector<BYTE>& bytes, EnvChange& change) {
     automation::Handle current;
     PSECURITY_DESCRIPTOR sd = nullptr;
     FILE_ID_INFO previousId{};
-    bool originalChanged = false;
     DWORD attributes = FILE_ATTRIBUTE_NORMAL;
     if (before.exists) {
         current.Reset(CreateFileW(path.c_str(), GENERIC_READ | READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_DELETE,
@@ -256,10 +294,6 @@ Result WriteEnv(const std::wstring& path, const Snapshot& before, const std::vec
         if (info.dwFileAttributes & FILE_ATTRIBUTE_ENCRYPTED) return Fail(ERROR_NOT_SUPPORTED, l10n::Text("error.env.protection"));
         if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) return Fail(ERROR_ACCESS_DENIED, l10n::Text("error.env.protection"));
         attributes = info.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED);
-        change.restoreName.resize(sizeof(FILE_RENAME_INFO) + path.size() * sizeof(wchar_t));
-        auto& rename = *reinterpret_cast<FILE_RENAME_INFO*>(change.restoreName.data());
-        rename.FileNameLength = static_cast<DWORD>(path.size() * sizeof(wchar_t));
-        memcpy(rename.FileName, path.data(), rename.FileNameLength);
         const DWORD error = GetSecurityInfo(current.value, SE_FILE_OBJECT, EnvAccess, nullptr, nullptr, nullptr, nullptr, &sd);
         if (error) return Fail(error, l10n::Text("error.env.protection"));
     } else {
@@ -276,6 +310,11 @@ Result WriteEnv(const std::wstring& path, const Snapshot& before, const std::vec
         return Fail(ERROR_GEN_FAILURE, l10n::Text("error.files.createtemp"));
     auto stagedPath = Join(Parent(path), std::wstring(name) + L".tmp");
     auto backupPath = stagedPath + L".bak";
+    if (before.exists) {
+        change.stagedPath = stagedPath;
+        PrepareEnvRename(change.restoreName, path);
+        PrepareEnvRename(change.retainName, stagedPath);
+    }
     TempFile stage;
     SECURITY_ATTRIBUTES security{sizeof(security), sd, FALSE};
     {
@@ -307,25 +346,27 @@ Result WriteEnv(const std::wstring& path, const Snapshot& before, const std::vec
         if (!replaced && error != ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
             return Fail(error, l10n::Format("error.files.save", {{"path", path}}));
         change.installed = replaced != FALSE;
-        if (replaced) stage.path.clear();
+        stage.path.clear();
         change.backupPath.swap(backupPath);
-        change.original.Reset(CreateFileW(change.backupPath.c_str(), DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+        automation::Handle backup(CreateFileW(change.backupPath.c_str(), DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
             nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-        if (!change.original) return Fail(GetLastError(), l10n::Text("error.env.concurrent"));
-        if (!replaced) return Fail(error, l10n::Format("error.files.save", {{"path", path}}));
+        if (!backup) return Fail(GetLastError(), l10n::Text("error.env.concurrent"));
         FILE_ID_INFO displaced{};
-        if (!GetFileInformationByHandleEx(change.original.value, FileIdInfo, &displaced, sizeof(displaced)))
+        if (!GetFileInformationByHandleEx(backup.value, FileIdInfo, &displaced, sizeof(displaced)))
             return Fail(GetLastError(), l10n::Text("error.env.concurrent"));
-        originalChanged = displaced.VolumeSerialNumber != previousId.VolumeSerialNumber
-            || memcmp(&displaced.FileId, &previousId.FileId, sizeof(displaced.FileId)) != 0;
+        if (displaced.VolumeSerialNumber != previousId.VolumeSerialNumber
+            || memcmp(&displaced.FileId, &previousId.FileId, sizeof(displaced.FileId)))
+            return Fail(ERROR_RETRY, l10n::Text("error.env.concurrent"));
+        change.original.Reset(std::exchange(backup.value, INVALID_HANDLE_VALUE));
     } else {
         Result result = CommitTemp(stage, path, false);
         if (!result) return result;
+        change.installed = true;
     }
-    change.installed = true;
     if (!GetFileInformationByHandleEx(change.pin.value, FileBasicInfo, &change.revision.basic, sizeof(change.revision.basic)))
         return Fail(GetLastError(), l10n::Text("error.env.verify"));
-    if (originalChanged) return Fail(ERROR_RETRY, l10n::Text("error.env.concurrent"));
+    if (!change.installed)
+        return Fail(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2, l10n::Format("error.files.save", {{"path", path}}));
     return {};
 }
 Result Restore(const std::wstring& path, const Snapshot& snapshot, bool replace = true) {

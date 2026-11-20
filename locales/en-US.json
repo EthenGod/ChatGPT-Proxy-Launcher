@@ -302,6 +302,8 @@
     "error.env.concurrent": "Another program changed Codex .env while saving. Try again.",
     "error.env.protection": "Could not preserve file protection for Codex .env.",
     "error.env.restore": "Could not restore Codex .env. The original file is at {path}.",
+    "error.env.backupunverified": "Could not verify the Codex .env backup at {path}. Check the file before restoring it.",
+    "error.env.retainedstage": "The staged copy was retained at {path}.",
     "error.env.verify": "Verification of the saved Codex .env failed.",
     "error.discovery.concurrent": "The discovery file changed while saving.",
     "error.discovery.verify": "Verification of the saved discovery file failed.",
