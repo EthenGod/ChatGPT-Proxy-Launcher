@@ -17,7 +17,7 @@ export function parseProgramList(value: unknown): ProgramList {
     const row = nativeRecord(item)
     if (typeof row.id !== 'string' || !row.id || ids.has(row.id) || typeof row.name !== 'string' || !row.name
       || typeof row.path !== 'string' || typeof row.arguments !== 'string'
-      || typeof row.status !== 'string' || !['ordinary', 'adapted', 'adapted-disabled', 'disabled', 'invalid', 'unavailable'].includes(row.status)) throw new Error('Invalid program entry')
+      || typeof row.status !== 'string' || !['ordinary', 'adapted', 'adapted-disabled', 'disabled', 'invalid', 'unavailable', 'dependency-blocked'].includes(row.status)) throw new Error('Invalid program entry')
     ids.add(row.id)
     const icon = typeof row.icon === 'number' && Number.isInteger(row.icon) ? icons[row.icon] : undefined
     return { id: row.id, name: row.name, path: row.path, arguments: row.arguments, status: row.status as ListedProgram['status'], ...(icon && { icon }) }

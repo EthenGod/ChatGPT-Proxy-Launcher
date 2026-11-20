@@ -100,6 +100,7 @@ describe('desktop command boundary', () => {
     await expect(service.settled!()).resolves.toBeUndefined()
     expect(invoke).toHaveBeenCalledWith('list_setup_programs', undefined)
     expect(() => parseProgramList({ ...value, entries: [row, row] })).toThrow()
+    expect(parseProgramList({ ...value, entries: [{ ...row, status: 'dependency-blocked' }] }).entries[0]?.status).toBe('dependency-blocked')
     expect(() => parseProgramList({ ...value, entries: [{ ...row, status: 'unknown' }] })).toThrow()
     expect(() => parseProgramList({ ...value, incomplete: 'false' })).toThrow()
     const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFlgAAAAASUVORK5CYII='
