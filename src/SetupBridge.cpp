@@ -111,7 +111,7 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
     const auto localDrive = [](const std::wstring& path) {
         return setup::ui::ClassifyProgramDrive(path) == setup::ui::ProgramDrive::Local;
     };
-    if (!chain::ReadRegistryOrder(root, records, order, localDrive)) dispatchable = false;
+    if (!chain::ReadRegistryOrder(root, records, order, chain::RegistrationJson::Keep, localDrive)) dispatchable = false;
     if (!dispatchable) list.incomplete = true;
     std::set<std::wstring_view> blocked;
     if (dispatchable) for (const auto index : order) {

@@ -24,7 +24,9 @@ struct Policy {
 };
 Policy ReadPolicy(const std::wstring& root);
 using ManifestPathFilter = bool (*)(const std::wstring&);
-bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order, ManifestPathFilter canRead = nullptr);
+enum class RegistrationJson { Keep, Discard };
+bool ReadRegistryOrder(const std::wstring& root, std::vector<Record>& records, std::vector<size_t>& order,
+    RegistrationJson registration, ManifestPathFilter canRead = nullptr);
 std::wstring Join(const std::wstring& directory, const std::wstring& leaf);
 bool ValidId(const std::wstring& id);
 int CompareVersion(const std::wstring& left, const std::wstring& right);
@@ -32,7 +34,7 @@ Entry ReadManifest(const std::wstring& file, const Json& overrides = Json::Objec
 void ValidateOverrides(const Json& overrides);
 // Disabled registrations remain manageable even when their package is unavailable.
 Entry ReadRegisteredEntry(const std::wstring& id, const std::wstring& manifest, const Json& overrides, ManifestPathFilter canRead = nullptr);
-std::vector<Record> ReadRegistry(const std::wstring& root, ManifestPathFilter canRead = nullptr);
+std::vector<Record> ReadRegistry(const std::wstring& root, RegistrationJson registration = RegistrationJson::Keep, ManifestPathFilter canRead = nullptr);
 bool SortEntries(const std::vector<Record>& records, std::vector<size_t>& order);
 Json RegistryCommand(const std::wstring& operation, const setup::Paths& paths, const std::wstring& manifest,
     const std::wstring& id, const Json& request, bool replace, bool& committed, Json& warnings);

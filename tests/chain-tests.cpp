@@ -381,9 +381,15 @@ int wmain(int argc, wchar_t** argv) {
         rejectJobQuery = true; r = unknownTracking.Run(); rejectJobQuery = false;
         REQUIRE(Last(r).At(L"status").String() == L"tracking-unknown" && Last(r).At(L"attempts").Integer(1, 3) == 1);
         auto config = automation::ParseJson("{\"schemaVersion\":1,\"id\":\"org.example.addon\",\"overrides\":{\"enabled\":false,\"arguments\":[\"kept\"]}}");
+        config[L"overrides"][L"config"] = automation::ParseJson(R"({"sample":"kept"})");
         REQUIRE(task.Call(L"companion-configure", config).At(L"exitCode").Integer(0, 255) == 0);
         task.document[L"version"] = Json(L"1.1.0"); task.Save(); task.Register();
         auto entries = chain::ReadRegistry(task.paths.defaultDirectory); REQUIRE(entries.size() == 1 && !entries[0].entry.enabled && entries[0].entry.arguments[0] == L"kept");
+        REQUIRE(entries[0].json.At(L"overrides").At(L"arguments").array[0].String() == L"kept");
+        auto execution = chain::ReadRegistry(task.paths.defaultDirectory, chain::RegistrationJson::Discard);
+        REQUIRE(execution.size() == 1 && execution[0].json.type == Json::Type::Null);
+        REQUIRE(!execution[0].entry.enabled && execution[0].entry.arguments == entries[0].entry.arguments);
+        REQUIRE(execution[0].entry.config.At(L"sample").String() == L"kept");
         REQUIRE(Last(task.Run()).At(L"status").String() == L"disabled");
         const auto old = task.manifest; task.manifest = Join(task.package, L"moved.json"); task.Save();
         REQUIRE(task.Call(L"companion-register").At(L"exitCode").Integer(0, 255) == 30);
