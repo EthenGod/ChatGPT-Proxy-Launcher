@@ -321,6 +321,32 @@ int wmain(int argc, wchar_t** argv) {
         other[L"id"] = Json(L"org.example.other"); other[L"manifestPath"] = Json(secondManifest);
         const auto secondRegistration = setup::Join(registry, L"org.example.other.json");
         Put(secondRegistration, automation::WriteJson(other));
+        for (const auto dependency : {L"org.example.missing", L"org.example.broken"}) {
+            auto needs = spec;
+            auto deps = second.At(L"dependsOn");
+            deps.array[0][L"id"] = Json(dependency);
+            needs[L"dependsOn"] = std::move(deps);
+            Put(manifest, automation::WriteJson(needs));
+            REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && !reply.At(L"incomplete").Bool());
+            REQUIRE(listed(L"Example Tool", L"dependency-blocked") && listed(L"Other Tool", L"dependency-blocked"));
+            REQUIRE(!listed(L"工具.lnk", L"ordinary")); // The runner still suppresses this duplicate.
+        }
+        Put(manifest, automation::WriteJson(spec));
+        auto versioned = second;
+        versioned[L"dependsOn"].array[0][L"minimumVersion"] = Json(L"1.0.1");
+        Put(secondManifest, automation::WriteJson(versioned));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"Other Tool", L"dependency-blocked"));
+        versioned[L"dependsOn"].array[0][L"minimumVersion"] = Json(L"1.0.0");
+        Put(secondManifest, automation::WriteJson(versioned));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"Other Tool", L"adapted"));
+        auto disabled = record; disabled[L"overrides"][L"enabled"] = Json(false);
+        Put(registration, automation::WriteJson(disabled));
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && listed(L"Other Tool", L"dependency-blocked"));
+        Put(registration, automation::WriteJson(record));
+        unprobedTarget = manifest; simulatedDrive = setup::ui::ProgramDrive::Unverified;
+        REQUIRE(call(SETUP_LIST_PROGRAMS, Json::Object()) == 0 && reply.At(L"incomplete").Bool());
+        REQUIRE(listed(L"Other Tool", L"adapted") && listed(L"工具.lnk", L"ordinary") && !targetProbes);
+        unprobedTarget.clear();
         auto cyclic = spec;
         cyclic[L"dependsOn"] = automation::ParseJson(R"([{"id":"org.example.other"}])");
         Put(manifest, automation::WriteJson(cyclic));

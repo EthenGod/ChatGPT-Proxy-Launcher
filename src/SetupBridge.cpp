@@ -16,6 +16,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <set>
 
 namespace {
 using automation::Json;
@@ -112,6 +113,22 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
     };
     if (!chain::ReadRegistryOrder(root, records, order, localDrive)) dispatchable = false;
     if (!dispatchable) list.incomplete = true;
+    std::set<std::wstring_view> blocked;
+    if (dispatchable) for (const auto index : order) {
+        const auto& record = records[index];
+        if (!record.error.empty() || !record.entry.enabled) continue;
+        for (const auto& dependency : record.entry.dependencies) {
+            const auto dep = std::find_if(records.begin(), records.end(),
+                [&](const auto& r) { return r.id == dependency.id; });
+            // The list deliberately skips unverified drives. Readiness there is unknown.
+            if (dep != records.end() && dep->error == L"manifest-drive-unavailable") continue;
+            if (dep == records.end() || !dep->error.empty() || !dep->entry.enabled || blocked.count(dep->id)
+                || (!dependency.minimumVersion.empty() && chain::CompareVersion(dep->entry.version, dependency.minimumVersion) < 0)) {
+                blocked.insert(record.id);
+                break;
+            }
+        }
+    }
     for (auto& record : records) {
         if (record.error == L"manifest-drive-unavailable") {
             list.incomplete = true;
@@ -142,7 +159,8 @@ void ListRegistered(const std::wstring& root, ProgramList& list, std::vector<std
             if (!arguments.empty()) arguments += L' ';
             arguments += automation::Quote(argument);
         }
-        const auto status = !entry.enabled ? L"adapted-disabled" : dispatchable ? L"adapted" : L"invalid";
+        const auto status = !entry.enabled ? L"adapted-disabled" : !dispatchable ? L"invalid"
+            : blocked.count(record.id) ? L"dependency-blocked" : L"adapted";
         list.Add(record.id, entry.name, entry.target, arguments, status);
     }
     // An unread package can change the dependency graph. Keep ordinary entries visible in that case.

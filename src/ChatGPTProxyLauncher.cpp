@@ -195,37 +195,28 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR arguments, _I
     const int parsed = invocation.Parse(arguments);
     if (parsed) return parsed;
     if (invocation.mode == chain::Invocation::Mode::Info) return invocation.Info();
-    arguments = const_cast<PWSTR>(invocation.forwarded);
+    PCWSTR forwarded = invocation.forwarded;
     const bool explicitChain = invocation.mode == chain::Invocation::Mode::Chain;
     auto error = [&](DWORD code) { return explicitChain ? invocation.Finish(code, automation::Json{}) : ReportError(code); };
-    // The original diagnostic remains read-only and bypasses all extension work.
-    const wchar_t checkOption[] = L"--launcher-check";
-    const size_t checkLength = sizeof(checkOption) / sizeof(wchar_t) - 1;
-    bool check = !explicitChain && wcsncmp(arguments, checkOption, checkLength) == 0
-        && (!arguments[checkLength] || arguments[checkLength] == L' ' || arguments[checkLength] == L'\t');
-    if (check) {
-        arguments += checkLength;
-        while (*arguments == L' ' || *arguments == L'\t') ++arguments;
-    }
     Buffer executable(PathCapacity * sizeof(wchar_t));
     if (!executable.get()) return error(ERROR_NOT_ENOUGH_MEMORY);
     DWORD result = FindExecutable(static_cast<PWSTR>(executable.get()), PathCapacity);
     if (result) return error(result);
-    if (check) {
-        if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), arguments))
+    if (invocation.mode == chain::Invocation::Mode::Check) {
+        if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), forwarded))
             return ReportError(ERROR_FILENAME_EXCED_RANGE);
         WriteText(STD_OUTPUT_HANDLE, L"Executable=");
         WriteText(STD_OUTPUT_HANDLE, static_cast<PCWSTR>(executable.get()));
         WriteText(STD_OUTPUT_HANDLE, L"\r\nArguments=");
-        WriteText(STD_OUTPUT_HANDLE, arguments);
+        WriteText(STD_OUTPUT_HANDLE, forwarded);
         WriteText(STD_OUTPUT_HANDLE, L"\r\n");
         return 0;
     }
-    if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), arguments))
+    if (!CommandCapacity(static_cast<PCWSTR>(executable.get()), forwarded))
         return error(ERROR_FILENAME_EXCED_RANGE);
     RepairTaskbarShortcut(static_cast<PCWSTR>(executable.get()));
     const PCWSTR chat = static_cast<PCWSTR>(executable.get());
-    result = StartApplication(chat, arguments);
+    result = StartApplication(chat, forwarded);
     if (result) return error(result);
     try {
         if (invocation.options.root.empty()) invocation.options.root = chain::RootDirectory();

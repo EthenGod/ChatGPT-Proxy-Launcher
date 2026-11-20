@@ -89,6 +89,7 @@ pub enum ProgramStatus {
     Ordinary,
     Adapted,
     AdaptedDisabled,
+    DependencyBlocked,
     Disabled,
     Invalid,
     Unavailable,

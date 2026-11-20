@@ -97,6 +97,7 @@ Start-Sleep -Milliseconds 150
 if (![IO.File]::Exists('ChatGPTLauncherSetup.exe') -or ![IO.File]::Exists('SHA256SUMS.txt')) { exit 73 }
 [IO.File]::WriteAllText('..\SCENARIO.observed', 'ready')
 if ('SCENARIO' -eq 'killed') { [Diagnostics.Process]::GetCurrentProcess().Kill() }
+if ('SCENARIO' -eq 'nonzero') { exit 37 }
 '@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe.Replace('SCENARIO', $scenario)))
     $calls.launches++
@@ -106,16 +107,21 @@ try {
     $env:TEMP = $testFolder
     if ($hasProgressView) { $PSStyle.Progress.View = 'Minimal' }
     if ($SessionProbe) {
+        $scenario = 'nonzero'
+        try { Invoke-Expression ([IO.File]::ReadAllText($entry)); throw 'Expected a setup error' }
+        catch { if ($_.Exception.Message -notmatch '37') { throw } }
+        if ($calls.browserOpens -or $calls.waitMs -or [IO.Directory]::Exists($calls.folder)) { throw 'Failure footer or cleanup error' }
         $scenario = 'ok'
         Invoke-Expression ([IO.File]::ReadAllText($entry))
         throw 'The irm | iex session did not exit'
     }
     if (@([IO.File]::ReadAllBytes($entry) | Where-Object { $_ -gt 127 }).Count) { throw 'HTTP entry point must remain ASCII' }
-    foreach ($scenario in 'ok','killed','offline','missing','duplicate','malformed','interrupted','corrupt','startfail','keep') {
+    foreach ($scenario in 'ok','nonzero','killed','offline','missing','duplicate','malformed','interrupted','corrupt','startfail','keep') {
         # Cover restoring both caller styles, including every download failure path.
         $callerView = if ($scenario -in 'killed','missing','malformed','corrupt','keep') { 'Classic' } else { 'Minimal' }
         if ($hasProgressView) { $PSStyle.Progress.View = $callerView }
-        $success = $scenario -in 'ok','killed','keep'
+        $launched = $scenario -in 'ok','nonzero','killed','keep'
+        $nativeFailure = $scenario -in 'nonzero','killed'
         $calls.folder = $null
         $calls.waitMs = 0
         $calls.browserOpens = 0
@@ -124,13 +130,20 @@ try {
         $before = $calls.launches
         $failed = $false
         $selection = if ($scenario -eq 'ok') { @{Channel='Preview'; Tag='v9.8.7-beta.1'} } else { @{} }
-        try { & $entry @selection } catch { if ($success) { throw }; $failed = $true }
+        try { & $entry @selection } catch {
+            if ($launched -and !$nativeFailure) { throw }
+            $failed = $true
+            if ($scenario -eq 'nonzero') {
+                $strings = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'locales\zh-CN.json') | ConvertFrom-Json).strings
+                if ($_.Exception.Message -cne $strings.'download.graphicalfailed'.Replace('{code}', '37')) { throw }
+            }
+        }
         if ($calls.progressActive -or !$calls.stages.Count) { throw "Progress not shown or cleared: $scenario" }
         if ($ProgressPreference -ne 'SilentlyContinue') { throw 'Caller progress preference changed' }
         if ($hasProgressView -and $PSStyle.Progress.View -ne $callerView) { throw "Caller progress view not restored: $scenario" }
-        if ($success -and $calls.stages.Count -ne 4) { throw "Missing progress stage: $scenario" }
-        if ($success) {
-            if ($failed -or $calls.launches -ne $before + 1) { throw 'Valid download did not launch once' }
+        if ($launched -and $calls.stages.Count -ne 4) { throw "Missing progress stage: $scenario" }
+        if ($launched) {
+            if ($failed -ne $nativeFailure -or $calls.launches -ne $before + 1) { throw "Unexpected child result: $scenario" }
             if (![IO.File]::Exists((Join-Path $testFolder "$scenario.observed"))) { throw "Did not wait for child: $scenario" }
         } elseif (!$failed -or $calls.launches -ne $before) { throw "Failed to stop: $scenario" }
         if ($scenario -eq 'keep') {
@@ -138,7 +151,7 @@ try {
                 [IO.File]::Exists((Join-Path $calls.folder 'ChatGPTLauncherSetup.exe')) -or
                 [IO.File]::Exists((Join-Path $calls.folder 'SHA256SUMS.txt'))) { throw 'Incorrect cleanup in nonempty folder' }
         } elseif ($calls.folder -and [IO.Directory]::Exists($calls.folder)) { throw "Download folder remains: $scenario" }
-        $completed = $scenario -in 'ok','killed'
+        $completed = $scenario -eq 'ok'
         if ($calls.waitMs -ne $(if ($completed) { 10000 } else { 0 })) { throw "Wrong exit delay: $scenario" }
         if ($calls.browserOpens -ne $(if ($completed) { 1 } else { 0 })) { throw "Wrong browser launch count: $scenario" }
         $star = [regex]::Unescape('\u559c\u6b22\u672c\u9879\u76ee\u8bf7\u7ed9\u672c\u9879\u76ee\u70b9\u4e00\u4e2a Star \u8c22\u8c22\u55b5~')

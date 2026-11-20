@@ -142,13 +142,20 @@ void WriteBytes(HANDLE file, const std::string& bytes) {
     if (written != bytes.size()) throw IoError(ERROR_WRITE_FAULT);
     if (!FlushFileBuffers(file)) throw IoError(GetLastError());
 }
-void RemoveUnchangedFile(const std::wstring& path, std::string_view expected) {
-    CheckPlainPath(path);
-    Handle file(CreateFileW(path.c_str(), GENERIC_READ | DELETE, FILE_SHARE_READ, nullptr,
-        OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-    if (!file) throw IoError(GetLastError());
+void CheckFileContents(HANDLE file, std::string_view expected, const FileRevision* revision) {
+    if (revision) {
+        FILE_ID_INFO current{};
+        if (!GetFileInformationByHandleEx(file, FileIdInfo, &current, sizeof(current))) throw IoError(GetLastError());
+        FILE_BASIC_INFO basic{};
+        if (!GetFileInformationByHandleEx(file, FileBasicInfo, &basic, sizeof(basic))) throw IoError(GetLastError());
+        if (current.VolumeSerialNumber != revision->id.VolumeSerialNumber
+            || memcmp(&current.FileId, &revision->id.FileId, sizeof(current.FileId))
+            || basic.ChangeTime.QuadPart != revision->basic.ChangeTime.QuadPart
+            || basic.LastWriteTime.QuadPart != revision->basic.LastWriteTime.QuadPart
+            || basic.FileAttributes != revision->basic.FileAttributes) throw IoError(ERROR_RETRY);
+    }
     BY_HANDLE_FILE_INFORMATION info{};
-    if (!GetFileInformationByHandle(file.value, &info)) throw IoError(GetLastError());
+    if (!GetFileInformationByHandle(file, &info)) throw IoError(GetLastError());
     if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
         || info.nFileSizeHigh || info.nFileSizeLow != expected.size()) throw IoError(ERROR_RETRY);
     // Compare in bounded stack space instead of allocating a second complete snapshot.
@@ -156,11 +163,18 @@ void RemoveUnchangedFile(const std::wstring& path, std::string_view expected) {
     for (size_t offset = 0; offset < expected.size();) {
         const DWORD count = static_cast<DWORD>(std::min(sizeof(buffer), expected.size() - offset));
         DWORD got = 0;
-        if (!ReadFile(file.value, buffer, count, &got, nullptr)) throw IoError(GetLastError());
+        if (!ReadFile(file, buffer, count, &got, nullptr)) throw IoError(GetLastError());
         if (got != count) throw IoError(ERROR_READ_FAULT);
         if (memcmp(buffer, expected.data() + offset, count)) throw IoError(ERROR_RETRY);
         offset += count;
     }
+}
+void RemoveUnchangedFile(const std::wstring& path, std::string_view expected, const FileRevision* revision) {
+    CheckPlainPath(path);
+    Handle file(CreateFileW(path.c_str(), GENERIC_READ | DELETE, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (!file) throw IoError(GetLastError());
+    CheckFileContents(file.value, expected, revision);
     FILE_DISPOSITION_INFO disposition{TRUE};
     if (!SetFileInformationByHandle(file.value, FileDispositionInfo, &disposition, sizeof(disposition)))
         throw IoError(GetLastError());
@@ -172,8 +186,7 @@ void ResultFile::Reserve(const std::wstring& input) {
     if (!file) throw IoError(GetLastError());
 }
 void ResultFile::Write(const Json& result) { WriteBytes(file.value, WriteJson(result)); }
-DWORD OpenUserMutex(const std::wstring& suffix, HANDLE& mutex) {
-    mutex = nullptr;
+DWORD CurrentUserSid(std::wstring& user) {
     Handle token;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token.value)) return GetLastError();
     DWORD size = 0; GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
@@ -183,7 +196,13 @@ DWORD OpenUserMutex(const std::wstring& suffix, HANDLE& mutex) {
     LPWSTR sid = nullptr;
     if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(storage.data())->User.Sid, &sid)) return GetLastError();
     native::LocalPtr<wchar_t> ownedSid(sid);
-    std::wstring user(sid);
+    user.assign(sid);
+    return ERROR_SUCCESS;
+}
+DWORD OpenUserMutex(const std::wstring& suffix, HANDLE& mutex) {
+    mutex = nullptr;
+    std::wstring user;
+    if (const DWORD error = CurrentUserSid(user)) return error;
     const auto name = L"Global\\Community.ChatGPTLauncher." + user + L"." + suffix;
     const auto dacl = L"D:P(A;;GA;;;SY)(A;;GA;;;" + user + L")";
     PSECURITY_DESCRIPTOR sd = nullptr;

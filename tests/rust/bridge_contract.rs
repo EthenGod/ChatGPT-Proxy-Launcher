@@ -8,6 +8,17 @@ mod jobs;
 mod model;
 
 #[test]
+fn unmet_dependencies_reach_the_page_with_the_native_status() {
+    let value = serde_json::json!({
+        "entries": [{"id": "fixture", "name": "Fixture", "path": "fixture.exe",
+                     "arguments": "", "status": "dependency-blocked"}],
+        "incomplete": false
+    });
+    let list: model::ProgramList = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(list).unwrap(), value);
+}
+
+#[test]
 fn only_one_close_can_be_admitted_and_failure_reopens_the_queue() {
     use std::sync::{Arc, Barrier};
 

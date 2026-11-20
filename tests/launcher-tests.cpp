@@ -247,7 +247,11 @@ static int CheckEntryAndLifetime(const std::wstring& outputDir) {
     const EntryCase cases[] = {
         { L"--launcher-check", true }, { L"--launcher-check\t--value=\"中文 空格\"", true },
         { L"--launcher-check --proxy-server=http://127.0.0.1:7897", true },
+        { L"\"--launcher-check\"", true }, { L" \t\"--launcher-check\"  \"\" \"中文 空格\"", true },
+        { L"--\"launcher\"-check\t--flag=\"a b\"", true },
         { L"", false }, { L"--launcher-check-extra", false }, { L"--launcher-check=value", false },
+        { L" \"--launcher-check-extra\" \"\"", false }, { L"\"--launcher-check value\"", false },
+        { L"\"\" --launcher-check", false },
         { L"--proxy-server=http://127.0.0.1:7897 --no-startup-window", false }
     };
     for (const auto& item : cases) {
@@ -266,6 +270,10 @@ static int CheckEntryAndLifetime(const std::wstring& outputDir) {
             REQUIRE(!GetHandleInformation(createdThread, &flags) && GetLastError() == ERROR_INVALID_HANDLE);
         }
     }
+    chain::Invocation diagnostic;
+    REQUIRE(diagnostic.Parse(L" \t\"--launcher-check\"\t \"\"  --value=\"中文 空格\"  ") == 0);
+    REQUIRE(diagnostic.mode == chain::Invocation::Mode::Check
+        && std::wstring_view(diagnostic.forwarded) == L"\"\"  --value=\"中文 空格\"  ");
     createSuccess = false; createCalls = 0; companionCalls = 0;
     std::wstring launch = L"--test";
     REQUIRE(wWinMain(nullptr, nullptr, &launch[0], 0) == ERROR_ACCESS_DENIED);

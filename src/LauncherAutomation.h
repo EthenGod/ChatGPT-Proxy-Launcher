@@ -3,7 +3,7 @@
 #include "CompanionRunner.h"
 namespace chain {
 struct Invocation {
-    enum class Mode { Normal, Info, Chain } mode = Mode::Normal;
+    enum class Mode { Normal, Check, Info, Chain } mode = Mode::Normal;
     PCWSTR forwarded = nullptr;
     RunOptions options;
     automation::ResultFile output;

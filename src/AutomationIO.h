@@ -32,10 +32,14 @@ void CheckPlainPath(const std::wstring& path); // Reject existing reparse points
 void CheckPathUnderRoot(const std::wstring& path, const std::wstring& root); // Strict descendant, with the same reparse checks.
 std::string ReadBytes(const std::wstring& path, size_t maximum = contract::JsonBytes);
 void WriteBytes(HANDLE file, const std::string& bytes);
+DWORD CurrentUserSid(std::wstring& user);
 // On success or ERROR_ALREADY_EXISTS the caller owns the open, unowned mutex handle.
 DWORD OpenUserMutex(const std::wstring& suffix, HANDLE& mutex);
-// Hold one read/delete handle through comparison and deletion. ERROR_RETRY means content changed.
-void RemoveUnchangedFile(const std::wstring& path, std::string_view expected);
+struct FileRevision { FILE_ID_INFO id{}; FILE_BASIC_INFO basic{}; };
+// Compare from offset zero on a fresh handle. Reject a changed file or identity with ERROR_RETRY.
+void CheckFileContents(HANDLE file, std::string_view expected, const FileRevision* revision = nullptr);
+// Hold the same read/delete handle through comparison and deletion.
+void RemoveUnchangedFile(const std::wstring& path, std::string_view expected, const FileRevision* revision = nullptr);
 class ResultFile {
     Handle file;
 public:

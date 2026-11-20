@@ -586,6 +586,20 @@ describe('settings prototype behavior', () => {
     expect(service.calls.load).toBe(1)
     expect(service.calls.save).toBe(0)
   })
+  it.each([['zh-CN', '依赖未满足'], ['en-US', 'Unmet dependency'], ['ja-JP', '依存条件を満たせません']])(
+    'shows an unmet dependency in the %s program list and details', async (language, label) => {
+      const service = new MockSetupService('normal', 0)
+      const snapshot = await service.load()
+      snapshot.preferences = { ...snapshot.preferences, language, resolvedLanguage: language }
+      vi.spyOn(service, 'load').mockResolvedValue(snapshot)
+      const program = service.programs[1]!
+      service.programs = [{ ...program, status: 'dependency-blocked' }]
+      const { user } = mount(service, true)
+      const row = await screen.findByRole('button', { name: new RegExp(program.name) })
+      expect(row).toHaveTextContent(label)
+      await user.click(row)
+      expect(await screen.findByRole('dialog')).toHaveTextContent(label)
+    })
   it('does not let an old directory read replace the list after an import', async () => {
     const service = new MockSetupService('first', 0)
     let finish!: (result: ProgramList) => void

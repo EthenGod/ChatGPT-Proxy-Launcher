@@ -13,7 +13,7 @@ export interface SaveResult {
   conflictDirectory?: string
 }
 export interface ProgramEntry { name: string; path: string; arguments: string }
-export type ProgramStatus = 'ordinary' | 'adapted' | 'adapted-disabled' | 'disabled' | 'invalid' | 'unavailable'
+export type ProgramStatus = 'ordinary' | 'adapted' | 'adapted-disabled' | 'disabled' | 'invalid' | 'unavailable' | 'dependency-blocked'
 export interface ListedProgram extends ProgramEntry { id: string; status: ProgramStatus; icon?: string }
 export interface ProgramList { entries: ListedProgram[]; incomplete: boolean }
 export interface Validation {

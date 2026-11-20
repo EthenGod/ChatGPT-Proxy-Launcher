@@ -34,9 +34,10 @@ function AdaptedBadge({ status, t }: StatusProps) {
 }
 function ProgramState({ status, t }: StatusProps) {
   if (status === 'disabled' || status === 'adapted-disabled') return <span className="program-state" data-motion-text>{t('ui.programs.disabled')}</span>
-  if (status === 'invalid' || status === 'unavailable') return <span className="program-state" data-warning>
-    <CircleAlert size={13} aria-hidden="true" /><span data-motion-text>{t(status === 'invalid' ? 'ui.programs.invalid' : 'ui.programs.unavailable')}</span></span>
-  return null
+  if (status === 'ordinary' || status === 'adapted') return null
+  const labels = { invalid: 'ui.programs.invalid', unavailable: 'ui.programs.unavailable', 'dependency-blocked': 'ui.programs.dependency' } as const
+  return <span className="program-state" data-warning>
+    <CircleAlert size={13} aria-hidden="true" /><span data-motion-text>{t(labels[status])}</span></span>
 }
 
 type ListLayout = { tops: Map<string, number>; height: number; added: string | undefined }

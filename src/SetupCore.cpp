@@ -8,6 +8,8 @@
 #include "NativeMemory.h"
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <aclapi.h>
+#include <sddl.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <utility>
@@ -54,12 +56,19 @@ Result EnsureDirectory(const std::wstring& path) {
 }
 struct Snapshot { bool exists = false; std::vector<BYTE> data; };
 
-Result OpenSnapshot(const std::wstring& path, Handle& handle, DWORD& length) {
+Result OpenSnapshot(const std::wstring& path, Handle& handle, DWORD& length, bool requirePlainFile = false) {
     handle.h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL, nullptr);
+        requirePlainFile ? FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle.h == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
         return IsMissing(error) ? Result{} : Fail(error, l10n::Format("error.files.read", {{"path", path}}));
+    }
+    if (requirePlainFile) {
+        FILE_ATTRIBUTE_TAG_INFO info{};
+        if (!GetFileInformationByHandleEx(handle.h, FileAttributeTagInfo, &info, sizeof(info)))
+            return Fail(GetLastError(), l10n::Text("error.env.filetype"));
+        if (info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
+            return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.env.filetype"));
     }
     LARGE_INTEGER size{};
     if (!GetFileSizeEx(handle.h, &size)) return Fail(GetLastError(), l10n::Text("error.files.size"));
@@ -77,11 +86,11 @@ Result ReadExact(HANDLE handle, const std::wstring& path, BYTE* buffer, DWORD le
     if (count != length) return Fail(ERROR_READ_FAULT, l10n::Format("error.files.incomplete", {{"path", path}}));
     return {};
 }
-Result ReadFileBytes(const std::wstring& path, Snapshot& file) {
+Result ReadFileBytes(const std::wstring& path, Snapshot& file, bool requirePlainFile = false) {
     file = {};
     Handle handle;
     DWORD length = 0;
-    Result result = OpenSnapshot(path, handle, length);
+    Result result = OpenSnapshot(path, handle, length, requirePlainFile);
     if (!result || handle.h == INVALID_HANDLE_VALUE) return result;
     file.data.resize(length);
     result = ReadExact(handle.h, path, file.data.data(), length);
@@ -165,6 +174,159 @@ Result WriteAtomicBytes(const std::wstring& path, const BYTE* data, size_t size,
 }
 Result WriteAtomic(const std::wstring& path, const std::vector<BYTE>& data, bool replace = true) {
     return WriteAtomicBytes(path, data.data(), data.size(), replace);
+}
+std::string_view Bytes(const std::vector<BYTE>& data) {
+    return {reinterpret_cast<const char*>(data.data()), data.size()};
+}
+constexpr SECURITY_INFORMATION EnvAccess = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+    | LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION;
+DWORD DescribeEnvAccess(PSECURITY_DESCRIPTOR sd, bool existing, native::LocalPtr<wchar_t>& text) {
+    // Ignore the automatic-inheritance bookkeeping bits. Keep protection flags, principals and ACE order.
+    constexpr SECURITY_DESCRIPTOR_CONTROL bookkeeping = SE_DACL_AUTO_INHERITED | SE_SACL_AUTO_INHERITED
+        | SE_DACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERIT_REQ;
+    if (!SetSecurityDescriptorControl(sd, bookkeeping, 0)) return GetLastError();
+    PWSTR raw = nullptr;
+    if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, OWNER_SECURITY_INFORMATION
+        | DACL_SECURITY_INFORMATION | (existing ? GROUP_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION : 0), &raw, nullptr))
+        return GetLastError();
+    text.reset(raw);
+    return ERROR_SUCCESS;
+}
+DWORD CheckStageAccess(HANDLE stage, PSECURITY_DESCRIPTOR expected, bool existing) {
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    DWORD error = GetSecurityInfo(stage, SE_FILE_OBJECT, EnvAccess, nullptr, nullptr, nullptr, nullptr, &raw);
+    if (error) return error;
+    native::LocalPtr<void> actual(raw);
+    native::LocalPtr<wchar_t> before, after;
+    if ((error = DescribeEnvAccess(expected, existing, before)) || (error = DescribeEnvAccess(raw, existing, after)))
+        return error;
+    return wcscmp(before.get(), after.get()) ? ERROR_INVALID_SECURITY_DESCR : ERROR_SUCCESS;
+}
+// Keep the replaced file itself until the transaction ends. This also preserves its streams and security on undo.
+struct EnvChange {
+    std::wstring backupPath;
+    std::vector<BYTE> restoreName;
+    automation::Handle original; // Deny writes and renames to the backup until commit or undo.
+    automation::Handle pin; // Attribute-only handle keeps the published file ID from being recycled.
+    automation::FileRevision revision;
+    bool installed = false;
+
+    Result DiscardOriginal() {
+        if (!original) return {};
+        FILE_DISPOSITION_INFO dispose{TRUE};
+        if (!SetFileInformationByHandle(original.value, FileDispositionInfo, &dispose, sizeof(dispose)))
+            return Fail(GetLastError(), l10n::Text("error.files.write"));
+        original.Reset();
+        return {};
+    }
+
+    Result Undo(const std::wstring& path, const std::vector<BYTE>& expected) {
+        auto retained = [&](DWORD code) { return Fail(code, l10n::Format("error.env.restore", {{"path", backupPath}})); };
+        if (!backupPath.empty() && !original) return retained(ERROR_SHARING_VIOLATION);
+        if (installed) {
+            try { automation::RemoveUnchangedFile(path, Bytes(expected), &revision); }
+            catch (const automation::IoError& e) {
+                return original ? retained(e.code) : Fail(e.code, l10n::Text("error.env.concurrent"));
+            }
+            pin.Reset(); // Complete the verified deletion before restoring the original name.
+        }
+        // Restore by handle, without replacement. A new arrival keeps its name and contents.
+        if (original && !SetFileInformationByHandle(original.value, FileRenameInfo, restoreName.data(),
+            static_cast<DWORD>(restoreName.size()))) return retained(GetLastError());
+        return {};
+    }
+};
+Result WriteEnv(const std::wstring& path, const Snapshot& before, const std::vector<BYTE>& bytes, EnvChange& change) {
+    automation::Handle current;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    FILE_ID_INFO previousId{};
+    bool originalChanged = false;
+    DWORD attributes = FILE_ATTRIBUTE_NORMAL;
+    if (before.exists) {
+        current.Reset(CreateFileW(path.c_str(), GENERIC_READ | READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+        if (!current) return Fail(GetLastError(), l10n::Text("error.env.concurrent"));
+        try { automation::CheckFileContents(current.value, Bytes(before.data)); }
+        catch (const automation::IoError& e) { return Fail(e.code, l10n::Text("error.env.concurrent")); }
+        BY_HANDLE_FILE_INFORMATION info{};
+        if (!GetFileInformationByHandleEx(current.value, FileIdInfo, &previousId, sizeof(previousId)))
+            return Fail(GetLastError(), l10n::Text("error.env.protection"));
+        if (!GetFileInformationByHandle(current.value, &info)) return Fail(GetLastError(), l10n::Text("error.env.protection"));
+        // A separately encrypted staging file need not have the same EFS recipients.
+        if (info.dwFileAttributes & FILE_ATTRIBUTE_ENCRYPTED) return Fail(ERROR_NOT_SUPPORTED, l10n::Text("error.env.protection"));
+        if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) return Fail(ERROR_ACCESS_DENIED, l10n::Text("error.env.protection"));
+        attributes = info.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED);
+        change.restoreName.resize(sizeof(FILE_RENAME_INFO) + path.size() * sizeof(wchar_t));
+        auto& rename = *reinterpret_cast<FILE_RENAME_INFO*>(change.restoreName.data());
+        rename.FileNameLength = static_cast<DWORD>(path.size() * sizeof(wchar_t));
+        memcpy(rename.FileName, path.data(), rename.FileNameLength);
+        const DWORD error = GetSecurityInfo(current.value, SE_FILE_OBJECT, EnvAccess, nullptr, nullptr, nullptr, nullptr, &sd);
+        if (error) return Fail(error, l10n::Text("error.env.protection"));
+    } else {
+        std::wstring user;
+        if (const DWORD error = automation::CurrentUserSid(user)) return Fail(error, l10n::Text("error.env.protection"));
+        const auto sddl = L"O:" + user + L"D:P(A;;FA;;;" + user + L")";
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr))
+            return Fail(GetLastError(), l10n::Text("error.env.protection"));
+    }
+    native::LocalPtr<void> descriptor(sd);
+    GUID guid{};
+    wchar_t name[40]{};
+    if (FAILED(CoCreateGuid(&guid)) || !StringFromGUID2(guid, name, _countof(name)))
+        return Fail(ERROR_GEN_FAILURE, l10n::Text("error.files.createtemp"));
+    auto stagedPath = Join(Parent(path), std::wstring(name) + L".tmp");
+    auto backupPath = stagedPath + L".bak";
+    TempFile stage;
+    SECURITY_ATTRIBUTES security{sizeof(security), sd, FALSE};
+    {
+        automation::Handle writer(CreateFileW(stagedPath.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES | READ_CONTROL, 0,
+            &security, CREATE_NEW, attributes, nullptr));
+        if (!writer) return Fail(GetLastError(), l10n::Text("error.files.createtemp"));
+        stage.path.swap(stagedPath);
+        DWORD flags = 0;
+        if (!GetVolumeInformationByHandleW(writer.value, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0))
+            return Fail(GetLastError(), l10n::Text("error.env.protection"));
+        if (!(flags & FILE_PERSISTENT_ACLS)) return Fail(ERROR_NOT_SUPPORTED, l10n::Text("error.env.protection"));
+        if (const DWORD error = CheckStageAccess(writer.value, sd, before.exists))
+            return Fail(error, l10n::Text("error.env.protection"));
+        if (!GetFileInformationByHandleEx(writer.value, FileIdInfo, &change.revision.id, sizeof(change.revision.id)))
+            return Fail(GetLastError(), l10n::Text("error.env.protection"));
+        constexpr FILE_ID_128 emptyId{};
+        if (!memcmp(&change.revision.id.FileId, &emptyId, sizeof(emptyId))) return Fail(ERROR_NOT_SUPPORTED, l10n::Text("error.env.protection"));
+        change.pin.Reset(ReOpenFile(writer.value, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0));
+        if (!change.pin) return Fail(GetLastError(), l10n::Text("error.env.protection"));
+        DWORD written = 0;
+        if (!WriteFile(writer.value, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr)
+            || written != bytes.size() || !FlushFileBuffers(writer.value))
+            return Fail(GetLastError(), l10n::Text("error.files.write"));
+    }
+    if (before.exists) {
+        // Strict merge preserves the original DACL, compression and named streams. Never ignore merge errors.
+        const BOOL replaced = ReplaceFileW(path.c_str(), stage.path.c_str(), backupPath.c_str(), 0, nullptr, nullptr);
+        const DWORD error = replaced ? ERROR_SUCCESS : GetLastError();
+        if (!replaced && error != ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
+            return Fail(error, l10n::Format("error.files.save", {{"path", path}}));
+        change.installed = replaced != FALSE;
+        if (replaced) stage.path.clear();
+        change.backupPath.swap(backupPath);
+        change.original.Reset(CreateFileW(change.backupPath.c_str(), DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+        if (!change.original) return Fail(GetLastError(), l10n::Text("error.env.concurrent"));
+        if (!replaced) return Fail(error, l10n::Format("error.files.save", {{"path", path}}));
+        FILE_ID_INFO displaced{};
+        if (!GetFileInformationByHandleEx(change.original.value, FileIdInfo, &displaced, sizeof(displaced)))
+            return Fail(GetLastError(), l10n::Text("error.env.concurrent"));
+        originalChanged = displaced.VolumeSerialNumber != previousId.VolumeSerialNumber
+            || memcmp(&displaced.FileId, &previousId.FileId, sizeof(displaced.FileId)) != 0;
+    } else {
+        Result result = CommitTemp(stage, path, false);
+        if (!result) return result;
+    }
+    change.installed = true;
+    if (!GetFileInformationByHandleEx(change.pin.value, FileBasicInfo, &change.revision.basic, sizeof(change.revision.basic)))
+        return Fail(GetLastError(), l10n::Text("error.env.verify"));
+    if (originalChanged) return Fail(ERROR_RETRY, l10n::Text("error.env.concurrent"));
+    return {};
 }
 Result Restore(const std::wstring& path, const Snapshot& snapshot, bool replace = true) {
     if (snapshot.exists) return WriteAtomic(path, snapshot.data, replace);
@@ -470,10 +632,7 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     std::vector<BYTE> envBytes;
     if (touchEnv) {
         if (paths.codexEnvFile.empty()) return Fail(ERROR_PATH_NOT_FOUND, l10n::Text("error.paths.env"));
-        const DWORD attributes = GetFileAttributesW(paths.codexEnvFile.c_str());
-        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
-            return Fail(ERROR_BAD_PATHNAME, l10n::Text("error.env.filetype"));
-        result = ReadFileBytes(paths.codexEnvFile, oldEnv); if (!result) return result;
+        result = ReadFileBytes(paths.codexEnvFile, oldEnv, true); if (!result) return result;
         result = MergeCodexEnv(oldEnv.data, options, envBytes); if (!result) return result;
     }
     const bool managedTarget = Same(target, previous.managedTarget);
@@ -517,7 +676,8 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
     if (options.startup) { result = EnsureDirectory(Parent(paths.startupLink)); if (!result) return result; }
     if (options.desktop) { result = EnsureDirectory(desktopDirectory); if (!result) return result; }
     if (touchEnv) { result = EnsureDirectory(Parent(paths.codexEnvFile)); if (!result) return result; }
-    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, envChanged = false, discoveryChanged = false;
+    bool exeChanged = false, settingsChanged = false, startupChanged = false, desktopChanged = false, discoveryChanged = false;
+    EnvChange envChange;
     bool legacyStartupRemoved = false, legacyDesktopRemoved = false;
     auto notifyDesktopChanges = [&](bool committed) noexcept {
         // Atomic .tmp -> .lnk replacement alone can leave Explorer's desktop view stale.
@@ -548,7 +708,12 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
         };
         // A failed restore or diagnostic allocation must not skip the remaining files.
         restore(discoveryChanged, discoveryPath, oldDiscovery);
-        restore(envChanged, paths.codexEnvFile, oldEnv);
+        if (envChange.installed || !envChange.backupPath.empty()) {
+            try {
+                const auto restored = envChange.Undo(paths.codexEnvFile, envBytes);
+                if (!restored) { incomplete = true; restoreErrors += L"\n" + restored.message; }
+            } catch (...) { incomplete = true; detailsUnavailable = true; }
+        }
         restore(legacyDesktopRemoved, paths.legacyDesktopLink, legacyDesktop, false);
         restore(legacyStartupRemoved, paths.legacyStartupLink, legacyStartup, false);
         // Removed links have no replacement to undo. Do not overwrite a file created meanwhile.
@@ -613,13 +778,15 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
             return rollback(Fail(ERROR_INVALID_DATA, l10n::Text("error.settings.verify")));
         Snapshot check;
         if (touchEnv && (!oldEnv.exists || oldEnv.data != envBytes)) {
-            result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(std::move(result));
-            if (check.exists != oldEnv.exists || check.data != oldEnv.data)
-                return rollback(Fail(ERROR_RETRY, l10n::Text("error.env.concurrent")));
-            result = WriteAtomic(paths.codexEnvFile, envBytes, oldEnv.exists); if (!result) return rollback(std::move(result));
-            envChanged = true;
-            result = ReadFileBytes(paths.codexEnvFile, check); if (!result) return rollback(std::move(result));
-            if (!check.exists || check.data != envBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.env.verify")));
+            result = WriteEnv(paths.codexEnvFile, oldEnv, envBytes, envChange); if (!result) return rollback(std::move(result));
+            automation::Handle published(CreateFileW(paths.codexEnvFile.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+            if (!published) return rollback(Fail(GetLastError(), l10n::Text("error.env.verify")));
+            try { automation::CheckFileContents(published.value, Bytes(envBytes), &envChange.revision); }
+            catch (const automation::IoError& e) {
+                published.Reset();
+                return rollback(Fail(e.code, l10n::Text("error.env.verify")));
+            }
         }
         result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(std::move(result));
         if (check.exists != oldDiscovery.exists || check.data != oldDiscovery.data)
@@ -630,6 +797,8 @@ static Result ApplyFiles(const Paths& paths, const Options& options, Payload pay
             result = ReadFileBytes(discoveryPath, check); if (!result) return rollback(std::move(result));
             if (!check.exists || check.data != discoveryBytes) return rollback(Fail(ERROR_CRC, l10n::Text("error.discovery.verify")));
         }
+        result = envChange.DiscardOriginal();
+        if (!result) return rollback(std::move(result));
     } catch (const std::bad_alloc&) {
         exceptionFailure.code = ERROR_NOT_ENOUGH_MEMORY;
         return rollback(std::move(exceptionFailure));

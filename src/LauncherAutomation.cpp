@@ -41,10 +41,24 @@ int Invocation::Parse(PCWSTR raw) noexcept {
     try {
         // Ordinary launch retains the complete original tail and does not initialize JSON or COM.
         PCWSTR cursor = raw; while (*cursor == L' ' || *cursor == L'\t') ++cursor;
-        if (wcsncmp(cursor, L"--launcher-", 11) && wcsncmp(cursor, L"\"--launcher-", 12)) return 0;
+        // Windows allows quotes around any part of an option. Skip obvious non-options
+        // cheaply; Token decodes the actual first argument and locates its raw tail.
+        PCWSTR prefix = cursor;
+        for (const wchar_t c : std::wstring_view(L"--launcher-")) {
+            while (*prefix == L'"') ++prefix;
+            if (*prefix != c) return 0;
+            ++prefix;
+        }
         std::wstring token;
-        if (!Token(cursor, token) || (token != L"--launcher-info" && token != L"--launcher-chain")) return 0;
+        if (!Token(cursor, token)) return 0;
+        if (token == L"--launcher-check") {
+            mode = Mode::Check;
+            while (*cursor == L' ' || *cursor == L'\t') ++cursor;
+            forwarded = cursor;
+            return 0;
+        }
         if (token == L"--launcher-info") { mode = Mode::Info; if (Token(cursor, token)) return 20; return 0; }
+        if (token != L"--launcher-chain") return 0;
         mode = Mode::Chain; std::wstring path; bool feedback = false, delimiter = false;
         while (Token(cursor, token)) {
             if (token == L"--") { delimiter = true; while (*cursor == L' ' || *cursor == L'\t') ++cursor; forwarded = cursor; break; }
