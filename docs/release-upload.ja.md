@@ -1,30 +1,27 @@
-[简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/docs/release-upload.ja.md)
+[简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.ja.md)
 
-> 機械翻訳を含む場合があります。内容が異なる場合は[中国語原版](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/docs/release-upload.md)を参照してください。
+> 機械翻訳を含む場合があります。内容が異なる場合は[中国語原版](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.md)を参照してください。
 
-# 🚀 v1.2.1 設定画面を一新
+# 🚀 v1.2.2 クラウドの Codex 会話でのプロキシ利用と起動引数のプレビュー
 
-[![クイックスタート：初めての方へ](https://img.shields.io/badge/%E5%88%9D%E3%82%81%E3%81%A6%E3%81%AE%E6%96%B9-%E3%82%AF%E3%82%A4%E3%83%83%E3%82%AF%E3%82%B9%E3%82%BF%E3%83%BC%E3%83%88-11775B?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/README.ja.md#%E3%82%AF%E3%82%A4%E3%83%83%E3%82%AF%E3%82%B9%E3%82%BF%E3%83%BC%E3%83%88) [![Windows x64 設定ツールをダウンロード](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.1/ChatGPTLauncherSetup.exe)
+[![クイックスタート：初めての方へ](https://img.shields.io/badge/%E5%88%9D%E3%82%81%E3%81%A6%E3%81%AE%E6%96%B9-%E3%82%AF%E3%82%A4%E3%83%83%E3%82%AF%E3%82%B9%E3%82%BF%E3%83%BC%E3%83%88-11775B?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/README.ja.md#%E3%82%AF%E3%82%A4%E3%83%83%E3%82%AF%E3%82%B9%E3%82%BF%E3%83%BC%E3%83%88) [![Windows x64 設定ツールをダウンロード](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.2/ChatGPTLauncherSetup.exe)
 
-**初めての方は[クイックスタート](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.1/README.ja.md#%E3%82%AF%E3%82%A4%E3%83%83%E3%82%AF%E3%82%B9%E3%82%BF%E3%83%BC%E3%83%88)をご覧ください。** PowerShell の 1 行コマンドは、既定で最新の正式版をダウンロードして設定ツールを開きます。ガイドには手動ダウンロードと初回設定の手順もあります。
+**初めての方は[クイックスタート](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/README.ja.md#%E3%82%AF%E3%82%A4%E3%83%83%E3%82%AF%E3%82%B9%E3%82%BF%E3%83%BC%E3%83%88)をご覧ください。** PowerShell の 1 行コマンドは、既定で最新の正式版をダウンロードして設定ツールを開きます。ガイドには手動ダウンロードと初回設定の手順もあります。
 
-**旧版から更新する場合**は、新しい設定ツールを開き、**変更を保存** を押してください。[v1.2.1 の設定ツールをダウンロード](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.1/ChatGPTLauncherSetup.exe)
+**旧版から更新する場合**は、新しい設定ツールを開き、**変更を保存** を押してください。[v1.2.2 の設定ツールをダウンロード](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.2/ChatGPTLauncherSetup.exe)
 
-**Codex にも適用** をオンにしている方は、先に ChatGPT と Codex での作業を保存してください。設定を保存すると、設定ツールが ChatGPT の終了を試みます。
+**Codex の環境変数に適用** をオンにしている方は、先に ChatGPT と Codex での作業を保存してください。設定を保存すると、設定ツールが ChatGPT の終了を試みます。
 
 ## ✨ 更新内容
 
-- ログイン時の起動、デスクトップショートカット、プロキシを最初の画面で設定できます。変更すると、起動引数のプレビューに反映されます。
-- プロキシをオンにすると、見つかったポート番号が自動で入力されます。どこから取得したかは右下の通知で確認できます。
-- **詳細設定** には、ChatGPT と一緒に起動するプログラムの一覧があり、ここから新しく追加できます。連携に対応しているものや、無効にしたものには印が付きます。
-- WebView2 が入っていないパソコンでも、設定ツールをダブルクリックすれば互換モードで設定を変更できます。
-- PowerShell でダウンロードすると、通常は正式版が選ばれます。新機能を試したい方はテスト版も選べます。
+- **クラウドの Codex 会話に接続できない問題を修正** が標準で有効になりました。認証不要の HTTP または HTTPS プロキシを 1 つ指定すると、新しく起動した ChatGPT がクラウドの会話にもそのプロキシを使えます。プロキシの除外ルールを指定した場合は従来どおりです。
+- 通常の設定画面では、**起動引数のプレビュー** の内容が変わると文字がフェードで切り替わります。ウィンドウが狭くても左下のメッセージは行の途中で切れません。文字を選択しているときや、アニメーションを減らす設定が有効なときは、最新の引数をすぐに表示します。
+- 追加プログラムの起動を待つ前に、読み込み済みの設定データを解放し、待機中のメモリ使用量を減らしました。
 
 ## 🛠️ 修正内容
 
-- 言語を切り替えたときに画面全体が一瞬黒くなる問題を修正しました。入力中のプロキシのアドレスとポート番号もそのまま残ります。
-- 設定ツールを最小化しても、もう一度ダブルクリックすれば元の画面に戻って作業を続けられます。
-- 設定を保存できたのに、失敗したと表示されることがある問題を修正しました。
+- プロキシ設定を保存するときに既存のファイル権限を保持します。保存に失敗した場合も、変更を元に戻す際に Codex の `.env` ファイルを保護します。
+- 追加プログラムに必要な依存先が見つからない場合、設定画面に理由が表示されます。PowerShell から設定画面を開いて処理が失敗したときも、スクリプトがエラーを返します。
 
 ## ⚠️ 既知の問題
 
