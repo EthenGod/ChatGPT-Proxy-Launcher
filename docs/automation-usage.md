@@ -15,11 +15,11 @@
 | `-Branch <名称>` | 仅接受指定分支提交历史中的已发布标签。分支从正式版切出时，共同祖先上的正式版也可能入选。 |
 | `-Tag <标签>` | 固定一个已发布版本。仍检查通道和分支。下载测试版须同时传 `-Channel Preview`。 |
 
-例如，v1.2.1 发布后，在项目根目录用该版本查询部署状态。结果路径须是新文件。
+例如，在项目根目录用 v1.2.2 的配置器查询部署状态。结果路径须是新文件。
 
 ```powershell
 $result = Join-Path $env:TEMP ('cgl-' + [guid]::NewGuid() + '.json')
-& .\setup.ps1 -Headless -Operation info -Result $result -Branch master -Tag v1.2.1
+& .\setup.ps1 -Headless -Operation info -Result $result -Branch master -Tag v1.2.2
 ```
 
 下载器只使用已发布 Release 的附件。它先固定标签，再从同一标签下载校验清单和配置器。后台结果的 `transport.releaseTag` 给出选中的实际标签。
