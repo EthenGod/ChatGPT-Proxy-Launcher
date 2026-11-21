@@ -6,6 +6,7 @@
 #include <string_view>
 
 namespace native {
+// Returned name characters must remain valid and unchanged until Environment returns.
 using EnvironmentName = std::wstring_view (*)(std::wstring_view);
 inline std::vector<wchar_t> Environment(const std::map<std::wstring, std::wstring>& values,
                                         EnvironmentName normalizeName = nullptr) {
