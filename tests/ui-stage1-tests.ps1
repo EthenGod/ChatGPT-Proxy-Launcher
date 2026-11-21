@@ -217,10 +217,13 @@ function Compare-Cli([string]$Root, [string]$Tail, [int]$Expected) {
     Require (![IO.File]::Exists((Join-Path $Root 'gui-entered.json'))) 'Headless path entered the GUI bootstrap'
     return ($results[1] | ConvertFrom-Json)
 }
-$cliRoot = Join-Path $testRoot 'cli space 中文'
+# Windows PowerShell 5.1 reads BOM-less scripts using the system ANSI code page.
+$chinese = -join [char[]](0x4E2D, 0x6587)
+$argumentLabel = -join [char[]](0x53C2, 0x6570)
+$cliRoot = Join-Path $testRoot "cli space $chinese"
 $null = [IO.Directory]::CreateDirectory($cliRoot)
 $null = Compare-Cli $cliRoot '--headless info' 0
-$extra = @('', '中文 参数', 'quote"end', 'C:\ending\', '& % !')
+$extra = @('', "$chinese $argumentLabel", 'quote"end', 'C:\ending\', '& % !')
 $tail = '--headless plan --base defaults --startup off --desktop off --codex-env leave --official-startup leave --proxy socks5://127.0.0.1:7890'
 foreach ($argument in $extra) { $tail += ' --extra-arg ' + (Quote-Argument $argument) }
 $plan = Compare-Cli $cliRoot $tail 0
@@ -237,7 +240,7 @@ $requestPath = Join-Path $cliRoot 'outside-request.json'
 $rejected = Compare-Cli $cliRoot ('--headless deploy --request ' + (Quote-Argument $requestPath)) 20
 Require ($rejected.code -eq 'outside-test-root' -and !$rejected.committed) 'Isolated deployment accepted a sibling directory'
 Require (![IO.Directory]::Exists($sibling)) 'Isolated deployment wrote outside its root'
-$rootAlias = Join-Path $testRoot 'CLI SPACE 中文'
+$rootAlias = Join-Path $testRoot "CLI SPACE $chinese"
 if ([IO.Directory]::Exists($rootAlias)) {
     $null = Compare-Cli $cliRoot ('--headless plan --directory ' + (Quote-Argument $rootAlias)) 0
 }
