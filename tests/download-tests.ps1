@@ -116,6 +116,7 @@ try {
         throw 'The irm | iex session did not exit'
     }
     if (@([IO.File]::ReadAllBytes($entry) | Where-Object { $_ -gt 127 }).Count) { throw 'HTTP entry point must remain ASCII' }
+    $openedText = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'locales\zh-CN.json') | ConvertFrom-Json).strings.'download.opened'
     foreach ($scenario in 'ok','nonzero','killed','offline','missing','duplicate','malformed','interrupted','corrupt','startfail','keep') {
         # Cover restoring both caller styles, including every download failure path.
         $callerView = if ($scenario -in 'killed','missing','malformed','corrupt','keep') { 'Classic' } else { 'Minimal' }
@@ -155,6 +156,7 @@ try {
         if ($calls.waitMs -ne $(if ($completed) { 10000 } else { 0 })) { throw "Wrong exit delay: $scenario" }
         if ($calls.browserOpens -ne $(if ($completed) { 1 } else { 0 })) { throw "Wrong browser launch count: $scenario" }
         $star = [regex]::Unescape('\u559c\u6b22\u672c\u9879\u76ee\u8bf7\u7ed9\u672c\u9879\u76ee\u70b9\u4e00\u4e2a Star \u8c22\u8c22\u55b5~')
+        if (@($calls.messages | Where-Object { $_ -ceq $openedText }).Count -ne [int]$launched) { throw "Wrong launch notice: $scenario" }
         if ($calls.messages.Contains($star) -ne $completed) { throw "Wrong completion message: $scenario" }
     }
     # Exercise immediate keys (including non-text keys), delayed input and timeout without opening a browser.

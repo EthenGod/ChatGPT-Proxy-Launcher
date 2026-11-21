@@ -348,6 +348,7 @@
     "download.compatibility": "Use compatibility mode",
     "download.cancel": "Cancel",
     "download.uichoice": "Enter 1, 2 or 0 (Enter to cancel)",
+    "download.opened": "The configurator is open. Use the configurator window and keep this PowerShell window open.",
     "download.cancelled": "Cancelled. Setup was not opened.",
     "download.webviewtransfer": "Downloading the Microsoft WebView2 installer",
     "download.webviewinstalling": "Installing WebView2",

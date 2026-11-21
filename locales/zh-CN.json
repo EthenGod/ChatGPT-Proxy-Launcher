@@ -348,6 +348,7 @@
     "download.compatibility": "使用兼容界面",
     "download.cancel": "取消",
     "download.uichoice": "输入 1、2 或 0（直接回车取消）",
+    "download.opened": "已打开配置器，请在配置器窗口操作，不要关闭本窗口。",
     "download.cancelled": "已取消，未打开配置器。",
     "download.webviewtransfer": "正在下载微软 WebView2 安装器",
     "download.webviewinstalling": "正在安装 WebView2",

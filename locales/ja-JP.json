@@ -348,6 +348,7 @@
     "download.compatibility": "互換モードを使用",
     "download.cancel": "キャンセル",
     "download.uichoice": "1、2、0 を入力（Enter でキャンセル）",
+    "download.opened": "設定ツールを開きました。このウィンドウを閉じずに、設定ツールのウィンドウで操作してください。",
     "download.cancelled": "キャンセルしました。設定ツールは起動していません。",
     "download.webviewtransfer": "Microsoft WebView2 インストーラーをダウンロード中",
     "download.webviewinstalling": "WebView2 をインストール中",
