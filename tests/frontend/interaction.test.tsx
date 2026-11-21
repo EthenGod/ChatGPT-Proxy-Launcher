@@ -194,7 +194,7 @@ describe('settings prototype behavior', () => {
     await user.click(screen.getByRole('button', { name: '语言' }))
     await user.click(await screen.findByRole('menuitemradio', { name: 'English' }))
     expect(await screen.findByRole('textbox', { name: 'Port' })).toHaveValue('12345')
-    expect(screen.getByRole('region', { name: 'Launch arguments' })).toHaveTextContent('--no-startup-window')
+    expect(screen.getByRole('region', { name: 'Launch argument preview' })).toHaveTextContent('--no-startup-window')
     expect(host.setTheme).toHaveBeenCalledTimes(2)
   })
   it('keeps option text passive while switches retain their names and keyboard behavior', async () => {
@@ -269,6 +269,43 @@ describe('settings prototype behavior', () => {
     await user.click(screen.getByRole('radio', { name: 'HTTP' }))
     expect(cloud).toHaveAttribute('aria-checked', 'true')
     expect(cloud).not.toHaveAttribute('aria-disabled', 'true')
+  })
+  it('keeps one selectable preview through unchanged validation and rapid argument changes', async () => {
+    const started: string[] = []
+    let finish!: () => void
+    const finished = new Promise<void>(resolve => { finish = resolve })
+    vi.spyOn(HTMLElement.prototype, 'getAnimations').mockImplementation(function (this: HTMLElement) {
+      if (!this.matches('.argument-preview[data-updated]')) return []
+      started.push(this.textContent ?? '')
+      return [{ animationName: 'argument-update', finished } as unknown as CSSAnimation]
+    })
+    mount(); await loaded()
+    const region = screen.getByRole('region', { name: '启动参数预览' })
+    const preview = within(region).getByText(/--proxy-server=/)
+    const port = screen.getByRole('textbox', { name: '端口' })
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.selectNodeContents(preview)
+    preview.focus()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    fireEvent.click(screen.getByRole('switch', { name: '应用于 Codex 环境变量' }))
+    expect(started).toEqual([])
+    expect(selection.toString()).toBe(preview.textContent)
+    const textNode = preview.firstChild
+    fireEvent.change(port, { target: { value: '12345' } })
+    expect(started).toHaveLength(1)
+    expect(started[0]).toContain(':12345')
+    fireEvent.change(port, { target: { value: '23456' } })
+    expect(preview).toHaveTextContent(':23456')
+    expect(preview.firstChild).toBe(textNode)
+    expect(preview).toHaveFocus()
+    await act(async () => finish())
+    expect(preview).not.toHaveAttribute('data-updated')
+    fireEvent.change(port, { target: { value: '70000' } })
+    fireEvent.change(port, { target: { value: '23456' } })
+    expect(preview).toHaveTextContent(':23456')
+    expect(started).toHaveLength(1)
   })
   it.each([true, false])('retains cloud preference %s across bypass rules and internationalized proxy hosts', async checked => {
     const { user } = mount(); await loaded()
@@ -791,7 +828,7 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('textbox', { name: '端口' })).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByRole('textbox', { name: '端口' })).toHaveAccessibleDescription('端口范围为 1–65535')
     expect(within(screen.getByRole('region', {name:'代理'})).queryByText('端口范围为 1–65535')).not.toBeInTheDocument()
-    expect(screen.getByRole('region', {name:'启动参数'})).toHaveTextContent('端口范围为 1–65535')
+    expect(screen.getByRole('region', {name:'启动参数预览'})).toHaveTextContent('端口范围为 1–65535')
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
     expect(service.calls.save).toBe(0)
   })
@@ -801,7 +838,7 @@ describe('settings prototype behavior', () => {
     const review = screen.getByRole('button', { name: '查看输入问题' })
     expect(review).toHaveAccessibleDescription('请输入有效的主机名或 IP 地址')
     await user.click(review)
-    expect(screen.getByRole('region', { name: '启动参数' }).querySelector('pre')).toHaveFocus()
+    expect(screen.getByRole('region', { name: '启动参数预览' }).querySelector('pre')).toHaveFocus()
   })
   it('switches protocols from the keyboard without losing the port or detecting again', async () => {
     const { user, service } = mount(); await loaded()
@@ -811,7 +848,7 @@ describe('settings prototype behavior', () => {
     await user.keyboard('{ArrowRight}')
     expect(screen.getByRole('radio', {name:'SOCKS5'})).toHaveAttribute('aria-checked','true')
     expect(screen.getByRole('textbox', {name:'端口'})).toHaveValue('7890')
-    expect(screen.getByRole('region', {name:'启动参数'})).toHaveTextContent('socks5://127.0.0.1:7890')
+    expect(screen.getByRole('region', {name:'启动参数预览'})).toHaveTextContent('socks5://127.0.0.1:7890')
     expect(service.calls.detect).toBe(0)
   })
 })
@@ -897,7 +934,7 @@ describe('native settings behavior', () => {
   it('keeps a plain-text native validation failure in the preview', async () => {
     const service = Object.assign(new MockSetupService('normal', 0), { native: true, validate: vi.fn().mockRejectedValue('原生校验暂时不可用') })
     mount(service)
-    const preview = await screen.findByRole('region', { name: '启动参数' })
+    const preview = await screen.findByRole('region', { name: '启动参数预览' })
     await waitFor(() => expect(preview).toHaveTextContent('原生校验暂时不可用'))
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
   })
@@ -910,7 +947,7 @@ describe('native settings behavior', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '端口' }), { target: { value: '24680' } })
     await waitFor(() => expect(pending).toHaveLength(2))
     await act(async () => pending[0]!.resolve({ valid: true, arguments: 'obsolete', errors: {} }))
-    const preview = screen.getByRole('region', { name: '启动参数' })
+    const preview = screen.getByRole('region', { name: '启动参数预览' })
     expect(preview).toHaveAttribute('aria-busy', 'true')
     expect(preview.querySelector('.skeleton-argument')).toBeInTheDocument()
     expect(preview).not.toHaveTextContent('obsolete')
