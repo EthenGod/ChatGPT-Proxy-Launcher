@@ -355,11 +355,10 @@ button svg { flex-shrink: 0; }
 .skeleton-argument { width: min(64%, 300px); }
 .skeleton-remainder { visibility: hidden; }
 .skeleton-status { display: flex; align-items: center; gap: 8px; height: 24px; padding-inline-start: var(--status-inset); }
-/* Keep Close anchored while the read determines which save action applies. */
-.save-slot { display: grid; justify-items: end; }
-.save-slot::before { content: attr(data-deploy-label); visibility: hidden; padding-inline: 17px; font-size: 14px; font-weight: 500; white-space: nowrap; }
-.save-slot::before, .save-slot > * { grid-area: 1 / 1; }
-.skeleton-save { justify-self: stretch; height: var(--control-height); border-radius: var(--radius-control); }
+/* Use the deploy label to size the loading placeholder. */
+.save-slot { display: grid; }
+.save-slot:has(> .skeleton-save)::before { content: attr(data-deploy-label); grid-area: 1 / 1; visibility: hidden; padding-inline: 17px; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.skeleton-save { grid-area: 1 / 1; height: var(--control-height); border-radius: var(--radius-control); }
 .load-state { min-height: 230px; display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 14px; color: var(--gray-11); }
 .error-state { flex-direction: column; text-align: center; }
 .error-state p { margin: 0; }
