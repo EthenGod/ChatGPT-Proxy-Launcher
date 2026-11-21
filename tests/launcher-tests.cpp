@@ -41,15 +41,17 @@ static LPVOID WINAPI TestAllocate(HANDLE, DWORD, SIZE_T);
 static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 static unsigned environmentReads = 0, environmentFrees = 0;
 static bool failEnvironment = false;
-static wchar_t inherited[] = L"z=last\0nOdE_uSe_EnV_pRoXy=0\0Https_Proxy=old\0HTTPS_PROXY=duplicate\0"
-    L"HTTP_PROXY=http://http.invalid:3128\0No_Proxy=.internal.invalid\0=C:=C:\\fixture\0";
+static constexpr wchar_t inherited[] = L"z=last\0nOdE_uSe_EnV_pRoXy=0\0Https_Proxy=old\0HTTPS_PROXY=duplicate\0"
+    L"HTTP_PROXY=http://http.invalid:3128\0No_Proxy=.internal.invalid\0=C:=C:\\fixture\0"
+    L"工具Key=old\0bad-entry\0工具KEY=last=value\0";
+static std::wstring fixtureEnvironment(inherited, _countof(inherited));
 static LPWCH WINAPI TestEnvironment() {
     ++environmentReads;
     if (failEnvironment) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
-    return inherited;
+    return fixtureEnvironment.data();
 }
 static BOOL WINAPI TestFreeEnvironment(LPWCH value) {
-    if (value != inherited) return FALSE;
+    if (value != fixtureEnvironment.data()) return FALSE;
     ++environmentFrees;
     return TRUE;
 }
@@ -279,7 +281,8 @@ static int CheckCloudDispatch(const std::wstring& outputDir) {
     const std::wstring args = L"\"--proxy-server=https://[::1]:9443\"\t --text=\"中文 空格\" \"\" -- --no-proxy-server";
     const std::wstring disabled = L"\"--launcher-no-cloud-proxy\"   " + args;
     const std::vector<std::wstring> expected{L"=C:=C:\\fixture", L"HTTPS_PROXY=https://[::1]:9443",
-        L"HTTP_PROXY=http://http.invalid:3128", L"NODE_USE_ENV_PROXY=1", L"NO_PROXY=.internal.invalid", L"z=last"};
+        L"HTTP_PROXY=http://http.invalid:3128", L"NODE_USE_ENV_PROXY=1", L"NO_PROXY=.internal.invalid", L"z=last",
+        L"工具Key=last=value"};
     testCompanion = true;
     for (auto command : {args, L"--launcher-chain --result \"" + outputDir + L"\\cloud.json\" -- " + args}) {
         createCalls = customEnvironmentCalls = environmentReads = environmentFrees = 0;
@@ -480,7 +483,62 @@ static int CheckCloudChildren(PCWSTR executable) {
     return 0;
 }
 
+static int BenchmarkEnvironment() {
+    // A sorted 64-variable snapshot. No caller or machine settings enter either measurement.
+    fixtureEnvironment = L"=C:=C:\\fixture";
+    fixtureEnvironment.push_back(0);
+    for (unsigned i = 0; i < 60; ++i) {
+        const auto index = std::to_wstring(100 + i);
+        fixtureEnvironment += L"FIXTURE_KEY_" + index + L"=C:\\fixture path\\package-" + index + L"\\bin";
+        fixtureEnvironment.push_back(0);
+    }
+    std::wstring expected = fixtureEnvironment;
+    constexpr wchar_t before[] = L"hTTps_PrOxY=stale\0Node_Use_Env_Proxy=0\0no_proxy=.fixture.invalid\0";
+    constexpr wchar_t after[] = L"HTTPS_PROXY=http://proxy.invalid:3128\0NODE_USE_ENV_PROXY=1\0no_proxy=.fixture.invalid\0";
+    fixtureEnvironment.append(before, _countof(before));
+    expected.append(after, _countof(after));
+    const std::map<std::wstring, std::wstring> overrides{
+        {L"HTTPS_PROXY", L"http://proxy.invalid:3128"}, {L"NODE_USE_ENV_PROXY", L"1"}
+    };
+    auto prepare = [&] {
+        auto block = native::Environment(overrides, NodeProxyName);
+        return std::equal(block.begin(), block.end(), expected.begin(), expected.end());
+    };
+    size_t allocations = 0, bytes = 0;
+    {
+        memory_fault::Scope count;
+        REQUIRE(prepare());
+        allocations = memory_fault::calls;
+        bytes = memory_fault::bytes;
+    }
+
+    fakePackages = true; scenario = Scenario::Single; fakeCreate = true; createSuccess = true;
+    std::wstring args = L"--proxy-server=http://proxy.invalid:3128 --no-startup-window";
+    auto launch = [&] { return wWinMain(nullptr, nullptr, args.data(), 0) == 0; };
+    LARGE_INTEGER frequency{};
+    REQUIRE(QueryPerformanceFrequency(&frequency));
+    constexpr unsigned iterations = 2000, warmups = 100;
+    const auto measure = [&](auto sample, double& average) {
+        LARGE_INTEGER begin{}, end{};
+        for (unsigned i = 0; i < warmups; ++i) if (!sample()) return false;
+        QueryPerformanceCounter(&begin);
+        for (unsigned i = 0; i < iterations; ++i) if (!sample()) return false;
+        QueryPerformanceCounter(&end);
+        average = 1e6 * (end.QuadPart - begin.QuadPart) / frequency.QuadPart / iterations;
+        return true;
+    };
+    double prepareUs = 0, launchUs = 0;
+    REQUIRE(measure(prepare, prepareUs) && measure(launch, launchUs));
+    REQUIRE(selected == Newest && createCalls == iterations + warmups && createCalls == customEnvironmentCalls);
+    REQUIRE(repairCalls == createCalls && companionCalls == createCalls && environmentReads == environmentFrees);
+    REQUIRE(environmentCommand == L"\"C:\\Launcher Test\\Package\\app\\ChatGPT.exe\" " + args);
+    printf("variables=64 overrides=2 iterations=%u environment_us=%.3f environment_allocations=%zu "
+        "environment_allocated_bytes=%zu synthetic_launch_us=%.3f\n", iterations, prepareUs, allocations, bytes, launchUs);
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && !wcscmp(argv[1], L"--benchmark-environment")) return BenchmarkEnvironment();
     if (argc == 2 && !wcscmp(argv[1], L"--test-cloud-disabled")) return HasFixtureEnvironment(false) ? 0 : 1;
     if (argc == 4 && !wcscmp(argv[1], L"--proxy-server=http://proxy.invalid:3128") &&
         !wcscmp(argv[2], L"--proxy-bypass-list=.internal.invalid") && !wcscmp(argv[3], L"--test-cloud-disabled"))
