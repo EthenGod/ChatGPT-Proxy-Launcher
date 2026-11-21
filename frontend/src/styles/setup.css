@@ -108,6 +108,7 @@ button svg { flex-shrink: 0; }
 .settings-card:has(> .setting-row) { padding-block: 4px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 16px; min-height: 40px; }
 .setting-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; line-height: 20px; }
+.setting-label:has(.help-button) { flex-wrap: nowrap; }
 .setting-row:has(.switch[data-disabled]) .setting-label > [data-motion-text] { color: var(--gray-11); }
 .cloud-codex-row .setting-label > [data-motion-text] { transition: color var(--motion-fast) ease-out; }
 .setting-badge { margin-left: 4px; padding: 1px 6px; font-size: 12px; line-height: 18px; border-radius: var(--radius-small); background: var(--gray-3); color: var(--gray-11); }
@@ -276,10 +277,9 @@ button svg { flex-shrink: 0; }
 .settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
 .settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
 /* Align the whole status list with the button text, including while another row enters or leaves. */
-.status-scroll { --status-inset: 8px; flex: 1 1 12rem; min-height: 24px; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); inset-block-end: calc((var(--control-height) - 24px) / 2); }
-/* The outgoing reminder and incoming input link share a baseline throughout their crossfade. */
-.status-scroll:has(.status-slot:only-child :is(.status-line[data-kind=reminder], .status-input-link)) { inset-block-end: auto; }
-.status-slot:only-child :is(.status-line[data-kind=reminder], .status-input-link) { min-height: var(--control-height); }
+.status-scroll { --status-inset: 8px; flex: 1 1 12rem; align-self: center; min-height: 24px; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); }
+/* Keep a single message on the button baseline, including while messages crossfade. */
+.status-slot:only-child :is(.status-line, .status-input-link) { min-height: var(--control-height); }
 .footer-status { display: flex; flex-direction: column; align-items: stretch; font-size: 12px; line-height: 18px; color: var(--gray-11); }
 .status-slot { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; }
 .status-presence { grid-area: 1 / 1; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
@@ -448,6 +448,7 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 .notice-summary { font-weight: 500; }
 .followup + .followup { margin-top: 16px; }
 .followup p { margin: 0 0 8px; }
+.dialog[data-variant=saved] .dialog-title { padding-block-end: 16px; }
 .dialog[data-variant=saved] .dialog-body { display: grid; gap: 12px; }
 .dialog[data-variant=saved] .dialog-body > *,
 .dialog[data-variant=saved] .followup > :last-child { margin-block: 0; }

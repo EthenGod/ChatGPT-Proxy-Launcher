@@ -43,6 +43,12 @@ async page => {
         throw Error('An unstyled native control is visible: ' + el.tagName + ' ' + el.type);
       }
     }
+    for (const label of document.querySelectorAll('.setting-label:has(.help-button)')) {
+      const text = label.querySelector('[data-motion-text]').getBoundingClientRect();
+      const help = label.querySelector('.help-button').getBoundingClientRect();
+      if (Math.abs(text.top + text.height / 2 - help.top - help.height / 2) > 1)
+        throw Error('Help button is misaligned with its label: ' + label.textContent);
+    }
     for (const button of document.querySelectorAll('.footer-actions button, .dialog-actions button')) {
       const r = button.getBoundingClientRect();
       if (r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1) throw Error('Clipped action: ' + button.textContent);
