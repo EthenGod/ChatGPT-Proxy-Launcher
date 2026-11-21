@@ -145,13 +145,15 @@ async page => {
       const recorder = await save.evaluateHandle((el, endDisabled) => ({ frames: new Promise((resolve, reject) => {
         const initial = el.disabled, started = performance.now(), frames = [];
         let changed = false;
+        const observer = new MutationObserver(() => { changed = true; });
+        observer.observe(el, { attributes: true, attributeFilter: ['disabled'] });
         function record(time) {
           const opacity = Number(getComputedStyle(el).opacity);
           changed ||= el.disabled !== initial;
           const fading = el.getAnimations().some(a => a.transitionProperty === 'opacity');
           frames.push({ disabled: el.disabled, opacity, fading });
-          if (changed && el.disabled === endDisabled && !fading) resolve(frames);
-          else if (time - started > 3000) reject(Error('Save availability did not settle'));
+          if (changed && el.disabled === endDisabled && !fading) { observer.disconnect(); resolve(frames); }
+          else if (time - started > 3000) { observer.disconnect(); reject(Error('Save availability did not settle')); }
           else requestAnimationFrame(record);
         }
         record(started);
@@ -160,22 +162,119 @@ async page => {
       finally { await recorder.dispose(); }
     }
     const value = await port.inputValue();
-    const checking = await sample(() => page.locator('.setting-row .switch').first().click(), false);
+    const quick = await sample(() => page.locator('.setting-row .switch').first().click(), false);
+    // Text edits use the real validation debounce. A switch can validate between two painted frames.
+    const checking = await sample(() => port.fill(value === '12345' ? '12346' : '12345'), false);
     const invalid = await sample(() => port.fill('0'), true);
     const valid = await sample(() => port.fill(value), false);
     const min = Math.min(...checking.map(frame => frame.opacity)), dim = invalid.at(-1).opacity;
+    const quickMin = Math.min(...quick.map(frame => frame.opacity));
     const intermediate = frames => frames.some(f => f.opacity > dim + .02 && f.opacity < .98);
-    if (!checking.some(f => f.disabled) || checking.at(-1).disabled || checking.at(-1).opacity !== 1 ||
+    if (quick.at(-1).opacity !== 1 || quickMin <= dim + .1 || !checking.some(f => f.disabled) || checking.at(-1).disabled || checking.at(-1).opacity !== 1 ||
       !checking.some(f => f.opacity > min + .01 && f.opacity < .99) || min <= dim + .1 || !invalid.at(-1).disabled || valid.at(-1).disabled ||
       valid.at(-1).opacity !== 1 || !intermediate(invalid) || !intermediate(valid)) {
-      throw Error('Save button fade: ' + JSON.stringify({ checking, invalid, valid }));
+      throw Error('Save button fade: ' + JSON.stringify({ quick, checking, invalid, valid }));
     }
     await page.emulateMedia({ reducedMotion: 'reduce' });
     try {
       const off = await sample(() => port.fill('0'), true), on = await sample(() => port.fill(value), false);
       if ([...off, ...on].some(frame => frame.fading)) throw Error('Reduced motion still animated save opacity');
     } finally { await page.emulateMedia({ reducedMotion: null }); }
-    return { checking: min, invalid: dim, valid: valid.at(-1).opacity };
+    return { quickCheck: quickMin, checking: min, invalid: dim, valid: valid.at(-1).opacity };
+  }
+
+  async function checkStatusSwap() {
+    const port = page.locator('#proxy-port'), valid = await port.inputValue();
+    await size(380, 690); await settled();
+    const recording = await page.evaluateHandle(() => {
+      const actions = document.querySelector('.footer-actions'), buttonY = actions.getBoundingClientRect().top;
+      const footer = actions.closest('.settings-footer'), tops = [], steps = [];
+      const positions = new Map(), errors = new Set();
+      let enter = 0, exit = 0, frame;
+      function sample() {
+        const top = footer.getBoundingClientRect().top;
+        if (tops.length) steps.push(top - tops.at(-1));
+        tops.push(top);
+        let visible = 0;
+        for (const row of document.querySelectorAll('.footer-status .status-presence')) {
+          const opacity = Number(getComputedStyle(row).opacity);
+          const link = row.querySelector('.status-input-link');
+          if (link && row.matches('[data-waiting], [data-reserving]') && !opacity) {
+            const r = link.getBoundingClientRect();
+            if (link.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))) {
+              errors.add('invisible input link intercepted a pointer');
+            }
+          }
+          if (opacity < .05) continue;
+          visible++;
+          const caption = row.querySelector('[data-motion-text]'), range = document.createRange();
+          range.selectNodeContents(caption);
+          const ink = range.getBoundingClientRect(), clip = row.querySelector('.status-clip').getBoundingClientRect();
+          if (ink.top < clip.top - 1 || ink.bottom > clip.bottom + 1) errors.add('caption clipped during fade');
+          const top = positions.get(caption.textContent) ?? ink.top;
+          positions.set(caption.textContent, top);
+          if (Math.abs(ink.top - top) > 1) errors.add('caption moved during swap');
+          if (opacity < .95) {
+            if (row.hasAttribute('data-exiting')) exit++; else enter++;
+          }
+        }
+        if (visible > 1) errors.add('both messages visible');
+        if (Math.abs(actions.getBoundingClientRect().top - buttonY) > 1) errors.add('buttons moved');
+        frame = requestAnimationFrame(sample);
+      }
+      sample();
+      return { stop() {
+        cancelAnimationFrame(frame);
+        const travel = Math.max(...tops) - Math.min(...tops);
+        if (travel > 5 && [1, -1].some(direction => !steps.some(step => direction * step > 0 && direction * step < travel - 1))) {
+          errors.add('footer height jumped between short and wrapped messages');
+        }
+        return { enter, exit, travel, errors: [...errors] };
+      } };
+    });
+    let result;
+    try {
+      for (const value of ['70000', valid]) {
+        await port.fill(value);
+        await page.waitForFunction(invalid => !!document.querySelector('.status-presence:not([data-exiting]) .status-input-link') === invalid, value === '70000');
+        await page.waitForFunction(() => !document.querySelector('.status-presence:is([data-exiting], [data-waiting], [data-reserving])'));
+        await settled();
+      }
+    } finally {
+      result = await recording.evaluate(r => r.stop()); await recording.dispose();
+      await size(600, 700); await settled();
+    }
+    if (!result.enter || !result.exit || result.errors.length) throw Error('Footer swap: ' + JSON.stringify(result));
+    return result;
+  }
+
+  async function checkPreviewShrink() {
+    const extra = page.getByRole('textbox', { name: '额外参数', exact: true });
+    const originalExtra = await extra.inputValue(), marker = '--a=1111111111';
+    await extra.fill(Array(15).fill(marker).join(' '));
+    await page.waitForFunction(marker => document.querySelector('.argument-current').textContent.includes(marker), marker);
+    await settled();
+    const box = page.locator('.argument-scroll');
+    const recording = await box.evaluateHandle(el => {
+      const initial = el.getBoundingClientRect().height, snapshot = el.querySelector('.argument-previous');
+      let visible = 0, lost = 0, frame;
+      function sample() {
+        if (snapshot.hasAttribute('data-text') && Number(getComputedStyle(snapshot).opacity) > .05) {
+          visible++;
+          lost = Math.max(lost, initial - el.getBoundingClientRect().height);
+        }
+        frame = requestAnimationFrame(sample);
+      }
+      sample();
+      return { stop() { cancelAnimationFrame(frame); return { visible, lost, shrink: initial - el.getBoundingClientRect().height }; } };
+    });
+    let result;
+    try {
+      await extra.fill(originalExtra);
+      await page.waitForFunction(marker => !document.querySelector('.argument-current').textContent.includes(marker), marker);
+      await settled();
+    } finally { result = await recording.evaluate(recorder => recorder.stop()); await recording.dispose(); }
+    if (!result.visible || result.lost > 1 || result.shrink < 20) throw Error('Preview lost a visible line: ' + JSON.stringify(result));
   }
 
   // Keep the port focused and measure both axes throughout the layout change.
@@ -226,6 +325,8 @@ async page => {
     const codex = page.getByRole('switch', { name: '应用于 Codex 环境变量' });
     if (await codex.getAttribute('aria-checked') !== 'true') await codex.click();
     await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
+    const statusSwap = await checkStatusSwap();
+    await checkPreviewShrink();
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });
     const icons = [];
     try {
@@ -269,7 +370,7 @@ async page => {
         await page.keyboard.press('Escape'); await page.locator('.menu-popup').waitFor({ state: 'detached' });
       }
     }
-    return { icons, saveFade, labels, motion, layouts: 15 };
+    return { icons, statusSwap, saveFade, labels, motion, layouts: 15 };
   } finally {
     await page.emulateMedia({ reducedMotion: null });
     await cdp.send('Emulation.clearDeviceMetricsOverride');

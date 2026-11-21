@@ -2,8 +2,8 @@ import { useLayoutEffect, useRef, type ReactElement, type ReactNode } from 'reac
 import { ScrollArea } from '@base-ui/react/scroll-area'
 
 /** The browser keeps wheel, touch and keyboard scrolling; Base UI owns the thumb. */
-export function ScrollBox({ children, className = '', contentClassName = '', label, render, tabIndex, persistent = false }: {
-  children: ReactNode; className?: string; contentClassName?: string; label?: string; render?: ReactElement; tabIndex?: number; persistent?: boolean
+export function ScrollBox({ children, className = '', contentClassName = '', label, render, tabIndex, persistent = false, overlay }: {
+  children: ReactNode; className?: string; contentClassName?: string; label?: string; render?: ReactElement; tabIndex?: number; persistent?: boolean; overlay?: ReactNode
 }) {
   const track = useRef<HTMLDivElement | null>(null)
   const thumb = useRef<HTMLDivElement | null>(null)
@@ -45,6 +45,7 @@ export function ScrollBox({ children, className = '', contentClassName = '', lab
     <ScrollArea.Viewport className="scroll-viewport" aria-label={label} tabIndex={tabIndex} style={{ overflowX: 'hidden' }}>
       <ScrollArea.Content className={`scroll-content ${contentClassName}`} style={{ minWidth: 0 }}>{children}</ScrollArea.Content>
     </ScrollArea.Viewport>
+    {overlay}
     <ScrollArea.Scrollbar ref={track} keepMounted className="scroll-track" orientation="vertical">
       <ScrollArea.Thumb ref={thumb} className="scroll-thumb" />
     </ScrollArea.Scrollbar>

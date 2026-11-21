@@ -14,7 +14,8 @@ import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeIssue, type ConflictLocation, type ErrorInfo } from './errors'
 import { portErrorKey, sameOptions, supportsCloudCodex } from './options'
 import { useSetupValidation } from './useSetupValidation'
-import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
+import { ArgumentPreview } from './ArgumentPreview'
+import { SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
 import type { ListedProgram, SaveResult, SetupService, WindowHost } from './contract'
 import { CompanionPrograms, ProgramDetails } from './CompanionPrograms'
@@ -408,6 +409,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   if (portError) previewText = t(portError)
   else if (previewValue?.valid) previewText = previewValue.arguments || t('ui.arguments.empty')
   else if (validation) previewText = validation.detail || t(Object.values(validation.errors)[0] ?? 'setup.preview.invalid')
+  const generatedArguments = !invalidInput && previewValue?.valid ? previewValue.arguments : null
   const fieldError = (key: keyof SetupOptions) => key === 'port' && portError ? t(portError)
     : validation?.errors[key] ? t(validation.errors[key]) : undefined
   const validationDetails = validation && !validation.valid && validation.nativeError ? validation : null
@@ -477,11 +479,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
                   </div>
                 </div>
                 <Toggle label={t('setup.option.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex')} />
-                <Toggle label={t('setup.option.cloudcodex')} checked={options.cloudCodex} disabled={locked || !supportsCloudCodex(options)}
+                <Toggle className="cloud-codex-row" label={t('setup.option.cloudcodex')} checked={options.cloudCodex} disabled={locked || !supportsCloudCodex(options)}
                   onChange={value => update('cloudCodex', value)} help={helpButton('help.cloudcodex')} />
               </div>
             </Collapsible.Panel></Collapsible.Root></section>
-          <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 id="preview-title">{t('ui.arguments')}</h2>
+          <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 id="preview-title">{t('setup.section.preview')}</h2>
               <div className="preview-actions">{checking && <span className="preview-checking" data-motion-text>{t('ui.arguments.checking')}</span>}
                 <div className="preview-details" data-visible={!!validationDetails || undefined} inert={!validationDetails} aria-hidden={!validationDetails || undefined}>
                   <Button className="text-button" onClick={() => { if (validationDetails) showError(validationDetails) }}>
@@ -490,7 +492,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
                 </div>
               </div>
             </div>
-            <ScrollBox className="argument-scroll" label={t('ui.arguments')}><pre ref={preview} id="validation-message" tabIndex={-1} className={`argument-preview ${invalidInput ? 'invalid-preview' : ''}`} aria-label={t('ui.arguments')}>{checking && !previewValue ? <ArgumentSkeleton /> : previewText}</pre></ScrollBox>
+            <ArgumentPreview fieldRef={preview} label={t('setup.section.preview')} value={generatedArguments} text={previewText}
+              invalid={invalidInput} skeleton={checking && !previewValue} />
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
             <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>

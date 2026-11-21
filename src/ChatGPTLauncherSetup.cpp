@@ -134,6 +134,7 @@ struct App {
     bool preferredDark = true;
     int selectedProtocol = Protocol;
     bool motionEnabled = false;
+    Motion cloudDisabled{};
     int scrollGrab = 0, wheelRemainder = 0;
     unsigned layoutPasses = 0;
     int scroll = 0, contentHeight = 0;
@@ -284,6 +285,7 @@ void App::Theme(int mode) {
         item.hover = {};
         item.toggle.from = item.toggle.to = Checked(item.id) ? 1.0f : 0.0f;
     }
+    cloudDisabled.Set(IsWindowEnabled(Get(CloudCodex)) ? 0.0f : 1.0f, false, 0);
     KillTimer(window, MotionTimer);
     Set(ThemeToggle, dark ? l10n::Text("setup.theme.light") : l10n::Text("setup.theme.dark"));
     EnableWindow(Get(ThemeToggle), !contrast && !busy);
@@ -1123,22 +1125,29 @@ void App::UpdateMotion(HWND control) {
     const ULONGLONG now = GetTickCount64();
     for (auto& item : controls) if (item.window == control) {
         const bool enabled = IsWindowEnabled(control) != FALSE;
-        const bool animate = motionEnabled && !loading && enabled && IsWindowVisible(control);
-        item.hover.Set(enabled && GetPropW(control, L"setup.hover") ? 1.0f : 0.0f, animate, now);
-        item.toggle.Set(Checked(item.id) ? 1.0f : 0.0f, animate, now);
-        if (item.hover.Active(now) || item.toggle.Active(now)) SetTimer(window, MotionTimer, 16, nullptr);
+        const bool animate = motionEnabled && !loading && IsWindowVisible(control);
+        item.hover.Set(enabled && GetPropW(control, L"setup.hover") ? 1.0f : 0.0f, animate && enabled, now);
+        item.toggle.Set(Checked(item.id) ? 1.0f : 0.0f, animate && enabled, now);
+        if (item.id == CloudCodex) cloudDisabled.Set(enabled ? 0.0f : 1.0f, animate, now);
+        if (item.hover.Active(now) || item.toggle.Active(now) || (item.id == CloudCodex && cloudDisabled.Active(now)))
+            SetTimer(window, MotionTimer, 16, nullptr);
         break;
     }
 }
 bool App::TickMotion() {
     bool active = false;
     const ULONGLONG now = GetTickCount64();
+    auto tick = [&](Motion& motion) {
+        if (motion.from == motion.to) return false;
+        if (motion.Active(now)) active = true;
+        else motion.from = motion.to;
+        return true;
+    };
     for (auto& item : controls) {
-        if (item.hover.from == item.hover.to && item.toggle.from == item.toggle.to) continue;
-        InvalidateRect(item.window, nullptr, FALSE);
-        if (item.hover.Active(now) || item.toggle.Active(now)) active = true;
-        else { item.hover.from = item.hover.to; item.toggle.from = item.toggle.to; }
+        const bool hover = tick(item.hover), toggle = tick(item.toggle);
+        if (hover || toggle) InvalidateRect(item.window, nullptr, FALSE);
     }
+    if (tick(cloudDisabled)) InvalidateRect(Get(CloudCodex), nullptr, FALSE);
     if (!active) KillTimer(window, MotionTimer);
     return active;
 }
@@ -1225,8 +1234,10 @@ void App::DrawControl(HWND control, HDC dc) {
             RECT ring = track; InflateRect(&ring, S(3), S(3));
             Rounded(dc, ring, S(16), colors.surface, colors.accent, static_cast<float>(S(2)));
         }
+        const float disabled = id == CloudCodex && motionEnabled ? cloudDisabled.Value(now) : enabled ? 0.0f : 1.0f;
+        textColor = Blend(colors.text, colors.secondary, disabled);
         const COLORREF trackColor = contrast ? (checked && enabled ? colors.accent : colors.surface)
-            : enabled ? Blend(colors.border, colors.accent, toggle) : colors.divider;
+            : Blend(Blend(colors.border, colors.accent, toggle), colors.divider, disabled);
         Rounded(dc, track, S(13), trackColor, contrast ? (enabled ? colors.text : colors.secondary) : trackColor);
         const int left = track.left + S(3) + static_cast<int>(S(18) * toggle + 0.5f);
         RECT knob{ left, track.top + S(3), left + S(20), track.bottom - S(3) };

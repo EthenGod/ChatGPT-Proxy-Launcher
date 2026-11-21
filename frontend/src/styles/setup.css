@@ -109,6 +109,7 @@ button svg { flex-shrink: 0; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 16px; min-height: 40px; }
 .setting-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; line-height: 20px; }
 .setting-row:has(.switch[data-disabled]) .setting-label > [data-motion-text] { color: var(--gray-11); }
+.cloud-codex-row .setting-label > [data-motion-text] { transition: color var(--motion-fast) ease-out; }
 .setting-badge { margin-left: 4px; padding: 1px 6px; font-size: 12px; line-height: 18px; border-radius: var(--radius-small); background: var(--gray-3); color: var(--gray-11); }
 .switch { position: relative; width: 36px; height: 22px; padding: 2px; border-radius: var(--radius-pill); border: 1px solid transparent; display: flex; align-items: center; flex-shrink: 0; background: var(--gray-7); cursor: pointer; transition: background-color var(--motion-fast) ease-out; }
 .switch::before { content: ''; position: absolute; inset: -4px 0; border-radius: inherit; }
@@ -116,6 +117,7 @@ button svg { flex-shrink: 0; }
 .switch:hover:not([data-checked], [data-disabled]) { background: var(--gray-8); }
 .switch[data-checked]:hover:not([data-disabled]) { background: var(--blue-10); }
 .switch[data-disabled] { opacity: .45; cursor: default; }
+.cloud-codex-row .switch { transition-property: background-color, opacity; }
 .switch-thumb { width: 16px; height: 16px; background: white; border-radius: var(--radius-pill); box-shadow: 0 1px 2px #0003; transform-origin: left center; transform: translateX(var(--thumb-x, 0px)) scaleX(var(--thumb-scale, 1)); transition: transform var(--motion-fast) var(--motion-space); }
 .switch[data-checked] .switch-thumb { --thumb-x: 14px; transform-origin: right center; }
 .switch:active:not([data-disabled]) .switch-thumb { --thumb-scale: 1.12; }
@@ -175,8 +177,19 @@ button svg { flex-shrink: 0; }
 .field-error { color: var(--red-11); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .argument-scroll { max-height: 124px; border-radius: var(--radius-surface); border: 1px solid var(--gray-6); background: var(--gray-2); overflow: hidden; }
 .argument-scroll > .scroll-viewport { overscroll-behavior-y: auto; }
-.argument-preview { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 12px 16px; min-height: 44px; font: 12px/1.6 Consolas, 'Segoe UI', monospace; color: var(--gray-11); }
+.argument-preview, .argument-previous::before { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 12px 16px; min-height: 44px; font: 12px/1.6 Consolas, 'Segoe UI', monospace; color: var(--gray-11); }
 .invalid-preview { color: var(--red-11); }
+.argument-previous { display: none; position: absolute; inset: 0; overflow: clip; pointer-events: none; user-select: none; }
+.argument-previous::before { content: attr(data-text); position: absolute; top: var(--argument-top); left: 0; width: var(--argument-width); box-sizing: border-box; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  /* Keep glyph antialiasing consistent between the resting and fading frames. */
+  .argument-current, .argument-previous { will-change: opacity; }
+  .argument-scroll { --argument-leave-time: calc(var(--motion-exit) * .4); }
+  .argument-previous[data-text] { display: block; animation: argument-leave var(--argument-leave-time) ease-in both; }
+  .argument-preview[data-swapping] > .argument-current { animation: argument-enter calc(var(--motion-exit) - var(--argument-leave-time)) ease-out var(--argument-leave-time) both; }
+}
+@keyframes argument-leave { from { opacity: 1; } to { opacity: 0; } }
+@keyframes argument-enter { from { opacity: 0; } to { opacity: 1; } }
 .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; margin-bottom: 8px; }
 .preview-heading h2 { margin: 0; }
 .preview-actions { display: grid; place-items: center end; }
@@ -260,23 +273,41 @@ button svg { flex-shrink: 0; }
   .program-title { gap: 4px; }
   .program-badge { padding-inline: 4px; }
 }
-.settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
+.settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
 .settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
-.status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); }
-.status-scroll:not(:has(.status-line, .status-input-link)) { flex-basis: 0; }
-.footer-status { display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 12px; line-height: 18px; color: var(--gray-11); }
-.status-line { display: flex; align-items: flex-start; gap: 8px; padding-inline-start: var(--status-inset); animation: status-enter var(--motion-fast) ease-out; }
+/* Align the whole status list with the button text, including while another row enters or leaves. */
+.status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); inset-block-end: calc((var(--control-height) - 24px) / 2); }
+.footer-status { display: flex; flex-direction: column; align-items: stretch; font-size: 12px; line-height: 18px; color: var(--gray-11); }
+.status-slot { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; }
+.status-presence { grid-area: 1 / 1; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+.status-presence:is([data-exiting], [data-waiting], [data-reserving]) { opacity: 0; pointer-events: none; }
+.status-presence[data-collapsing] { grid-template-rows: minmax(0, 0fr); }
+.status-clip { min-height: 0; overflow: clip; }
+.status-clip:focus-within { overflow: visible; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  .status-presence { will-change: opacity; transition: opacity var(--motion-fast) ease-out; }
+  .status-presence[data-exiting] { transition: opacity var(--motion-exit) ease-in; }
+  .status-slot[data-replacing] > [data-exiting] { transition-duration: calc(var(--motion-exit) / 2); }
+  .status-presence[data-collapsing] { transition: grid-template-rows var(--motion-fast) ease-in-out; }
+  .status-presence[data-reserving] { transition: grid-template-rows calc(var(--motion-exit) / 2) ease-in-out; }
+  @starting-style {
+    .status-presence { opacity: 0; }
+    .status-presence[data-reserving] { grid-template-rows: minmax(0, 0fr); }
+  }
+}
+.status-slot:focus-within > [data-exiting]:not([data-collapsing]) { transition: none; }
+.status-presence:focus-within { opacity: 1; transition: none; pointer-events: auto; }
+.status-line { display: flex; align-items: flex-start; gap: 8px; padding-block: 3px; padding-inline-start: var(--status-inset); }
 .status-line > svg { flex: none; margin-top: 2px; }
 .status-line > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
 .status-line[data-tone=success] > svg { color: var(--green-11); }
 .status-line[data-tone=warning] > svg { color: var(--amber-11); }
 .status-line[data-tone=error], .footer-status .status-input-link { color: var(--red-11); }
 .status-line .text-button { flex: none; min-height: 18px; margin-inline-start: auto; padding: 0 3px; line-height: 16px; white-space: nowrap; }
-.footer-status .status-input-link { align-self: flex-start; min-height: 24px; padding: 3px var(--status-inset); border: 0; border-radius: var(--radius-help); animation: appearance-in var(--motion-fast) ease-out; }
+.footer-status .status-input-link { min-height: 24px; padding: 3px var(--status-inset); border: 0; border-radius: var(--radius-help); }
 .footer-status .status-input-link:is(:hover, :focus-visible) { background-color: var(--gray-3); }
 .footer-status .status-input-link:active { background-color: var(--gray-4); }
 .status-input-link:focus-visible { outline-offset: -2px; }
-@keyframes status-enter { from { opacity: 0; transform: translateY(2px); } }
 .footer-actions { display: flex; flex: none; justify-content: flex-end; margin-inline-start: auto; gap: 8px; }
 .button { --button-inset: 16px; min-height: var(--control-height); padding: 7px var(--button-inset); font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
 .save-button {

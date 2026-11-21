@@ -34,11 +34,11 @@ export function SwitchControl({ id, label, labelledBy, describedBy, controls, ch
     <Switch.Thumb className="switch-thumb" />
   </Switch.Root>
 }
-export function Toggle({ label, checked, disabled, onChange, help, badge }: {
-  label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; help?: ReactNode; badge?: string
+export function Toggle({ label, checked, disabled, onChange, help, badge, className = '' }: {
+  label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; help?: ReactNode; badge?: string; className?: string
 }) {
   const id = useId()
-  return <div className="setting-row">
+  return <div className={`setting-row ${className}`}>
     <div className="setting-label"><span id={`${id}-label`} data-motion-text>{label}</span>{help}{badge && <span id={`${id}-badge`} className="setting-badge"><span data-motion-text>{badge}</span></span>}</div>
     <SwitchControl id={id} labelledBy={`${id}-label`} describedBy={badge ? `${id}-badge` : undefined} checked={checked} disabled={disabled} onChange={onChange} />
   </div>
