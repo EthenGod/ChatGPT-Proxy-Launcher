@@ -1,3 +1,4 @@
+import { observeTextReflow, observeWrappedRow } from '../../components/textReflow'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Collapsible } from '@base-ui/react/collapsible'
 import { Radio } from '@base-ui/react/radio'
@@ -430,13 +431,13 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const dialogVariant = dialog === 'help' ? 'help' : dialog === 'result' && saved ? 'saved' : undefined
   const noticeDetail = selectedNotice?.fullDetail || selectedNotice?.detail
 
-  if (closed && !service.native) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1>{t('ui.closed')}</h1><p>{t('ui.prototype.description')}</p>
+  if (closed && !service.native) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1 ref={observeTextReflow}>{t('ui.closed')}</h1><p ref={observeTextReflow}>{t('ui.prototype.description')}</p>
     <Button className="button primary-button" onClick={() => { finishOperation(); setClosed(false); void load() }}>{t('ui.reopen')}</Button></div>
 
   return <div className={`setup-shell ${service.native ? 'native-shell' : ''}`}>
     {!service.native && <div className="prototype-bar"><Button className="prototype-label" onClick={() => openDialog('preview')} disabled={busy}><FlaskConical size={13} />{t('ui.prototype.title')}</Button><fieldset disabled={busy}>{scenarioControls}</fieldset></div>}
     <ScrollBox persistent className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main role="main" aria-busy={loading} />}>
-      <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
+      <header className="settings-header"><div ref={observeWrappedRow} className="heading-block"><h1 ref={observeTextReflow}>{t('common.launcher')}</h1>
         {snapshot ? <span className="version-badge" aria-label={t('setup.version', { version: snapshot.setupVersion })}>v{snapshot.setupVersion}</span>
           : firstRead && <span data-skeleton-wait={!showLoading || undefined} className="skeleton-bar skeleton-version" aria-hidden="true" />}</div>
         <div className="appearance-controls" data-detect-pending={detectionPhase === 'pending' || undefined}><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={appearanceLocked}
@@ -448,18 +449,18 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
         </div>
       </header>
       {firstRead ? <SetupSkeleton visible={showLoading} />
-        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError.message)}</p>{errorDetails(loadError.issue)}
+        : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p ref={observeTextReflow}>{t(loadError.message)}</p>{errorDetails(loadError.issue)}
           {loadError.message === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy || loading} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
         : options && snapshot && <>
-          <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
-          {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}
-          <section className="settings-section" aria-labelledby="startup-title"><h2 id="startup-title">{t('setup.section.startup')}</h2><div className="settings-card">
+          <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span ref={observeTextReflow}>{deployment}</span></div>
+          {snapshot.notice && <p ref={observeTextReflow} className="secondary small" role="status">{snapshot.notice}</p>}
+          <section className="settings-section" aria-labelledby="startup-title"><h2 ref={observeTextReflow} id="startup-title">{t('setup.section.startup')}</h2><div className="settings-card">
             <Toggle label={t('ui.startup')} checked={options.startup} disabled={locked} onChange={value => update('startup', value)} help={helpButton('setup.hint.startup')} />
             <Toggle label={t('ui.desktop')} checked={options.desktop} disabled={locked} onChange={value => update('desktop', value)} />
             <Toggle label={t('ui.silent')} badge={t('ui.unavailable')} checked={options.silent} disabled onChange={() => {}} />
           </div></section>
           <section className="settings-section" aria-labelledby="proxy-title"><Collapsible.Root open={options.proxy}>
-            <div className="section-heading"><h2 id="proxy-title">{t('ui.proxy')}</h2>{helpButton('ui.help.proxy')}
+            <div className="section-heading"><h2 ref={observeTextReflow} id="proxy-title">{t('ui.proxy')}</h2>{helpButton('ui.help.proxy')}
               <SwitchControl id="proxy-enabled" label={t('setup.option.proxy')} controls={options.proxy ? 'proxy-details' : undefined} checked={options.proxy} disabled={locked} onChange={changeProxy} /></div>
             <Collapsible.Panel id="proxy-details" className="disclosure-panel">
               <div className="settings-card proxy-card">
@@ -488,7 +489,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
                   onChange={value => update('cloudCodex', value)} help={helpButton('help.cloudcodex')} />
               </div>
             </Collapsible.Panel></Collapsible.Root></section>
-          <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 id="preview-title">{t('setup.section.preview')}</h2>
+          <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 ref={observeTextReflow} id="preview-title">{t('setup.section.preview')}</h2>
               <div className="preview-actions">{showChecking && !validationDetails && <span className="preview-checking" data-motion-text>{t('ui.arguments.checking')}</span>}
                 <div className="preview-details" data-visible={!!validationDetails || undefined} inert={!validationDetails} aria-hidden={!validationDetails || undefined}>
                   <Button className="text-button" onClick={() => { if (validationDetails) showError(validationDetails) }}>
@@ -547,15 +548,15 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
       </RadioGroup>}
       {dialog === 'program-details' && inspectedProgram && <ProgramDetails program={inspectedProgram} t={t} />}
       {dialog === 'result' && result && <>
-        {result.warnings?.map(key => <p key={key}>{t(key)}</p>)}
-        {!saved || !!result.nativeError || !!result.conflictDirectory ? errorDetails(result) : result.detail && <p className="error-detail">{result.detail}</p>}
-        {result.commit === 'rollback-incomplete' && <p>{t('ui.recovery')}</p>}
-        {result.tasks.map(task => <div className="followup" key={task}><p>{t(task === 'startup' ? 'ui.task.startup' : 'ui.task.restart')}</p>{task === 'startup' && <Button className="control-button" onClick={() => void openLocation('windows')}>{t('ui.openstartup')}<ArrowUpRight size={14} /></Button>}</div>)}
+        {result.warnings?.map(key => <p ref={observeTextReflow} key={key}>{t(key)}</p>)}
+        {!saved || !!result.nativeError || !!result.conflictDirectory ? errorDetails(result) : result.detail && <p ref={observeTextReflow} className="error-detail">{result.detail}</p>}
+        {result.commit === 'rollback-incomplete' && <p ref={observeTextReflow}>{t('ui.recovery')}</p>}
+        {result.tasks.map(task => <div className="followup" key={task}><p ref={observeTextReflow}>{t(task === 'startup' ? 'ui.task.startup' : 'ui.task.restart')}</p>{task === 'startup' && <Button className="control-button" onClick={() => void openLocation('windows')}>{t('ui.openstartup')}<ArrowUpRight size={14} /></Button>}</div>)}
       </>}
       {dialog === 'error' && error && errorDetails(error)}
       {dialog === 'notice' && selectedNotice && <div className="notice-detail">
-        <p className="notice-summary">{t(selectedNotice.message, selectedNotice.values)}</p>
-        {noticeDetail && <p>{typeof noticeDetail === 'string' ? noticeDetail : t(noticeDetail.message, noticeDetail.values)}</p>}
+        <p ref={observeTextReflow} className="notice-summary">{t(selectedNotice.message, selectedNotice.values)}</p>
+        {noticeDetail && <p ref={observeTextReflow}>{typeof noticeDetail === 'string' ? noticeDetail : t(noticeDetail.message, noticeDetail.values)}</p>}
         {selectedNotice.error && errorDetails(selectedNotice.error)}
       </div>}
     </Modal>

@@ -2,6 +2,8 @@
 
 ## 配置器 UI 重构
 
+- 底栏替换提示时，新旧行会短暂共存。保存提醒和输入问题入口要使用同一底边和最小行高，否则旧行移除时，已经可见的新文字会跳动。用 `tests/ui-responsive-checks.js` 逐帧检查两个方向，并分别检查按钮和提示。
+
 - `refactor/ui` 的第 4 阶段实现和本机隔离检查已完成。默认构建使用 Tauri，旧 GUI 保留独立入口。补充检查覆盖生命周期、三语、主题、短窗口、键盘和无障碍媒体模拟。正式包的只读加载、后台预检、真实端口发现和现有代理 HTTPS 连通检查也已通过。Windows 150% / 200% 缩放及系统高对比度按用户要求暂缓；其余外部环境验收见 `docs/ui-refactor.md` 顶部清单。不把公共 HTTPS 成功等同于 Codex 对话或 WebSocket 成功。界面重构已合入 `master`。正式版从该分支打包，发布附件见 `Releases/v1.2.1/`。
 - 真实退出验收可能关闭承载当前任务的 Codex 桌面应用。执行前须确认主机关系并安排独立观察和恢复，不能在当前任务还有未完成工作时触发。现有 WebView2 可运行，不代表在缺少运行库的机器上安装成功；不要为制造缺失环境而卸载共享运行库。正式包只读检查与隔离保存检查分开，不用测试包覆盖已有部署。
 - `frontend/desktop.ps1` 是新入口。用 `-RustBin` 或进程变量 `CHATGPT_RUST_BIN` 指定已有 Rust MSVC 工具链的 `bin` 目录。构建脚本把它和 `work/ui-toolchain/bin` 一起加入当前进程的 PATH。单独运行补充的 rustfmt 时也需要同版本编译器目录，否则 Windows 会提示缺少 `rustc_driver` DLL。完整检查需要 Cargo、Clippy 和 rustfmt。

@@ -183,12 +183,13 @@ async page => {
     return { quickCheck: quickMin, checking: min, invalid: dim, valid: valid.at(-1).opacity };
   }
 
-  async function checkStatusSwap() {
+  async function checkStatusSwap(width) {
     const port = page.locator('#proxy-port'), valid = await port.inputValue();
-    await size(380, 690); await settled();
+    await size(width, 690); await settled();
     const recording = await page.evaluateHandle(() => {
-      const actions = document.querySelector('.footer-actions'), buttonY = actions.getBoundingClientRect().top;
+      const actions = document.querySelector('.footer-actions');
       const footer = actions.closest('.settings-footer'), tops = [], steps = [];
+      const status = footer.querySelector('.status-scroll');
       const positions = new Map(), errors = new Set();
       let enter = 0, exit = 0, frame;
       function sample() {
@@ -219,7 +220,13 @@ async page => {
           }
         }
         if (visible > 1) errors.add('both messages visible');
-        if (Math.abs(actions.getBoundingClientRect().top - buttonY) > 1) errors.add('buttons moved');
+        const buttons = actions.getBoundingClientRect(), bounds = footer.getBoundingClientRect();
+        if (status.getBoundingClientRect().right <= buttons.left + 1) {
+          const middle = bounds.top + footer.clientTop + footer.clientHeight / 2;
+          if (Math.abs(buttons.top + buttons.height / 2 - middle) > 1) errors.add('buttons off center');
+        } else if (Math.abs(bounds.bottom - buttons.bottom - parseFloat(getComputedStyle(footer).paddingBottom)) > 1) {
+          errors.add('stacked buttons lost their bottom inset');
+        }
         frame = requestAnimationFrame(sample);
       }
       sample();
@@ -325,7 +332,8 @@ async page => {
     const codex = page.getByRole('switch', { name: '应用于 Codex 环境变量' });
     if (await codex.getAttribute('aria-checked') !== 'true') await codex.click();
     await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
-    const statusSwap = await checkStatusSwap();
+    const statusSwap = await checkStatusSwap(380);
+    await checkStatusSwap(464);
     await checkPreviewShrink();
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });
     const icons = [];

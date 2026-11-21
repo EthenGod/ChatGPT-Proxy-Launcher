@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { CheckCircle2, CircleAlert, Info, TriangleAlert } from 'lucide-react'
+import { observeTextReflow } from '../../components/textReflow'
 import { Button } from '../../components/controls'
 import type { MessageKey, translator } from '../../i18n'
 import type { SaveResult } from './contract'
@@ -20,6 +21,10 @@ function fitsFooter(row: HTMLElement) {
   const area = scroll.getBoundingClientRect(), buttons = actions.getBoundingClientRect()
   const spare = area.right <= buttons.left + 1 ? Math.max(0, buttons.height - area.height) : 0
   return row.firstElementChild!.scrollHeight <= slot.getBoundingClientRect().height + spare + 1
+}
+
+function StatusCaption({ text, id }: { text: string; id?: string }) {
+  return <span id={id} className="status-caption"><span ref={observeTextReflow} data-motion-text>{text}</span></span>
 }
 
 function StatusLine({ message, present, waiting, replacing, advance, onAction, t }: {
@@ -48,9 +53,9 @@ function StatusLine({ message, present, waiting, replacing, advance, onAction, t
     data-reserving={reserving || undefined} data-collapsing={collapsing || undefined} inert={!present} aria-hidden={!present || undefined}>
     <div className="status-clip">{message.kind === 'input'
       ? <Button className="text-button status-input-link" aria-describedby="validation-message" onClick={present ? onAction : undefined}>
-        <Icon size={14} aria-hidden="true" />{t(message.text)}</Button>
-      : <div className="status-line" data-tone={message.tone}>
-        <Icon size={14} aria-hidden="true" /><span id={caption} data-motion-text>{t(message.text)}</span>
+        <Icon size={14} aria-hidden="true" /><StatusCaption text={t(message.text)} /></Button>
+      : <div className="status-line" data-kind={message.kind} data-tone={message.tone}>
+        <Icon size={14} aria-hidden="true" /><StatusCaption id={caption} text={t(message.text)} />
         {details && <Button className="text-button" aria-describedby={caption} onClick={present ? onAction : undefined}>{t('ui.details')}</Button>}
       </div>}
     </div>

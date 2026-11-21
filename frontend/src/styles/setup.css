@@ -124,8 +124,8 @@ button svg { flex-shrink: 0; }
 .connection-fields {
   --connection-gap: 12px;
   --protocol-width: calc((100% - 2 * var(--connection-gap)) * 1.5 / (1.5 + 1.25 + .8));
-  --reflow: 130ms cubic-bezier(.22, .61, .36, 1);
-  --row-delay: 120ms;
+  --reflow: 180ms cubic-bezier(.16, 1, .3, 1);
+  --row-delay: 100ms;
   --inline-delay: 0ms;
   display: grid; grid-template-columns: minmax(0, 1fr); padding: 8px 16px 6px;
 }
@@ -277,6 +277,9 @@ button svg { flex-shrink: 0; }
 .settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
 /* Align the whole status list with the button text, including while another row enters or leaves. */
 .status-scroll { --status-inset: 8px; flex: 1 1 12rem; min-height: 24px; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); inset-block-end: calc((var(--control-height) - 24px) / 2); }
+/* The outgoing reminder and incoming input link share a baseline throughout their crossfade. */
+.status-scroll:has(.status-slot:only-child :is(.status-line[data-kind=reminder], .status-input-link)) { inset-block-end: auto; }
+.status-slot:only-child :is(.status-line[data-kind=reminder], .status-input-link) { min-height: var(--control-height); }
 .footer-status { display: flex; flex-direction: column; align-items: stretch; font-size: 12px; line-height: 18px; color: var(--gray-11); }
 .status-slot { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; }
 .status-presence { grid-area: 1 / 1; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
@@ -297,8 +300,16 @@ button svg { flex-shrink: 0; }
 }
 .status-slot:focus-within > [data-exiting]:not([data-collapsing]) { transition: none; }
 .status-presence:focus-within { opacity: 1; transition: none; pointer-events: auto; }
-.status-line { display: flex; align-items: flex-start; gap: 8px; padding-block: 3px; padding-inline-start: var(--status-inset); }
-.status-line > svg { flex: none; margin-top: 2px; }
+.status-line { display: flex; align-items: center; gap: 8px; padding-block: 3px; padding-inline-start: var(--status-inset); }
+.status-line > svg, .status-input-link > svg { flex: none; }
+.status-caption { display: block; min-width: 0; }
+.status-caption > [data-motion-text] { display: block; }
+.scroll-content { position: relative; }
+.argument-current { display: block; }
+[data-reflowing] { -webkit-text-fill-color: transparent; }
+.text-reflow-layer { position: absolute; inset: 0; overflow: clip; pointer-events: none; user-select: none; }
+.status-reflow-layer { inset: auto auto 0 0; width: 0; height: 0; overflow: visible; }
+.text-reflow-layer > span { position: absolute; inset: 0 auto auto 0; white-space: pre; }
 .status-line > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
 .status-line[data-tone=success] > svg { color: var(--green-11); }
 .status-line[data-tone=warning] > svg { color: var(--amber-11); }
@@ -308,7 +319,7 @@ button svg { flex-shrink: 0; }
 .footer-status .status-input-link:is(:hover, :focus-visible) { background-color: var(--gray-3); }
 .footer-status .status-input-link:active { background-color: var(--gray-4); }
 .status-input-link:focus-visible { outline-offset: -2px; }
-.footer-actions { display: flex; flex: none; justify-content: flex-end; margin-inline-start: auto; gap: 8px; }
+.footer-actions { display: flex; flex: none; align-self: center; justify-content: flex-end; margin-inline-start: auto; gap: 8px; }
 .button { --button-inset: 16px; min-height: var(--control-height); padding: 7px var(--button-inset); font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
 .save-button {
   position: relative; --edit-shift: 5px; --edit-duration: var(--motion-fast);
@@ -461,7 +472,7 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 /* Keep each glyph at its own size while the translated status wraps and its viewport moves. */
 :root[data-appearance-transition=language] .footer-status svg { view-transition-name: match-element; view-transition-class: language-static; }
 ::view-transition-group-children(.language-clip) { overflow: clip; border-radius: inherit; }
-:root[data-window-resizing] :is(.scroll-content, .scroll-track, .program-scroll, .disclosure-panel) { transition: none !important; }
+:root[data-window-resizing] :is(.program-scroll, .disclosure-panel) { transition: none !important; }
 :root[data-window-resizing] .disclosure-panel[data-open]:not([data-ending-style]) { height: auto; }
 :root[data-appearance-transition=language]::view-transition-group(*) { animation-duration: var(--motion-enter); animation-timing-function: cubic-bezier(.22, .61, .36, 1); }
 :root[data-appearance-transition=language]::view-transition-old(*) { animation: none; opacity: 0; }
@@ -475,7 +486,7 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 @keyframes appearance-in { from { opacity: 0; } }
 @media (max-width: 540px) {
   .settings-header { gap: 8px; }
-  .connection-fields { --row-delay: 0ms; --inline-delay: 120ms; }
+  .connection-fields { --row-delay: 0ms; --inline-delay: 100ms; }
   .connection-protocol-row { grid-template-rows: minmax(0, 1fr); }
   .protocol-field { inline-size: 100%; }
   .connection-endpoints { grid-template-columns: minmax(0, 1fr) var(--compact-port-width, 104px); margin-inline-start: 0; margin-block-start: var(--connection-gap); }
