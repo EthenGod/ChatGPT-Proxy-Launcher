@@ -423,6 +423,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   else if (dialog === 'result') text = { title: saved ? 'ui.save.followup' : 'setup.error.saving', description: saved ? undefined : result?.message }
   else if (dialog) text = dialogText[dialog]
   const dialogTitle = text ? t(text.title) : ''
+  const dialogVariant = dialog === 'help' ? 'help' : dialog === 'result' && saved ? 'saved' : undefined
   const noticeDetail = selectedNotice?.fullDetail || selectedNotice?.detail
 
   if (closed && !service.native) return <div className="prototype-closed"><CheckCircle2 size={24} /><h1>{t('ui.closed')}</h1><p>{t('ui.prototype.description')}</p>
@@ -527,7 +528,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
           </Button>}</div>
       <NoticeToasts manager={noticeManager} t={t} onOpen={item => { setSelectedNotice(item); openDialog('notice'); focusReturn.current = doneButton.current }} />
     </footer>
-    <Modal open={dialogOpen} title={dialogTitle} variant={dialog === 'help' ? 'help' : undefined} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!activeOperation.current) setDialogOpen(false) }}
+    <Modal open={dialogOpen} title={dialogTitle} variant={dialogVariant} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!activeOperation.current) setDialogOpen(false) }}
       description={text?.description && t(text.description)}
       actions={discard ? <><Button ref={cancelButton} className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('ui.keepediting')}</Button><Button className="button danger-button" disabled={busy} onClick={() => void close()}>{t('ui.discard')}</Button></>
         : pickerOpen ? <><Button className="button secondary-button" disabled={busy} onClick={() => setDialogOpen(false)}>{t('download.cancel')}</Button>

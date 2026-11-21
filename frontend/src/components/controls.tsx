@@ -89,7 +89,7 @@ export function ChoiceMenu({ label, value, items, onChange, disabled, icon, vari
   </Menu.Root>
 }
 export function Modal({ open, title, description, children, actions, variant, onClose, focusReturn, initialFocus }: {
-  open: boolean; title: string; description?: string; children?: ReactNode; actions: ReactNode; variant?: 'help';
+  open: boolean; title: string; description?: string; children?: ReactNode; actions: ReactNode; variant?: 'help' | 'saved';
   onClose: () => void; focusReturn: RefObject<HTMLElement | null>; initialFocus?: RefObject<HTMLElement | null>
 }) {
   const popup = useRef<HTMLDivElement | null>(null)

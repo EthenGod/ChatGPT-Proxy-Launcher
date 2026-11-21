@@ -424,6 +424,10 @@ body:has(.dialog) .settings-scroll .scroll-track, body:has(.dialog) .status-scro
 .notice-summary { font-weight: 500; }
 .followup + .followup { margin-top: 16px; }
 .followup p { margin: 0 0 8px; }
+.dialog[data-variant=saved] .dialog-body { display: grid; gap: 12px; }
+.dialog[data-variant=saved] .dialog-body > *,
+.dialog[data-variant=saved] .followup > :last-child { margin-block: 0; }
+.dialog[data-variant=saved] .dialog-actions { padding-block-start: 16px; }
 .prototype-closed { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 16px; }
 .prototype-closed p { max-width: 420px; text-align: center; margin: 0; color: var(--gray-11); }
 .tooltip-positioner { z-index: 50; }
