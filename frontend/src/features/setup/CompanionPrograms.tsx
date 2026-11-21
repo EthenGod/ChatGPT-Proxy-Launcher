@@ -1,3 +1,4 @@
+import { observeTextReflow, observeWrappedRow } from '../../components/textReflow'
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Tooltip } from '@base-ui/react/tooltip'
 import { AppWindow, BadgeCheck, ChevronRight, CircleAlert, FileCode2, FileJson2, FileSymlink, FileTerminal, Folder, FolderOpen, Plus, RefreshCw } from 'lucide-react'
@@ -31,14 +32,14 @@ function ProgramIcon({ program }: { program: ListedProgram }) {
 type StatusProps = { status: ListedProgram['status']; t: Translate }
 function AdaptedBadge({ status, t }: StatusProps) {
   if (status !== 'adapted' && status !== 'adapted-disabled' && status !== 'dependency-blocked') return null
-  return <span className="program-badge"><BadgeCheck size={13} aria-hidden="true" /><span data-motion-text>{t('ui.programs.adapted')}</span></span>
+  return <span className="program-badge"><BadgeCheck size={13} aria-hidden="true" /><span ref={observeTextReflow} data-motion-text>{t('ui.programs.adapted')}</span></span>
 }
 function ProgramState({ status, t }: StatusProps) {
   if (status === 'disabled' || status === 'adapted-disabled') return <span className="program-state" data-motion-text>{t('ui.programs.disabled')}</span>
   if (status === 'ordinary' || status === 'adapted') return null
   const labels = { invalid: 'ui.programs.invalid', unavailable: 'ui.programs.unavailable', 'dependency-blocked': 'ui.programs.dependency' } as const
   return <span className="program-state" data-warning>
-    <CircleAlert size={13} aria-hidden="true" /><span data-motion-text>{t(labels[status])}</span></span>
+    <CircleAlert size={13} aria-hidden="true" /><span ref={observeTextReflow} data-motion-text>{t(labels[status])}</span></span>
 }
 
 type ListLayout = { tops: Map<string, number>; height: number; added: string | undefined }
@@ -88,10 +89,10 @@ export function ProgramDetails({ program, t }: { program: ListedProgram; t: Tran
     <div className="program-identity"><ProgramIcon program={program} /><strong dir="auto">{program.name}</strong><AdaptedBadge status={program.status} t={t} /></div>
     <ProgramState status={program.status} t={t} />
     <dl className="program-properties">
-      <div><dt>{t('ui.programs.path')}</dt><dd dir="auto">{program.path}</dd></div>
-      {program.arguments && <div><dt>{t('ui.arguments')}</dt><dd dir="auto">{program.arguments}</dd></div>}
+      <div><dt>{t('ui.programs.path')}</dt><dd ref={observeTextReflow} dir="auto">{program.path}</dd></div>
+      {program.arguments && <div><dt>{t('ui.arguments')}</dt><dd ref={observeTextReflow} dir="auto">{program.arguments}</dd></div>}
     </dl>
-    {(program.status === 'invalid' || program.status === 'unavailable') && <p className="program-advice">
+    {(program.status === 'invalid' || program.status === 'unavailable') && <p ref={observeTextReflow} className="program-advice">
       {t(program.status === 'invalid' ? 'ui.programs.repair.registration' : 'ui.programs.repair.shortcut')}</p>}
   </div>
 }
@@ -139,8 +140,8 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
 
   const entries = list?.entries ?? []
   return <section ref={section} className="programs-group" aria-labelledby="programs-title">
-    <div className="programs-heading">
-      <div className="programs-label"><h2 id="programs-title">{t('ui.programs')}</h2>{help}</div>
+    <div ref={observeWrappedRow} className="programs-heading">
+      <div className="programs-label"><h2 ref={observeTextReflow} id="programs-title">{t('ui.programs')}</h2>{help}</div>
       <div className="program-actions">
         <Hint label={t('ui.programs.refresh')}><Button className="icon-button program-refresh" disabled={locked || pending}
           focusableWhenDisabled={pending && !locked} aria-label={t('ui.programs.refresh')} aria-busy={pending} onClick={refresh}>
@@ -164,10 +165,10 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
       </ScrollBox>}
       {!list && !issue && <div className="program-placeholder" data-skeleton-wait={!showLoading || undefined} aria-hidden="true">{[0, 1].map(i => <div key={i}>
         <span className="skeleton-bar program-skeleton-icon" /><span className="skeleton-bar skeleton-label" /></div>)}</div>}
-      {list && !entries.length && !issue && !list.incomplete && <p className="program-empty"><Folder size={18} aria-hidden="true" /><span data-motion-text>{t('ui.programs.empty')}</span></p>}
-      {issue ? <div className="program-message" role="status"><CircleAlert size={15} aria-hidden="true" /><span data-motion-text>{t('ui.programs.failed')}</span>
+      {list && !entries.length && !issue && !list.incomplete && <p className="program-empty"><Folder size={18} aria-hidden="true" /><span ref={observeTextReflow} data-motion-text>{t('ui.programs.empty')}</span></p>}
+      {issue ? <div className="program-message" role="status"><CircleAlert size={15} aria-hidden="true" /><span ref={observeTextReflow} data-motion-text>{t('ui.programs.failed')}</span>
         <Button className="text-button" onClick={() => onError(issue)}>{t('ui.details')}</Button></div>
-        : list?.incomplete && <p className="program-message" role="status"><CircleAlert size={15} aria-hidden="true" /><span data-motion-text>{t('ui.programs.partial')}</span></p>}
+        : list?.incomplete && <p className="program-message" role="status"><CircleAlert size={15} aria-hidden="true" /><span ref={observeTextReflow} data-motion-text>{t('ui.programs.partial')}</span></p>}
     </div>
   </section>
 }

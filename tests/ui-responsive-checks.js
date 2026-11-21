@@ -183,12 +183,13 @@ async page => {
     return { quickCheck: quickMin, checking: min, invalid: dim, valid: valid.at(-1).opacity };
   }
 
-  async function checkStatusSwap() {
+  async function checkStatusSwap(width) {
     const port = page.locator('#proxy-port'), valid = await port.inputValue();
-    await size(380, 690); await settled();
+    await size(width, 690); await settled();
     const recording = await page.evaluateHandle(() => {
-      const actions = document.querySelector('.footer-actions'), buttonY = actions.getBoundingClientRect().top;
+      const actions = document.querySelector('.footer-actions');
       const footer = actions.closest('.settings-footer'), tops = [], steps = [];
+      const status = footer.querySelector('.status-scroll');
       const positions = new Map(), errors = new Set();
       let enter = 0, exit = 0, frame;
       function sample() {
@@ -219,7 +220,13 @@ async page => {
           }
         }
         if (visible > 1) errors.add('both messages visible');
-        if (Math.abs(actions.getBoundingClientRect().top - buttonY) > 1) errors.add('buttons moved');
+        const buttons = actions.getBoundingClientRect(), bounds = footer.getBoundingClientRect();
+        if (status.getBoundingClientRect().right <= buttons.left + 1) {
+          const middle = bounds.top + footer.clientTop + footer.clientHeight / 2;
+          if (Math.abs(buttons.top + buttons.height / 2 - middle) > 1) errors.add('buttons off center');
+        } else if (Math.abs(bounds.bottom - buttons.bottom - parseFloat(getComputedStyle(footer).paddingBottom)) > 1) {
+          errors.add('stacked buttons lost their bottom inset');
+        }
         frame = requestAnimationFrame(sample);
       }
       sample();
@@ -277,6 +284,33 @@ async page => {
     if (!result.visible || result.lost > 1 || result.shrink < 20) throw Error('Preview lost a visible line: ' + JSON.stringify(result));
   }
 
+  async function checkFooterResize() {
+    await choose('en-US', 'English'); await size(844, 700); await settled();
+    // Both widths keep the same vertical padding. Only the tip changes height.
+    for (const width of [600, 844]) {
+      const recorder = await page.evaluateHandle(() => {
+        const footer = document.querySelector('.settings-footer'), heights = [];
+        let frame;
+        function sample() {
+          heights.push(footer.getBoundingClientRect().height);
+          frame = requestAnimationFrame(sample);
+        }
+        sample();
+        return () => { cancelAnimationFrame(frame); return heights; };
+      });
+      try {
+        await size(width, 700); await settled();
+        const heights = await recorder.evaluate(stop => stop());
+        const low = Math.min(heights[0], heights.at(-1)), high = Math.max(heights[0], heights.at(-1));
+        if (high - low < 4 || !heights.some(h => h > low + .25 && h < high - .25) ||
+            Math.min(...heights) < low - 1 || Math.max(...heights) > high + 1) {
+          throw Error('Footer did not stay between its one- and two-line heights: ' + JSON.stringify({ width, low, high, heights }));
+        }
+      } finally { await recorder.dispose(); }
+    }
+    await choose('zh-CN', '简体中文');
+  }
+
   // Keep the port focused and measure both axes throughout the layout change.
   const recordReflow = async (width, reduced) => {
     const port = page.locator('#proxy-port');
@@ -325,8 +359,12 @@ async page => {
     const codex = page.getByRole('switch', { name: '应用于 Codex 环境变量' });
     if (await codex.getAttribute('aria-checked') !== 'true') await codex.click();
     await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
-    const statusSwap = await checkStatusSwap();
+    const statusSwap = await checkStatusSwap(380);
+    await checkStatusSwap(464);
     await checkPreviewShrink();
+    await checkFooterResize();
+    // Exercise a real change of text rows while the footer icons stay centered.
+    await size(420, 700); await settled();
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });
     const icons = [];
     try {
@@ -337,7 +375,7 @@ async page => {
       icons.push(await checkStatusIcon(page.locator('.status-input-link > svg'), 'ja-JP', '日本語', false));
       await port.fill(value);
       await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
-    } finally { await ink.evaluate(el => el.remove()); }
+    } finally { await ink.evaluate(el => el.remove()); await size(600, 700); await settled(); }
     const saveFade = await checkSaveFade();
     await size(780, 1000); await settled(); await choose('zh-CN', '简体中文');
     const labels = [];

@@ -1,3 +1,4 @@
+import { observeTextReflow, observeWrappedRow } from './textReflow'
 import { Children, useEffect, useId, useRef, type ComponentProps, type ReactElement, type ReactNode, type InputHTMLAttributes, type RefObject } from 'react'
 import { Button as BaseButton } from '@base-ui/react/button'
 import { Switch } from '@base-ui/react/switch'
@@ -39,7 +40,7 @@ export function Toggle({ label, checked, disabled, onChange, help, badge, classN
 }) {
   const id = useId()
   return <div className={`setting-row ${className}`}>
-    <div className="setting-label"><span id={`${id}-label`} data-motion-text>{label}</span>{help}{badge && <span id={`${id}-badge`} className="setting-badge"><span data-motion-text>{badge}</span></span>}</div>
+    <div ref={observeWrappedRow} className="setting-label"><span ref={observeTextReflow} id={`${id}-label`} data-motion-text>{label}</span>{help}{badge && <span id={`${id}-badge`} className="setting-badge"><span data-motion-text>{badge}</span></span>}</div>
     <SwitchControl id={id} labelledBy={`${id}-label`} describedBy={badge ? `${id}-badge` : undefined} checked={checked} disabled={disabled} onChange={onChange} />
   </div>
 }
@@ -49,9 +50,9 @@ export function TextField({ label, error, errorDescriptionId, suffix, labelActio
   const generated = useId()
   const id = props.id ?? generated
   return <div className={`field ${className}`}>
-    <div className="field-heading"><label htmlFor={id}>{label}</label>{labelActions}</div>
+    <div className="field-heading"><label ref={observeTextReflow} htmlFor={id}>{label}</label>{labelActions}</div>
     <div className="input-wrap"><input {...props} id={id} aria-invalid={!!error} aria-describedby={error ? errorDescriptionId ?? `${id}-error` : undefined} />{suffix}</div>
-    {error && !errorDescriptionId && <span id={`${id}-error`} className="field-error">{error}</span>}
+    {error && !errorDescriptionId && <span ref={observeTextReflow} id={`${id}-error`} className="field-error">{error}</span>}
   </div>
 }
 export function ChoiceMenu({ label, value, items, onChange, disabled, icon, variant = 'default', changeAfterClose = false }: {
@@ -97,16 +98,16 @@ export function Modal({ open, title, description, children, actions, variant, on
     <Dialog.Portal><Dialog.Backdrop className="dialog-backdrop" />
       <Dialog.Popup ref={popup} className="dialog" data-variant={variant} finalFocus={focusReturn} initialFocus={initialFocus ?? (() =>
         popup.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], .dialog-actions button:not([disabled])') ?? false)}>
-        <Dialog.Title className="dialog-title">{title}</Dialog.Title>
+        <Dialog.Title ref={observeTextReflow} className="dialog-title">{title}</Dialog.Title>
         <ScrollBox className="dialog-scroll" contentClassName="dialog-content" label={title}>
           {description && (variant === 'help'
             ? <Dialog.Description render={<div />} className="dialog-description help-paragraphs">
-              {description.split(/\r\n?|\n/).map(line => line.trim()).filter(Boolean).map((line, index) => <p key={index}>{line}</p>)}
+              {description.split(/\r\n?|\n/).map(line => line.trim()).filter(Boolean).map((line, index) => <p ref={observeTextReflow} key={index}>{line}</p>)}
             </Dialog.Description>
-            : <Dialog.Description className="dialog-description">{description}</Dialog.Description>)}
+            : <Dialog.Description ref={observeTextReflow} className="dialog-description">{description}</Dialog.Description>)}
           {children && <div className="dialog-body">{children}</div>}
         </ScrollBox>
-        <div className="dialog-actions">{actions}</div>
+        <div ref={observeWrappedRow} className="dialog-actions">{actions}</div>
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>

@@ -1,3 +1,4 @@
+import { observeTextReflow } from '../../components/textReflow'
 import { Component, createRef, type RefObject } from 'react'
 import { ScrollBox } from '../../components/ScrollBox'
 import { ArgumentSkeleton } from './SetupSkeleton'
@@ -108,11 +109,14 @@ export class ArgumentPreview extends Component<Props, object, BeforeChange> {
     const field = this.props.fieldRef.current
     if (field && selection?.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(field)) this.stop()
   }
+  private releaseReflow?: () => void
   componentDidMount() {
+    this.releaseReflow = observeTextReflow(this.currentText.current)
     document.addEventListener('selectionchange', this.onSelection)
     this.staticMotion.addEventListener('change', this.stop)
   }
   componentWillUnmount() {
+    this.releaseReflow?.()
     document.removeEventListener('selectionchange', this.onSelection)
     this.staticMotion.removeEventListener('change', this.stop)
     this.stop()
