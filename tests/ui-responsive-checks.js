@@ -198,6 +198,13 @@ async page => {
         let visible = 0;
         for (const row of document.querySelectorAll('.footer-status .status-presence')) {
           const opacity = Number(getComputedStyle(row).opacity);
+          const link = row.querySelector('.status-input-link');
+          if (link && row.matches('[data-waiting], [data-reserving]') && !opacity) {
+            const r = link.getBoundingClientRect();
+            if (link.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))) {
+              errors.add('invisible input link intercepted a pointer');
+            }
+          }
           if (opacity < .05) continue;
           visible++;
           const caption = row.querySelector('[data-motion-text]'), range = document.createRange();
@@ -239,6 +246,35 @@ async page => {
     }
     if (!result.enter || !result.exit || result.errors.length) throw Error('Footer swap: ' + JSON.stringify(result));
     return result;
+  }
+
+  async function checkPreviewShrink() {
+    const extra = page.getByRole('textbox', { name: '额外参数', exact: true });
+    const originalExtra = await extra.inputValue(), marker = '--a=1111111111';
+    await extra.fill(Array(15).fill(marker).join(' '));
+    await page.waitForFunction(marker => document.querySelector('.argument-current').textContent.includes(marker), marker);
+    await settled();
+    const box = page.locator('.argument-scroll');
+    const recording = await box.evaluateHandle(el => {
+      const initial = el.getBoundingClientRect().height, snapshot = el.querySelector('.argument-previous');
+      let visible = 0, lost = 0, frame;
+      function sample() {
+        if (snapshot.hasAttribute('data-text') && Number(getComputedStyle(snapshot).opacity) > .05) {
+          visible++;
+          lost = Math.max(lost, initial - el.getBoundingClientRect().height);
+        }
+        frame = requestAnimationFrame(sample);
+      }
+      sample();
+      return { stop() { cancelAnimationFrame(frame); return { visible, lost, shrink: initial - el.getBoundingClientRect().height }; } };
+    });
+    let result;
+    try {
+      await extra.fill(originalExtra);
+      await page.waitForFunction(marker => !document.querySelector('.argument-current').textContent.includes(marker), marker);
+      await settled();
+    } finally { result = await recording.evaluate(recorder => recorder.stop()); await recording.dispose(); }
+    if (!result.visible || result.lost > 1 || result.shrink < 20) throw Error('Preview lost a visible line: ' + JSON.stringify(result));
   }
 
   // Keep the port focused and measure both axes throughout the layout change.
@@ -290,6 +326,7 @@ async page => {
     if (await codex.getAttribute('aria-checked') !== 'true') await codex.click();
     await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
     const statusSwap = await checkStatusSwap();
+    await checkPreviewShrink();
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });
     const icons = [];
     try {

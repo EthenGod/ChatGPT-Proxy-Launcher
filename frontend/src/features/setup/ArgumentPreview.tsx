@@ -77,9 +77,18 @@ export class ArgumentPreview extends Component<Props, object, BeforeChange> {
     const box = field.closest<HTMLElement>('.argument-scroll')!
     this.resize?.cancel()
     const height = box.getBoundingClientRect().height
-    const duration = this.fade.effect?.getComputedTiming().duration
-    if (Math.abs(before.height - height) > .5 && typeof duration === 'number') {
-      this.resize = box.animate([{ height: before.height + 'px' }, { height: height + 'px' }], { duration, easing: 'ease-out' })
+    const timing = this.fade.effect?.getComputedTiming()
+    if (Math.abs(before.height - height) > .5 && timing && typeof timing.duration === 'number') {
+      // Keep every visible old line until it fades. For a taller value, use
+      // the outgoing phase to make room before the new lines appear.
+      const elapsed = typeof this.fade.currentTime === 'number' ? this.fade.currentTime : 0
+      const remainingExit = Math.max(0, (timing.delay ?? 0) - elapsed)
+      const shrinking = height < before.height
+      this.resize = box.animate([{ height: before.height + 'px' }, { height: height + 'px' }], {
+        delay: shrinking ? remainingExit : 0,
+        duration: shrinking || !remainingExit ? timing.duration : remainingExit,
+        easing: 'ease-out', fill: 'backwards',
+      })
     }
   }
 

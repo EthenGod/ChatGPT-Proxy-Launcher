@@ -184,11 +184,12 @@ button svg { flex-shrink: 0; }
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
   /* Keep glyph antialiasing consistent between the resting and fading frames. */
   .argument-current, .argument-previous { will-change: opacity; }
-  .argument-previous[data-text] { display: block; animation: argument-leave var(--motion-exit) ease-in both; }
-  .argument-preview[data-swapping] > .argument-current { animation: argument-enter var(--motion-exit) ease-out both; }
+  .argument-scroll { --argument-leave-time: calc(var(--motion-exit) * .4); }
+  .argument-previous[data-text] { display: block; animation: argument-leave var(--argument-leave-time) ease-in both; }
+  .argument-preview[data-swapping] > .argument-current { animation: argument-enter calc(var(--motion-exit) - var(--argument-leave-time)) ease-out var(--argument-leave-time) both; }
 }
-@keyframes argument-leave { from { opacity: 1; } 40%, to { opacity: 0; } }
-@keyframes argument-enter { from, 40% { opacity: 0; } to { opacity: 1; } }
+@keyframes argument-leave { from { opacity: 1; } to { opacity: 0; } }
+@keyframes argument-enter { from { opacity: 0; } to { opacity: 1; } }
 .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; margin-bottom: 8px; }
 .preview-heading h2 { margin: 0; }
 .preview-actions { display: grid; place-items: center end; }
@@ -274,15 +275,14 @@ button svg { flex-shrink: 0; }
 }
 .settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
 .settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
-.status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); }
+/* Align the whole status list with the button text, including while another row enters or leaves. */
+.status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); inset-block-end: calc((var(--control-height) - 24px) / 2); }
 .footer-status { display: flex; flex-direction: column; align-items: stretch; font-size: 12px; line-height: 18px; color: var(--gray-11); }
 .status-slot { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; }
 .status-presence { grid-area: 1 / 1; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
-.status-presence:is([data-exiting], [data-waiting], [data-reserving]) { opacity: 0; }
-.status-presence[data-exiting] { pointer-events: none; }
+.status-presence:is([data-exiting], [data-waiting], [data-reserving]) { opacity: 0; pointer-events: none; }
 .status-presence[data-collapsing] { grid-template-rows: minmax(0, 0fr); }
 .status-clip { min-height: 0; overflow: clip; }
-.status-slot:last-child .status-clip::after { content: ''; display: block; height: calc((var(--control-height) - 24px) / 2); }
 .status-clip:focus-within { overflow: visible; }
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
   .status-presence { will-change: opacity; transition: opacity var(--motion-fast) ease-out; }
@@ -296,7 +296,7 @@ button svg { flex-shrink: 0; }
   }
 }
 .status-slot:focus-within > [data-exiting]:not([data-collapsing]) { transition: none; }
-.status-presence:focus-within { opacity: 1; transition: none; }
+.status-presence:focus-within { opacity: 1; transition: none; pointer-events: auto; }
 .status-line { display: flex; align-items: flex-start; gap: 8px; padding-block: 3px; padding-inline-start: var(--status-inset); }
 .status-line > svg { flex: none; margin-top: 2px; }
 .status-line > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
