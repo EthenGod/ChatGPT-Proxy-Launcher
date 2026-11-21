@@ -5,9 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
     <title>ChatGPT Launcher</title>
+    <link rel="stylesheet" href="/src/styles/theme.css" />
+    <link rel="stylesheet" href="/src/styles/setup.css" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="settings-content boot-header" aria-busy="true">
+        <div class="settings-header" aria-hidden="true"><span class="skeleton-bar skeleton-title"></span></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

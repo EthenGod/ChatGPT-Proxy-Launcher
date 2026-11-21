@@ -40,6 +40,7 @@
     "ui.programs.invalid": "注册异常",
     "ui.programs.unavailable": "不可用",
     "ui.programs.empty": "暂无附加程序",
+    "ui.programs.loading": "正在读取附加程序…",
     "ui.programs.refresh": "刷新附加程序列表",
     "ui.programs.partial": "部分程序未能列出",
     "ui.programs.failed": "未能刷新程序列表",

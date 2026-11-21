@@ -48,7 +48,8 @@ export function useSetupValidation(service: SetupService, options: SetupOptions 
 
   // Successful arguments are language-independent. Errors can contain localized native text.
   const validation = local ?? (match && (confirmed || match.language === language) ? match.value : null)
-  // Only the preview may keep old arguments while new input is being checked.
-  const previewValue = validation ?? (check?.value.valid ? check.value : null)
+  // Keep errors for identical inputs while their translation is refreshed. Only a
+  // successful preview may follow an edit, and it never authorizes a save.
+  const previewValue = validation ?? match?.value ?? (check?.value.valid ? check.value : null)
   return { validation, previewValue, resetValidation }
 }

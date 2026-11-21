@@ -57,9 +57,9 @@ function StatusLine({ message, present, waiting, replacing, advance, onAction, t
   </div>
 }
 
-export function SetupStatus({ t, result, issue, warnings, active, loading, invalid, warnBeforeSave, onResult, onIssue, onShowInput }: {
+export function SetupStatus({ t, result, issue, warnings, active, showSkeleton, loadingText, invalid, warnBeforeSave, onResult, onIssue, onShowInput }: {
   t: ReturnType<typeof translator>; result: SaveResult | null; issue: OperationIssue | null; warnings: MessageKey[];
-  active: boolean; loading: boolean; invalid: boolean; warnBeforeSave: boolean;
+  active: boolean; showSkeleton: boolean; loadingText?: MessageKey; invalid: boolean; warnBeforeSave: boolean;
   onResult: () => void; onIssue: (error: ErrorInfo) => void; onShowInput: () => void
 }) {
   const failed = !!result && result.commit !== 'saved'
@@ -92,7 +92,10 @@ export function SetupStatus({ t, result, issue, warnings, active, loading, inval
     : previous.map(row => statusKey(row) === key ? { ...row, phase: next === 'ready' ? undefined : 'collapse' } : row)), [])
   const slots = new Set(rows.map(row => row.slot))
   return <div className="footer-status" role={active && (failed || !!issue) ? 'alert' : 'status'}>
-    {loading && <span className="sr-only">{t('setup.preview.loading')}</span>}
+    {showSkeleton && !rows.length && <span className="skeleton-status" aria-hidden="true">
+      <span className="skeleton-bar skeleton-dot" /><span className="skeleton-bar skeleton-label" />
+    </span>}
+    {loadingText && <span className="sr-only">{t(loadingText)}</span>}
     {[...slots].map(slot => {
       const group = rows.filter(row => row.slot === slot)
       const activeRow = current.find(row => row.slot === slot)

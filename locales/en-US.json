@@ -40,6 +40,7 @@
     "ui.programs.invalid": "Invalid registration",
     "ui.programs.unavailable": "Unavailable",
     "ui.programs.empty": "No companion programs",
+    "ui.programs.loading": "Reading companion programs…",
     "ui.programs.refresh": "Refresh companion list",
     "ui.programs.partial": "Some programs could not be listed",
     "ui.programs.failed": "Couldn’t refresh the program list",

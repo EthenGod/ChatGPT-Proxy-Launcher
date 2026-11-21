@@ -40,6 +40,7 @@
     "ui.programs.invalid": "登録エラー",
     "ui.programs.unavailable": "利用不可",
     "ui.programs.empty": "追加プログラムはありません",
+    "ui.programs.loading": "追加プログラムを読み込み中…",
     "ui.programs.refresh": "追加プログラムの一覧を更新",
     "ui.programs.partial": "一部のプログラムを表示できません",
     "ui.programs.failed": "一覧を更新できませんでした",

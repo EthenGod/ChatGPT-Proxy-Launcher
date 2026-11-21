@@ -196,7 +196,7 @@ button svg { flex-shrink: 0; }
 .preview-actions > * { grid-area: 1 / 1; }
 .preview-details { opacity: 0; visibility: hidden; pointer-events: none; transform: translateX(3px); transition: opacity var(--motion-exit) ease-in, transform var(--motion-exit) ease-in, visibility 0s var(--motion-exit); }
 .preview-details[data-visible] { opacity: 1; visibility: visible; pointer-events: auto; transform: none; transition: opacity var(--motion-enter) ease-out, transform var(--motion-enter) ease-out, visibility 0s; }
-.preview-checking { font-size: 12px; line-height: 18px; color: var(--gray-11); animation: appearance-in var(--motion-fast) ease-out var(--motion-enter) backwards; }
+.preview-checking { font-size: 12px; line-height: 18px; color: var(--gray-11); animation: appearance-in var(--motion-fast) ease-out; }
 .preview-details .text-button { display: flex; min-height: 20px; padding: 0 5px; gap: 2px; line-height: 18px; border-radius: var(--radius-help); }
 .argument-preview:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; border-radius: calc(var(--radius-surface) - 1px); }
 .advanced-section { margin-top: 8px; }
@@ -276,7 +276,7 @@ button svg { flex-shrink: 0; }
 .settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
 .settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
 /* Align the whole status list with the button text, including while another row enters or leaves. */
-.status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); inset-block-end: calc((var(--control-height) - 24px) / 2); }
+.status-scroll { --status-inset: 8px; flex: 1 1 12rem; min-height: 24px; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); inset-block-end: calc((var(--control-height) - 24px) / 2); }
 .footer-status { display: flex; flex-direction: column; align-items: stretch; font-size: 12px; line-height: 18px; color: var(--gray-11); }
 .status-slot { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; }
 .status-presence { grid-area: 1 / 1; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
@@ -329,6 +329,14 @@ button svg { flex-shrink: 0; }
 .secondary-button:disabled { background: var(--gray-3); }
 .danger-button { background: var(--red-11); color: var(--accent-ink); }
 .danger-button:hover:not(:disabled) { background: color-mix(in srgb, var(--red-11), var(--gray-12) 8%); }
+/* Paint an inert title placeholder even while the application module is loading. */
+.prototype-boot { margin-top: 33px; }
+.boot-header .settings-header { min-height: 40px; }
+.boot-header .skeleton-title { height: 18px; width: min(12em, 62%); }
+/* This discrete delay also applies with motion disabled. */
+.boot-header[aria-busy] { animation: boot-reveal 0s 180ms backwards !important; }
+@keyframes boot-reveal { from { visibility: hidden; } to { visibility: visible; } }
+[data-skeleton-wait] { visibility: hidden; }
 .setup-skeleton { display: flow-root; }
 .skeleton-bar { display: inline-block; flex: none; border-radius: var(--radius-small); background: var(--gray-5); opacity: .75; animation: skeleton-breathe 1.6s ease-in-out 360ms infinite; }
 @keyframes skeleton-breathe { 50% { opacity: 1; } }
@@ -342,10 +350,16 @@ button svg { flex-shrink: 0; }
 .setup-skeleton .setting-row:nth-child(3) .skeleton-label { width: 104px; }
 .setup-skeleton .section-heading .skeleton-label { width: 36px; }
 .skeleton-switch { width: 36px; height: 22px; margin-inline-start: auto; border-radius: var(--radius-pill); }
-.argument-preview:has(> .skeleton-argument) { display: flex; align-items: center; }
+.argument-preview:has(.skeleton-argument) { display: flex; align-items: center; }
+.argument-current:has(> .skeleton-argument) { display: flex; align-items: center; width: 100%; }
 .skeleton-argument { width: min(64%, 300px); }
-.skeleton-disclosure { display: flex; align-items: center; min-height: 40px; }
-.skeleton-save { width: 96px; height: var(--control-height); border-radius: var(--radius-control); }
+.skeleton-remainder { visibility: hidden; }
+.skeleton-status { display: flex; align-items: center; gap: 8px; height: 24px; padding-inline-start: var(--status-inset); }
+/* Keep Close anchored while the read determines which save action applies. */
+.save-slot { display: grid; justify-items: end; }
+.save-slot::before { content: attr(data-deploy-label); visibility: hidden; padding-inline: 17px; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.save-slot::before, .save-slot > * { grid-area: 1 / 1; }
+.skeleton-save { justify-self: stretch; height: var(--control-height); border-radius: var(--radius-control); }
 .load-state { min-height: 230px; display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 14px; color: var(--gray-11); }
 .error-state { flex-direction: column; text-align: center; }
 .error-state p { margin: 0; }
