@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "LauncherAutomation.h"
+#include "CloudProxy.h"
 #include "Localization.h"
 #include "AppVersion.h"
 #include "DeploymentDiscovery.h"
@@ -14,20 +15,78 @@ namespace {
 bool Token(PCWSTR& cursor, std::wstring& value) {
     while (*cursor == L' ' || *cursor == L'\t') ++cursor;
     if (!*cursor) return false;
-    PCWSTR start = cursor; bool quoted = false; size_t slashes = 0;
+    PCWSTR start = cursor; bool quoted = false, hasQuote = false; size_t slashes = 0;
     for (; *cursor; ++cursor) {
         const wchar_t c = *cursor;
         if (!quoted && (c == L' ' || c == L'\t')) break;
-        if (c == L'"' && slashes % 2 == 0) quoted = !quoted;
+        if (c == L'"') { hasQuote = true; if (slashes % 2 == 0) quoted = !quoted; }
         slashes = c == L'\\' ? slashes + 1 : 0;
     }
     if (quoted) throw automation::Invalid("unclosed-option-quote");
+    if (!hasQuote) { value.assign(start, cursor); return true; }
     int count = 0; auto argv = CommandLineToArgvW((L"launcher " + std::wstring(start, cursor)).c_str(), &count);
     if (!argv) throw automation::Invalid("invalid-option");
     native::LocalPtr<LPWSTR> ownedArguments(argv);
     if (count == 2) value = argv[1];
     if (count != 2) throw automation::Invalid("invalid-option"); return true;
 }
+bool MayStartWith(PCWSTR cursor, std::wstring_view prefix) {
+    while (*cursor == L' ' || *cursor == L'\t') ++cursor;
+    for (const wchar_t c : prefix) {
+        while (*cursor == L'"') ++cursor;
+        if (*cursor != c) return false;
+        ++cursor;
+    }
+    return true;
+}
+
+int ReadDefaultProxy(Invocation& invocation, PCWSTR cursor) {
+    // The setup form (including earlier versions) puts its selected proxy first.
+    if (invocation.mode == Invocation::Mode::Check) return 0;
+    PCWSTR prefix = cursor;
+    while (*prefix == L'"' || cloudproxy::ArgumentSpace(*prefix)) ++prefix;
+    if (!MayStartWith(prefix, cloudproxy::ServerPrefix)) return 0;
+    try {
+        std::wstring first;
+        if (!Token(cursor, first)) return 0;
+        const auto server = cloudproxy::TrimArgument(first);
+        if (server.substr(0, cloudproxy::ServerPrefix.size()) != cloudproxy::ServerPrefix) return 0;
+        const auto endpoint = server.substr(cloudproxy::ServerPrefix.size());
+        if (!cloudproxy::ValidEndpoint(endpoint)) return 0;
+        std::wstring token;
+        while (Token(cursor, token)) {
+            const auto arg = cloudproxy::TrimArgument(token);
+            if (arg == L"--") break;
+            if (cloudproxy::ConflictingSwitch(arg)) return 0;
+        }
+        invocation.cloudProxy = endpoint;
+    } catch (const automation::Invalid&) {
+        // An ambiguous raw command line still belongs to the client. Leave its environment inherited.
+    }
+    return 0;
+}
+
+int ReadDisabledProxy(Invocation& invocation, PCWSTR cursor) {
+    while (*cursor == L' ' || *cursor == L'\t') ++cursor;
+    invocation.forwarded = cursor;
+    if (MayStartWith(cursor, L"--launcher-")) {
+        std::wstring key;
+        if (Token(cursor, key) && (key == L"--launcher-check" || key == L"--launcher-info" ||
+            key == L"--launcher-chain" || key == cloudproxy::OffSwitch)) return 20;
+    }
+    return 0;
+}
+
+int ReadForwarded(Invocation& invocation, PCWSTR cursor) {
+    while (*cursor == L' ' || *cursor == L'\t') ++cursor;
+    invocation.forwarded = cursor;
+    if (MayStartWith(cursor, cloudproxy::OffSwitch)) {
+        std::wstring token;
+        if (Token(cursor, token) && token == cloudproxy::OffSwitch) return ReadDisabledProxy(invocation, cursor);
+    }
+    return ReadDefaultProxy(invocation, invocation.forwarded);
+}
+
 HRESULT CALLBACK NotifyCallback(HWND window, UINT notification, WPARAM elapsed, LPARAM, LONG_PTR) {
     if (notification == TDN_TIMER && elapsed >= automation::contract::NotificationMs) SendMessageW(window, TDM_CLICK_BUTTON, IDCLOSE, 0);
     return S_OK;
@@ -38,36 +97,32 @@ Json DeploymentInfo(const std::wstring& root) {
 }
 int Invocation::Parse(PCWSTR raw) noexcept {
     forwarded = raw;
+    cloudProxy.clear();
     try {
         // Ordinary launch retains the complete original tail and does not initialize JSON or COM.
-        PCWSTR cursor = raw; while (*cursor == L' ' || *cursor == L'\t') ++cursor;
+        PCWSTR cursor = raw;
         // Windows allows quotes around any part of an option. Skip obvious non-options
         // cheaply; Token decodes the actual first argument and locates its raw tail.
-        PCWSTR prefix = cursor;
-        for (const wchar_t c : std::wstring_view(L"--launcher-")) {
-            while (*prefix == L'"') ++prefix;
-            if (*prefix != c) return 0;
-            ++prefix;
-        }
+        if (!MayStartWith(cursor, L"--launcher-")) return ReadDefaultProxy(*this, cursor);
         std::wstring token;
         if (!Token(cursor, token)) return 0;
+        if (token == cloudproxy::OffSwitch) return ReadDisabledProxy(*this, cursor);
         if (token == L"--launcher-check") {
             mode = Mode::Check;
-            while (*cursor == L' ' || *cursor == L'\t') ++cursor;
-            forwarded = cursor;
-            return 0;
+            return ReadForwarded(*this, cursor);
         }
         if (token == L"--launcher-info") { mode = Mode::Info; if (Token(cursor, token)) return 20; return 0; }
         if (token != L"--launcher-chain") return 0;
         mode = Mode::Chain; std::wstring path; bool feedback = false, delimiter = false;
         while (Token(cursor, token)) {
-            if (token == L"--") { delimiter = true; while (*cursor == L' ' || *cursor == L'\t') ++cursor; forwarded = cursor; break; }
+            if (token == L"--") { delimiter = true; break; }
             const auto key = token; if (!Token(cursor, token)) return 20;
             if (key == L"--result" && path.empty()) path = automation::FullPath(token);
             else if (key == L"--feedback" && !feedback) { feedback = true; if (token != L"quiet" && token != L"notify") return 20; options.feedback = token == L"notify" ? 1 : 0; }
             else return 20;
         }
         if (!delimiter || path.size() < 5 || _wcsicmp(path.c_str() + path.size() - 5, L".json")) return 20;
+        if (const int status = ReadForwarded(*this, cursor)) return status;
         options.root = RootDirectory();
         const auto registry = Join(options.root, automation::contract::RegistryFolder) + L"\\";
         if (automation::SamePath(path, Join(options.root, automation::contract::DiscoveryFile)) || automation::SamePath(path, Join(options.root, automation::contract::PolicyFile))

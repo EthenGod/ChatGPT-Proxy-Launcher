@@ -425,6 +425,7 @@ static bool StatusAndPlaceholderFit(App& app) {
 static int LanguageTests(App& app, PCWSTR folder) {
     const auto originalDpi = app.dpi;
     app.Check(Proxy, true); app.Check(CodexEnv, true); app.Set(Port, L"12345");
+    app.Set(Bypass, L"*.example.test");
     app.Set(Extra, L"--label=\"中文 日本語 spaces\""); app.Refresh(true);
     const auto arguments = app.Text(Preview), directory = app.Text(Directory);
     const auto revision = app.editRevision;
@@ -442,11 +443,26 @@ static int LanguageTests(App& app, PCWSTR folder) {
         REQUIRE(storedLanguage == l10n::At(i).tag && !l10n::FollowsSystem() && LanguageMenuSelected(i + 1));
         REQUIRE(app.dirty && app.editRevision == revision && app.Text(Preview) == arguments && app.Text(Directory) == directory);
         REQUIRE(app.Text(Startup) == l10n::Text("setup.option.startup") && app.Text(LanguageButton) == l10n::Current().name);
+        REQUIRE(app.Text(CodexEnv) == l10n::Text("setup.option.codex") && app.Text(CloudCodex) == l10n::Text("setup.option.cloudcodex"));
         REQUIRE(app.Text(SetupVersion) == l10n::Format("setup.compatibility.version", {{"version", L"" APP_RELEASE_VERSION}}));
         wchar_t tipText[4096]{}; TOOLINFOW tip{TTTOOLINFOW_V2_SIZE}; tip.hwnd = app.body;
-        tip.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); tip.lpszText = tipText;
-        SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(tipText), reinterpret_cast<LPARAM>(&tip));
-        REQUIRE(!wcscmp(tipText, HelpText(CodexEnvHelp)));
+        for (int id : {CodexEnvHelp, CloudCodexHelp}) {
+            tip.uId = reinterpret_cast<UINT_PTR>(app.Get(id)); tip.lpszText = tipText;
+            SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(tipText), reinterpret_cast<LPARAM>(&tip));
+            REQUIRE(!wcscmp(tipText, HelpText(id)));
+        }
+        const auto cloudHelp = app.Get(CloudCodexHelp);
+        REQUIRE(app.Text(CloudCodexHelp) == l10n::Text("setup.help.cloudcodex"));
+        REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && IsWindowEnabled(cloudHelp));
+        const auto dialogs = reminderCalls;
+        SetFocus(cloudHelp);
+        SendMessageW(cloudHelp, WM_KEYDOWN, VK_SPACE, 0);
+        SendMessageW(cloudHelp, WM_KEYUP, VK_SPACE, 0);
+        REQUIRE(reminderCalls == dialogs + 1 && lastDialog == l10n::Text("help.cloudcodex"));
+        REQUIRE(lastDialog.find(L"Node") != lastDialog.npos && lastDialog.find(L"Punycode") != lastDialog.npos);
+        SendMessageW(cloudHelp, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(app.S(12), app.S(12)));
+        SendMessageW(cloudHelp, WM_LBUTTONUP, 0, MAKELPARAM(app.S(12), app.S(12)));
+        REQUIRE(reminderCalls == dialogs + 2 && app.editRevision == revision);
         LOGFONTW fieldFont{}; REQUIRE(GetObjectW(reinterpret_cast<HFONT>(SendMessageW(app.Get(Directory), WM_GETFONT, 0, 0)), sizeof(fieldFont), &fieldFont));
         REQUIRE(!wcscmp(fieldFont.lfFaceName, L"Segoe UI"));
         for (UINT dpi : {96u, 120u, 144u, 168u, 192u}) for (int mode : {0, 1, 2}) {
@@ -459,8 +475,14 @@ static int LanguageTests(App& app, PCWSTR folder) {
                 app.advanced = advanced; app.Set(Title, l10n::Text(advanced ? "setup.section.advanced" : "common.launcher"));
                 app.Set(Advanced, l10n::Text(advanced ? "common.back" : "setup.action.advanced")); app.Layout();
                 REQUIRE(LabelsFit(app) && FooterAligned(app) && PartialSurfaceMatches(app, app.body));
-                RECT env{}, envHelp{}; GetWindowRect(app.Get(CodexEnv), &env); GetWindowRect(app.Get(CodexEnvHelp), &envHelp);
-                REQUIRE(env.left + app.S(app.CaptionWidth(CodexEnv, 0)) <= envHelp.left && envHelp.right <= env.right - app.S(56));
+                for (const auto& pair : {std::pair{CodexEnv, CodexEnvHelp}, {CloudCodex, CloudCodexHelp}}) {
+                    RECT row{}, help{}; GetWindowRect(app.Get(pair.first), &row); GetWindowRect(app.Get(pair.second), &help);
+                    REQUIRE(row.left + app.S(app.CaptionWidth(pair.first, 0)) <= help.left && help.right <= row.right - app.S(56));
+                    REQUIRE((IsWindowVisible(app.Get(pair.second)) != FALSE) == !advanced);
+                }
+                RECT env{}, cloud{}, protocol{};
+                GetWindowRect(app.Get(CodexEnv), &env); GetWindowRect(app.Get(CloudCodex), &cloud); GetWindowRect(app.Get(ProtocolLabel), &protocol);
+                REQUIRE(env.left == cloud.left && env.bottom <= cloud.top && cloud.bottom <= protocol.top);
                 for (const auto& pair : {std::pair{ProtocolLabel, ProtocolHelp}, {HostLabel, HostHelp}, {PortLabel, PortHelp}}) {
                     RECT label{}, help{}; GetWindowRect(app.Get(pair.first), &label); GetWindowRect(app.Get(pair.second), &help);
                     REQUIRE(label.right <= help.left);
@@ -672,10 +694,16 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(app.Checked(Startup) && app.Checked(Silent) && app.savedTarget.empty());
     REQUIRE(app.Text(Preview) == L"--no-startup-window");
     REQUIRE(app.Checked(CodexEnv) && !IsWindowVisible(app.Get(CodexEnv)) && !IsWindowVisible(app.Get(CodexEnvHelp)));
+    REQUIRE(app.Checked(CloudCodex) && !IsWindowVisible(app.Get(CloudCodex)) && !IsWindowVisible(app.Get(CloudCodexHelp)));
     SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
     REQUIRE(IsWindowVisible(app.Get(CodexEnv)) && IsWindowVisible(app.Get(CodexEnvHelp)));
     REQUIRE(app.Options().codexEnv && app.tooltip);
-    REQUIRE(SendMessageW(app.tooltip, TTM_GETTOOLCOUNT, 0, 0) == 4);
+    REQUIRE(IsWindowVisible(app.Get(CloudCodex)) && IsWindowEnabled(app.Get(CloudCodex)) && app.Options().cloudCodex);
+    REQUIRE(GetNextDlgTabItem(app.body, app.Get(CodexEnv), FALSE) == app.Get(CloudCodexHelp));
+    REQUIRE(GetNextDlgTabItem(app.body, app.Get(CloudCodexHelp), FALSE) == app.Get(CloudCodex));
+    REQUIRE(app.Text(CodexEnv) == L"应用于 Codex 环境变量" && app.Text(CloudCodex) == L"修复云端 Codex 对话无法连接");
+    REQUIRE(wcsstr(HelpText(CloudCodexHelp), L"绕过") && wcsstr(HelpText(CloudCodexHelp), L"Punycode"));
+    REQUIRE(SendMessageW(app.tooltip, TTM_GETTOOLCOUNT, 0, 0) == 5);
     wchar_t helpText[2048]{};
     TOOLINFOW help{TTTOOLINFOW_V2_SIZE}; help.hwnd = app.body;
     help.uId = reinterpret_cast<UINT_PTR>(app.Get(CodexEnvHelp)); help.lpszText = helpText;
@@ -686,18 +714,47 @@ static int RunTests(PCWSTR folder) {
         SendMessageW(app.tooltip, TTM_GETTEXTW, _countof(helpText), reinterpret_cast<LPARAM>(&help));
         REQUIRE(!wcscmp(helpText, id == PortHelp ? HelpText(PortHelp) : L"不要更改，除非你知道自己在做什么"));
     }
-    RECT helpBounds{}; GetWindowRect(app.Get(CodexEnvHelp), &helpBounds);
-    MapWindowPoints(nullptr, app.body, reinterpret_cast<POINT*>(&helpBounds), 2);
-    REQUIRE(ChildWindowFromPointEx(app.body, {(helpBounds.left + helpBounds.right) / 2, (helpBounds.top + helpBounds.bottom) / 2},
-        CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == app.Get(CodexEnvHelp));
+    for (int id : {CodexEnvHelp, CloudCodexHelp}) {
+        RECT helpBounds{}; GetWindowRect(app.Get(id), &helpBounds);
+        MapWindowPoints(nullptr, app.body, reinterpret_cast<POINT*>(&helpBounds), 2);
+        REQUIRE(ChildWindowFromPointEx(app.body, {(helpBounds.left + helpBounds.right) / 2, (helpBounds.top + helpBounds.bottom) / 2},
+            CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == app.Get(id));
+    }
     app.Set(Port, L"12345");
     REQUIRE(app.Text(Footer).find(L"请先保存工作") != std::wstring::npos);
     const auto proxyArguments = app.Text(Preview);
     SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
-    REQUIRE(!app.Options().codexEnv && app.Text(Preview) == proxyArguments);
+    REQUIRE(!app.Options().codexEnv && app.Options().cloudCodex && app.Text(Preview) == proxyArguments);
+    SetFocus(app.Get(CloudCodex));
+    SendMessageW(app.Get(CloudCodex), WM_KEYDOWN, VK_SPACE, 0);
+    SendMessageW(app.Get(CloudCodex), WM_KEYUP, VK_SPACE, 0);
+    REQUIRE(!app.Options().cloudCodex && !app.Options().codexEnv && app.Text(Preview) == L"--launcher-no-cloud-proxy " + proxyArguments);
     SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
+    REQUIRE(app.Options().codexEnv && !app.Options().cloudCodex && app.Text(Preview) == L"--launcher-no-cloud-proxy " + proxyArguments);
+    SendMessageW(app.Get(ProtocolSocks), BM_CLICK, 0, 0);
+    REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex) && app.Options().codexEnv);
+    REQUIRE(IsWindowEnabled(app.Get(CloudCodexHelp)) && GetNextDlgTabItem(app.body, app.Get(CloudCodexHelp), FALSE) != app.Get(CloudCodex));
+    SendMessageW(app.Get(ProtocolHttps), BM_CLICK, 0, 0);
+    REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex));
+    const auto originalHost = app.Text(Host);
+    app.Set(Host, L"例え.test");
+    REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && IsWindowEnabled(app.Get(CloudCodexHelp)) && !app.Checked(CloudCodex));
+    app.Set(Host, L"xn--r8jz45g.test");
+    REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex));
+    app.Set(Host, originalHost);
+    SendMessageW(app.Get(CloudCodex), BM_CLICK, 0, 0);
+    app.Set(Bypass, L"*.example.test");
+    REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && app.Checked(CloudCodex) && IsWindowEnabled(app.Get(CodexEnv)));
+    app.Set(Bypass, L" \t\u3000");
+    REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && app.Checked(CloudCodex));
+    app.Set(Bypass, L"");
+    SendMessageW(app.Get(ProtocolSocks), BM_CLICK, 0, 0);
+    REQUIRE(app.Options().cloudCodex && !IsWindowEnabled(app.Get(CloudCodex)));
+    SendMessageW(app.Get(Protocol), BM_CLICK, 0, 0);
+    REQUIRE(app.Options().cloudCodex);
     SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
     REQUIRE(!IsWindowVisible(app.Get(CodexEnv)) && app.Checked(CodexEnv));
+    REQUIRE(!IsWindowVisible(app.Get(CloudCodex)) && app.Checked(CloudCodex));
     app.Set(Port, L"");
     REQUIRE(!app.Checked(Desktop) && IsWindowEnabled(app.Get(Desktop)));
     SendMessageW(app.Get(Desktop), BM_CLICK, 0, 0);
@@ -773,7 +830,7 @@ static int RunTests(PCWSTR folder) {
     const auto switchTestDpi = app.dpi;
     for (UINT dpi : {96u, 144u, 192u}) for (int mode : {0, 1, 2}) {
         app.dpi = dpi; app.Theme(mode); app.Layout(); app.motionEnabled = false;
-        for (int id : {Startup, Desktop, Proxy, CodexEnv}) for (bool checked : {false, true}) {
+        for (int id : {Startup, Desktop, Proxy, CodexEnv, CloudCodex}) for (bool checked : {false, true}) {
             app.Check(id, checked);
             REQUIRE((GetWindowLongPtrW(app.Get(id), GWL_STYLE) & BS_TYPEMASK) == BS_AUTOCHECKBOX);
             REQUIRE(SwitchFocusMatches(app, id));
@@ -1047,6 +1104,7 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(storedCodexEnv == 1 && app.Checked(CodexEnv));
     REQUIRE(codexCloseCalls == 1 && envSavedBeforeClose && app.Text(Footer).find(L"已退出 ChatGPT") != std::wstring::npos);
     setup::Loaded versionState; REQUIRE(setup::Load(app.paths, versionState) && !versionState.deployedVersion.empty());
+    REQUIRE(app.Checked(CloudCodex) && versionState.options.cloudCodex);
     REQUIRE(app.Text(State).find(L"已部署 v" + versionState.deployedVersion) == 0);
     app.ScrollTo(0);
     REQUIRE(Capture(app, setup::Join(folder, L"setup-version.png").c_str()));
@@ -1064,16 +1122,24 @@ static int RunTests(PCWSTR folder) {
     // Manual startup review is advisory, and edits after it do not repeat the reminder.
     app.Set(Extra, L"--test-option"); app.Refresh(true);
     SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
+    SendMessageW(app.Get(CloudCodex), BM_CLICK, 0, 0);
     REQUIRE(IsWindowEnabled(app.Get(ApplyButton)));
-    app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
+    app.Command(ApplyButton, BN_CLICKED);
+    REQUIRE(app.busy && !IsWindowEnabled(app.Get(CloudCodex)) && !IsWindowEnabled(app.Get(CloudCodexHelp)));
+    REQUIRE(WaitForSave(app));
     REQUIRE(disableCalls == 1 && settingsCalls == 1 && reminderCalls == 1 && !app.dirty);
     REQUIRE(!app.Checked(CodexEnv) && storedCodexEnv == 0);
+    REQUIRE(!app.Checked(CloudCodex) && IsWindowEnabled(app.Get(CloudCodex)));
+    REQUIRE(setup::Load(app.paths, versionState) && !versionState.options.cloudCodex);
     REQUIRE(codexCloseCalls == 1);
     // A preference failure must not undo the completed deployment or flip the visible choice.
     envWriteResult = ERROR_ACCESS_DENIED;
+    SendMessageW(app.Get(ProtocolSocks), BM_CLICK, 0, 0);
     SendMessageW(app.Get(CodexEnv), BM_CLICK, 0, 0);
     app.Command(ApplyButton, BN_CLICKED); REQUIRE(WaitForSave(app));
     REQUIRE(app.Checked(CodexEnv) && storedCodexEnv == 0 && !app.dirty);
+    REQUIRE(!app.Checked(CloudCodex) && !IsWindowEnabled(app.Get(CloudCodex)));
+    REQUIRE(setup::Load(app.paths, versionState) && versionState.options.protocol == L"socks5" && !versionState.options.cloudCodex);
     REQUIRE(app.Text(Footer).find(L"未能记住") != std::wstring::npos);
     envWriteResult = ERROR_SUCCESS;
     REQUIRE(setup::ReadLink(app.paths.desktopLink, desktopLink) && desktopLink.arguments == app.Text(Preview));
@@ -1186,7 +1252,7 @@ static int RunTests(PCWSTR folder) {
         localized.Command(ApplyButton, BN_CLICKED); localized.Command(AddProgram, BN_CLICKED);
         localized.Command(OpenCompanions, BN_CLICKED); localized.DetectPort();
         REQUIRE(themeWrites == beforeTheme && languageMenuCalls == beforeLanguage && !localized.busy && !localized.detectingPort);
-        REQUIRE(!IsWindowEnabled(localized.Get(ApplyButton)) && !IsWindowEnabled(localized.Get(Port)));
+        REQUIRE(!IsWindowEnabled(localized.Get(ApplyButton)) && !IsWindowEnabled(localized.Get(Port)) && !IsWindowEnabled(localized.Get(CloudCodex)));
         puts("PASS compatibility labels/layout in three languages and isolated preview blocks writes/system actions");
     }
     return 0;

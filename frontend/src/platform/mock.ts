@@ -42,6 +42,7 @@ function previewOptions(options: SetupOptions) {
   if (options.extra.length > 16000 || /[\r\n\0]/.test(options.extra)) errors.extra = 'ui.invalid.extra'
   if (/[\r\n\0]/.test(options.bypass)) errors.bypass = 'ui.invalid.bypass'
   const parts: string[] = []
+  if (!options.cloudCodex) parts.push('--launcher-no-cloud-proxy')
   if (options.proxy) parts.push(quoteArgument(`--proxy-server=${options.protocol}://${options.host}:${options.port}`))
   if (options.silent) parts.push('--no-startup-window')
   if (options.bypass) parts.push(quoteArgument(`--proxy-bypass-list=${options.bypass}`))
@@ -73,7 +74,7 @@ export class MockSetupService implements PreviewSetupService {
       schemaVersion: 1, defaultDirectory, setupVersion, deployedVersion: scenario === 'unknown' ? '' : '1.1.2',
       deployed: !['first', 'missing'].includes(scenario), hasSettings: scenario !== 'first', validArguments: true, notice: '', payloadBytes: 1,
       preferences: { dark: true, language: 'auto', resolvedLanguage: 'zh-CN' },
-      options: { startup: false, silent: scenario === 'silent', desktop: true, proxy: true, codexEnv: true,
+      options: { startup: false, silent: scenario === 'silent', desktop: true, proxy: true, codexEnv: true, cloudCodex: true,
         protocol: 'http', host: '127.0.0.1', port: '7890', bypass: '', extra: '',
         directory: scenario === 'long' ? 'C:\\Apps\\' + '较长的目录名称\\'.repeat(12) + 'ChatGPT Launcher' : defaultDirectory },
     }

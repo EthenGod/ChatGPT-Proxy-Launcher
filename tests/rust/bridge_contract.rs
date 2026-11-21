@@ -210,16 +210,24 @@ fn raw_command_tail_preserves_quotes_empty_arguments_and_unicode() {
 }
 
 #[test]
-fn native_snapshot_requires_every_field_and_preserves_options() {
+fn native_snapshot_preserves_options_and_defaults_the_cloud_fix_on() {
     let text = include_str!("../fixtures/setup-snapshot.json");
     let snapshot: model::Snapshot = serde_json::from_str(text).unwrap();
     assert_eq!(snapshot.schema_version, 1);
     assert!(snapshot.options.silent);
+    assert!(!snapshot.options.cloud_codex);
     assert_eq!(
         snapshot.options.extra,
         "\"\" \"中文 参数\" \"quote\\\"end\""
     );
     let mut invalid: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut legacy = invalid.clone();
+    legacy["options"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cloudCodex");
+    let old = serde_json::from_value::<model::Snapshot>(legacy).unwrap();
+    assert!(old.options.cloud_codex);
     invalid["options"]
         .as_object_mut()
         .unwrap()

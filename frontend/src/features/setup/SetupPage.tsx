@@ -12,7 +12,7 @@ import { useAppearanceTransition } from '../../components/useAppearanceTransitio
 import { languageItems, resolveLanguage, translator, type MessageKey } from '../../i18n'
 import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeIssue, type ConflictLocation, type ErrorInfo } from './errors'
-import { portErrorKey, sameOptions } from './options'
+import { portErrorKey, sameOptions, supportsCloudCodex } from './options'
 import { useSetupValidation } from './useSetupValidation'
 import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
@@ -36,6 +36,7 @@ const helpTitles = {
   'setup.hint.startup': 'ui.help.startup',
   'ui.help.proxy': 'setup.dialog.proxy',
   'help.codex': 'setup.help.codex',
+  'help.cloudcodex': 'setup.help.cloudcodex',
   'setup.hint.directory': 'ui.help.directory',
   'ui.help.programs': 'ui.help.programs.title',
 } as const satisfies Partial<Record<MessageKey, MessageKey>>
@@ -475,7 +476,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
                         </Button></Hint>} />
                   </div>
                 </div>
-                <Toggle label={t('ui.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex')} />
+                <Toggle label={t('setup.option.codex')} checked={options.codexEnv} disabled={locked} onChange={value => update('codexEnv', value)} help={helpButton('help.codex')} />
+                <Toggle label={t('setup.option.cloudcodex')} checked={options.cloudCodex} disabled={locked || !supportsCloudCodex(options)}
+                  onChange={value => update('cloudCodex', value)} help={helpButton('help.cloudcodex')} />
               </div>
             </Collapsible.Panel></Collapsible.Root></section>
           <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 id="preview-title">{t('ui.arguments')}</h2>

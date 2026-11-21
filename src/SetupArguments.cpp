@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "CloudProxy.h"
 #include "Localization.h"
 #include "AutomationIO.h"
 #include "NativeMemory.h"
@@ -77,6 +78,7 @@ std::wstring QuoteArgument(const std::wstring& value) {
 }
 Result BuildArguments(const Options& options, std::wstring& arguments) {
     arguments.clear();
+    if (!options.cloudCodex) Append(arguments, cloudproxy::OffSwitch);
     if (options.proxy) {
         if (options.protocol != L"http" && options.protocol != L"https" && options.protocol != L"socks5")
             return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.proxy.protocol"));
@@ -101,22 +103,23 @@ Result BuildArguments(const Options& options, std::wstring& arguments) {
     Result result = Tokens(arguments, tokens);
     if (!result) return result;
     unsigned counts[ManagedOptionCount]{};
-    for (const auto& token : tokens) {
-        const auto value = token.Value();
+    for (size_t i = options.cloudCodex ? 0 : 1; i < tokens.size(); ++i) {
+        const auto value = tokens[i].Value();
         if (value == L"--") break;
         const ManagedOption kind = ManagedKind(value);
         if (kind != Other && ++counts[kind] > 1)
             return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.duplicate"));
-        if (value == L"--launcher-check" || value == L"--launcher-info" || value == L"--launcher-chain")
+        if (value == cloudproxy::OffSwitch || value == L"--launcher-check" || value == L"--launcher-info" || value == L"--launcher-chain")
             return Fail(ERROR_INVALID_PARAMETER, l10n::Text("error.arguments.reserved"));
     }
     return {};
 }
 Result ParseArguments(const std::wstring& arguments, Options& options) {
-    options.proxy = false; options.silent = false; options.bypass.clear(); options.extra.clear();
+    options.proxy = false; options.cloudCodex = true; options.silent = false; options.bypass.clear(); options.extra.clear();
     std::vector<Token> tokens;
     Result result = Tokens(arguments, tokens);
     if (!result) { options.extra = arguments; return result; }
+    options.cloudCodex = tokens.empty() || tokens.front().Value() != cloudproxy::OffSwitch;
     unsigned counts[ManagedOptionCount]{};
     for (const auto& token : tokens) {
         const auto value = token.Value();
@@ -130,7 +133,8 @@ Result ParseArguments(const std::wstring& arguments, Options& options) {
     }
     size_t lastUnknownEnd = 0;
     bool previousUnknown = false, positional = false;
-    for (const auto& token : tokens) {
+    for (size_t i = options.cloudCodex ? 0 : 1; i < tokens.size(); ++i) {
+        const auto& token = tokens[i];
         const auto argument = token.Value();
         if (argument == L"--") positional = true;
         if (!positional && argument == L"--no-startup-window") { options.silent = true; previousUnknown = false; continue; }

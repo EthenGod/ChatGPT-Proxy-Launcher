@@ -223,7 +223,7 @@ async page => {
   };
   try {
     await size(600, 700); await settled(); await choose('zh-CN', '简体中文');
-    const codex = page.getByRole('switch', { name: '应用于 Codex' });
+    const codex = page.getByRole('switch', { name: '应用于 Codex 环境变量' });
     if (await codex.getAttribute('aria-checked') !== 'true') await codex.click();
     await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });

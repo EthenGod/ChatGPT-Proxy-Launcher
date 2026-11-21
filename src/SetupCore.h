@@ -19,6 +19,7 @@ inline constexpr size_t MaxArguments = 8191; // Conservative, verified by Shell 
 struct Options {
     bool startup = false, silent = false, proxy = false, desktop = false;
     bool codexEnv = true;
+    bool cloudCodex = true;
     std::wstring protocol = L"http", host = L"127.0.0.1", port;
     std::wstring bypass, extra, directory;
 };
