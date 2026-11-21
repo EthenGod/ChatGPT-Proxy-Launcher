@@ -20,6 +20,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <memory>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -185,7 +186,8 @@ struct App {
     bool Checked(int id) const { return SendMessageW(Get(id), BM_GETCHECK, 0, 0) == BST_CHECKED; }
     void Check(int id, bool value) { SendMessageW(Get(id), BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0); }
     void Theme(int mode = -1);
-    int CaptionWidth(int id, int font) const;
+    int TextWidth(std::wstring_view text, HFONT font, int horizontalMargins = 0) const;
+    int CaptionWidth(int id, int font) const { return TextWidth(Text(id), fonts[font]); }
     int CaptionHeight(int id, int font, int width) const;
     void ResizeCaption(int id);
     void AppendFooterWarning(PCWSTR warning);
@@ -394,12 +396,11 @@ void App::UpdateTooltip() {
     }
 }
 
-int App::CaptionWidth(int id, int font) const {
-    HDC dc = GetDC(body); const auto old = SelectObject(dc, fonts[font]); SIZE size{};
-    const auto caption = Text(id);
-    GetTextExtentPoint32W(dc, caption.c_str(), static_cast<int>(caption.size()), &size);
+int App::TextWidth(std::wstring_view text, HFONT font, int horizontalMargins) const {
+    HDC dc = GetDC(body); const auto old = SelectObject(dc, font); SIZE size{};
+    GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &size);
     SelectObject(dc, old); ReleaseDC(body, dc);
-    return MulDiv(size.cx, 96, static_cast<int>(dpi)) + 2;
+    return MulDiv(size.cx + horizontalMargins, 96, static_cast<int>(dpi)) + 2;
 }
 int App::CaptionHeight(int id, int font, int width) const {
     HDC dc = GetDC(body); const auto old = SelectObject(dc, fonts[font]);
@@ -692,10 +693,20 @@ void App::Layout() {
     place(Protocol, 52, 462 + envOffset, 64, 28, !advanced);
     place(ProtocolHttps, 120, 462 + envOffset, 64, 28, !advanced);
     place(ProtocolSocks, 188, 462 + envOffset, 64, 28, !advanced);
-    proxyLabel(HostLabel, HostHelp, 272);
-    place(Host, 284, 466 + envOffset, inner - 368, 20, !advanced);
-    proxyLabel(PortLabel, PortHelp, width - 152);
-    place(Port, width - 140, 466 + envOffset, 80, 20, !advanced);
+    const HWND port = Get(Port);
+    const auto portFont = reinterpret_cast<HFONT>(SendMessageW(port, WM_GETFONT, 0, 0));
+    const LRESULT margins = SendMessageW(port, EM_GETMARGINS, 0, 0);
+    const int cueWidth = TextWidth(l10n::Text("setup.placeholder.port"), portFont, LOWORD(margins) + HIWORD(margins));
+    // The edits have 12-DIP painted insets and a 16-DIP gap between the frames.
+    constexpr int hostLeft = 284, editGap = 12 + 16 + 12, minEditWidth = 80;
+    const int portRight = width - 60;
+    const int maxPortWidth = std::max(minEditWidth, portRight - hostLeft - editGap - minEditWidth);
+    const int portWidth = std::clamp(cueWidth, minEditWidth, maxPortWidth);
+    const int portLeft = portRight - portWidth;
+    proxyLabel(HostLabel, HostHelp, hostLeft - 12);
+    place(Host, hostLeft, 466 + envOffset, portLeft - editGap - hostLeft, 20, !advanced);
+    proxyLabel(PortLabel, PortHelp, portLeft - 12);
+    place(Port, portLeft, 466 + envOffset, portWidth, 20, !advanced);
     place(PreviewTitle, 32, advanced ? 588 : 542 + envOffset, width - 64, 20);
     place(Preview, 44, advanced ? 632 : 586 + envOffset, width - 88, 44);
     place(DirectoryLabel, 32, 108, width - 64, 20, advanced);

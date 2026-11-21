@@ -417,7 +417,9 @@ static bool StatusAndPlaceholderFit(App& app) {
         RECT field{}; GetClientRect(app.Get(id), &field);
         const LRESULT margins = SendMessageW(app.Get(id), EM_GETMARGINS, 0, 0);
         if (measured.cx > field.right - LOWORD(margins) - HIWORD(margins)) {
-            printf("Clipped placeholder: %ls %u DPI control %d\n", l10n::Current().tag, app.dpi, id); fits = false;
+            printf("Clipped placeholder: %ls %u DPI control %d, text %ld px, client %ld px, margins %u + %u px\n",
+                l10n::Current().tag, app.dpi, id, measured.cx, field.right,
+                static_cast<unsigned>(LOWORD(margins)), static_cast<unsigned>(HIWORD(margins))); fits = false;
         }
     }
     return fits;
