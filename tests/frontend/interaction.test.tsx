@@ -60,7 +60,48 @@ describe('settings prototype behavior', () => {
       expect(validate).toHaveBeenCalledTimes(3)
     } finally { vi.useRealTimers() }
   })
-  it('keeps a noninteractive skeleton until a read or retry has a real snapshot', async () => {
+  it('finishes quick settings, validation and program reads before showing any placeholder', async () => {
+    vi.useFakeTimers()
+    try {
+      const service = Object.assign(new MockSetupService('normal', 0), {
+        native: true, validate: async () => ({ valid: true, arguments: 'ready', errors: {} }),
+      })
+      mount(service, true)
+      const painted = '.setup-skeleton:not([data-skeleton-wait]), .program-placeholder:not([data-skeleton-wait]), .argument-preview .argument-current .skeleton-argument, .preview-checking'
+      for (const elapsed of [0, 10, 10, 10, 180]) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(elapsed) })
+        expect(document.querySelector(painted)).toBeNull()
+      }
+      expect(screen.getByRole('region', { name: '启动参数预览' })).toHaveTextContent('ready')
+      expect(screen.getByText('Session Tools')).toBeVisible()
+      expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
+    } finally { vi.useRealTimers() }
+  })
+  it('gives the preview its own delay after a slow settings read', async () => {
+    const service = Object.assign(new MockSetupService('normal', 0), {
+      native: true, validate: () => new Promise<Validation>(resolve => {
+        window.setTimeout(() => resolve({ valid: true, arguments: 'ready', errors: {} }), 35)
+      }),
+    })
+    const snapshot = await service.load()
+    let finishRead!: (value: typeof snapshot) => void
+    vi.spyOn(service, 'load').mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    vi.useFakeTimers()
+    try {
+      mount(service)
+      const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+      await advance(580)
+      expect(document.querySelector('.setup-skeleton:not([data-skeleton-wait])')).toBeInTheDocument()
+      await act(async () => finishRead(snapshot))
+      const preview = screen.getByRole('region', { name: '启动参数预览' })
+      expect(preview).toHaveAttribute('aria-busy', 'true')
+      expect(preview.querySelector('.skeleton-argument, .preview-checking')).toBeNull()
+      await advance(36)
+      expect(preview).toHaveTextContent('ready')
+      expect(preview).toHaveAttribute('aria-busy', 'false')
+    } finally { vi.useRealTimers() }
+  })
+  it('delays the initial skeleton and keeps the error visible until a retry succeeds', async () => {
     const service = new MockSetupService('normal', 0)
     const snapshot = await service.load()
     let fail!: (reason: unknown) => void
@@ -75,6 +116,8 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('status')).toHaveTextContent(t('setup.preview.loading'))
     const skeleton = main.querySelector('.setup-skeleton')
     expect(skeleton).toHaveAttribute('aria-hidden', 'true')
+    expect(skeleton).toHaveAttribute('data-skeleton-wait')
+    await waitFor(() => expect(skeleton).not.toHaveAttribute('data-skeleton-wait'))
     expect(skeleton?.querySelector('button, input, [tabindex]')).toBeNull()
     expect(main.querySelector('.version-badge')).toBeNull()
     expect(screen.getByRole('button', { name: '关闭' })).toBeEnabled()
@@ -83,7 +126,9 @@ describe('settings prototype behavior', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(t('ui.load.failed'))
     expect(main.querySelector('.setup-skeleton')).toBeNull()
     await user.click(screen.getByRole('button', { name: t('ui.retry') }))
-    expect(main.querySelector('.setup-skeleton')).toBeInTheDocument()
+    expect(main.querySelector('.setup-skeleton')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent(t('ui.load.failed'))
+    expect(screen.getByRole('button', { name: t('ui.retry') })).toBeDisabled()
     await act(async () => finish({ ...snapshot, setupVersion: '2.3.4' }))
     expect(main).toHaveAttribute('aria-busy', 'false')
     expect(main.querySelector('.setup-skeleton')).toBeNull()
@@ -592,7 +637,13 @@ describe('settings prototype behavior', () => {
     requestClose()
     expect(save).toHaveBeenCalledOnce(); expect(host.close).not.toHaveBeenCalled()
     expect(screen.getByRole('textbox', { name: '端口' })).toBeDisabled()
+    const state = await service.load()
+    let finishRead!: (value: typeof state) => void
+    vi.spyOn(service, 'load').mockImplementationOnce(() => new Promise(done => { finishRead = done }))
     await act(async () => resolve({ commit: 'saved', message: 'setup.status.saved', tasks: [] }))
+    expect(button).toHaveTextContent(translator('zh-CN')('setup.status.saving'))
+    expect(document.querySelector('.skeleton-bar')).toBeNull()
+    await act(async () => finishRead(state))
     await waitFor(() => expect(screen.getByRole('button', { name: '完成' })).toHaveFocus())
     expect(screen.queryByRole('button', { name: '保存更改' })).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(/^已保存$/)
@@ -775,6 +826,36 @@ describe('settings prototype behavior', () => {
       expect(dialog).toHaveTextContent(label)
       expect(dialog).toHaveTextContent(badge)
     })
+  it('keeps program results, empty states and errors visible while refreshing', async () => {
+    const service = new MockSetupService('first', 0)
+    let finish!: (result: ProgramList) => void
+    let fail!: (reason: unknown) => void
+    vi.spyOn(service, 'listPrograms').mockImplementation(() => new Promise((resolve, reject) => {
+      finish = resolve; fail = reject
+    }))
+    const { user } = mount(service, true)
+    const group = await screen.findByRole('region', { name: '附加程序' })
+    const refresh = within(group).getByRole('button', { name: '刷新附加程序列表' })
+    const result = group.querySelector('.program-results')!
+    const placeholder = group.querySelector('.program-placeholder')!
+    expect(placeholder).toHaveAttribute('data-skeleton-wait')
+    await waitFor(() => expect(placeholder).not.toHaveAttribute('data-skeleton-wait'))
+    expect(placeholder).toHaveAttribute('aria-hidden', 'true')
+    expect(group.querySelector('[aria-live]')).toHaveTextContent('正在读取附加程序')
+    expect(result).not.toContainElement(group.querySelector('[aria-live]'))
+    await act(async () => finish({ entries: [], incomplete: false }))
+    await user.click(refresh)
+    expect(result).toHaveAttribute('aria-busy', 'true')
+    expect(result).toHaveTextContent('暂无附加程序')
+    expect(result.querySelector('.skeleton-bar')).toBeNull()
+    await act(async () => fail({ nativeError: 5 }))
+    await user.click(refresh)
+    expect(result).toHaveTextContent('未能刷新程序列表')
+    expect(result.querySelector('.skeleton-bar')).toBeNull()
+    await act(async () => finish({ entries: [], incomplete: true }))
+    expect(result).toHaveTextContent('部分程序未能列出')
+    expect(result).not.toHaveTextContent('暂无附加程序')
+  })
   it('does not let an old directory read replace the list after an import', async () => {
     const service = new MockSetupService('first', 0)
     let finish!: (result: ProgramList) => void
@@ -1005,7 +1086,7 @@ describe('native settings behavior', () => {
     await act(async () => pending[0]!.resolve({ valid: true, arguments: 'obsolete', errors: {} }))
     const preview = screen.getByRole('region', { name: '启动参数预览' })
     expect(preview).toHaveAttribute('aria-busy', 'true')
-    expect(preview.querySelector('.skeleton-argument')).toBeInTheDocument()
+    await waitFor(() => expect(preview.querySelector('.skeleton-argument')).toBeInTheDocument())
     expect(preview).not.toHaveTextContent('obsolete')
     expect(screen.getByRole('status')).not.toHaveTextContent('请检查输入内容')
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()
@@ -1013,7 +1094,7 @@ describe('native settings behavior', () => {
     expect(preview).toHaveTextContent('current-native-arguments')
     expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
     fireEvent.change(screen.getByRole('textbox', { name: '地址' }), { target: { value: 'bad/host' } })
-    expect(preview).toHaveTextContent('正在校验…')
+    await waitFor(() => expect(preview).toHaveTextContent('正在校验…'))
     expect(preview).toHaveTextContent('current-native-arguments')
     expect(preview.querySelector('.skeleton-argument')).toBeNull()
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled()

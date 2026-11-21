@@ -15,7 +15,7 @@ import { nativeIssue, type ConflictLocation, type ErrorInfo } from './errors'
 import { portErrorKey, sameOptions, supportsCloudCodex } from './options'
 import { useSetupValidation } from './useSetupValidation'
 import { ArgumentPreview } from './ArgumentPreview'
-import { SetupSkeleton } from './SetupSkeleton'
+import { SetupSkeleton, useDelayedLoading } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
 import type { ListedProgram, SaveResult, SetupService, WindowHost } from './contract'
 import { CompanionPrograms, ProgramDetails } from './CompanionPrograms'
@@ -164,10 +164,11 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     const revision = ++loadRevision.current
     savedWithoutSnapshot.current = false
     ++detectRevision.current; setDetectionPhase('idle')
-    setLoading(true); setLoadError(null)
+    setLoading(true)
     try {
       const data = await service.load()
       if (!alive.current || revision !== loadRevision.current) return
+      setLoadError(null)
       resetValidation()
       setSnapshot(data); setOptions({ ...data.options }); setLanguage(data.preferences.language)
       requestedLanguage.current = data.preferences.language
@@ -403,17 +404,20 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     return <Hint label={label}><Button className="icon-button help-button" aria-label={label} onClick={() => { setHelp(key); openDialog('help') }} disabled={busy}><CircleHelp size={16} /></Button></Hint>
   }
   const portError = options?.proxy ? portErrorKey(options.port) : undefined
-  const invalidInput = !!portError || validation?.valid === false
-  const checking = !!options && !validation && !portError
+  const invalidInput = !!portError || previewValue?.valid === false
+  const firstRead = loading && !snapshot && !loadError
+  const checking = !!options && !validation && !portError && !busy && !loading && !closed
+  const showLoading = useDelayedLoading(firstRead)
+  const showChecking = useDelayedLoading(checking)
   let previewText = ''
   if (portError) previewText = t(portError)
   else if (previewValue?.valid) previewText = previewValue.arguments || t('ui.arguments.empty')
-  else if (validation) previewText = validation.detail || t(Object.values(validation.errors)[0] ?? 'setup.preview.invalid')
+  else if (previewValue) previewText = previewValue.detail || t(Object.values(previewValue.errors)[0] ?? 'setup.preview.invalid')
   const generatedArguments = !invalidInput && previewValue?.valid ? previewValue.arguments : null
   const fieldError = (key: keyof SetupOptions) => key === 'port' && portError ? t(portError)
-    : validation?.errors[key] ? t(validation.errors[key]) : undefined
-  const validationDetails = validation && !validation.valid && validation.nativeError ? validation : null
-  const saved = result?.commit === 'saved' && !dirty
+    : previewValue?.errors[key] ? t(previewValue.errors[key]) : undefined
+  const validationDetails = previewValue && !previewValue.valid && previewValue.nativeError ? previewValue : null
+  const saved = !saving && result?.commit === 'saved' && !dirty
   const deployment = snapshot?.deployed ? snapshot.deployedVersion ? t('setup.state.version', { version: snapshot.deployedVersion }) : t('setup.state.unknownversion')
     : t(snapshot?.hasSettings ? 'setup.state.missing' : 'setup.state.absent')
   const discard = dialog === 'discard'
@@ -434,7 +438,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     <ScrollBox persistent className="settings-scroll" contentClassName="settings-content" label={t('common.launcher')} render={<main role="main" aria-busy={loading} />}>
       <header className="settings-header"><div className="heading-block"><h1>{t('common.launcher')}</h1>
         {snapshot ? <span className="version-badge" aria-label={t('setup.version', { version: snapshot.setupVersion })}>v{snapshot.setupVersion}</span>
-          : loading && <span className="skeleton-bar skeleton-version" aria-hidden="true" />}</div>
+          : firstRead && <span data-skeleton-wait={!showLoading || undefined} className="skeleton-bar skeleton-version" aria-hidden="true" />}</div>
         <div className="appearance-controls" data-detect-pending={detectionPhase === 'pending' || undefined}><ChoiceMenu label={t('ui.language')} value={language} onChange={changeLanguage} changeAfterClose disabled={appearanceLocked}
           items={[{ value: 'auto', label: t('setup.language.system') }, ...languageItems]} icon={<Globe2 size={16} />} variant="icon" />
           <Hint label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}><Button className="icon-button" onClick={() => {
@@ -443,9 +447,9 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
           }} disabled={appearanceLocked} aria-label={t(dark ? 'setup.theme.light' : 'setup.theme.dark')}>{dark ? <Sun size={16} /> : <Moon size={16} />}</Button></Hint>
         </div>
       </header>
-      {loading ? <SetupSkeleton />
+      {firstRead ? <SetupSkeleton visible={showLoading} />
         : loadError ? <div className="load-state error-state" role="alert"><AlertCircle size={20} /><p>{t(loadError.message)}</p>{errorDetails(loadError.issue)}
-          {loadError.message === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
+          {loadError.message === 'ui.load.failed' && <Button className="button secondary-button" disabled={busy || loading} onClick={() => void load()}>{t('ui.retry')}</Button>}</div>
         : options && snapshot && <>
           <div className="deployment-status"><span className={`status-dot ${snapshot.deployed ? 'is-deployed' : ''}`} /><span>{deployment}</span></div>
           {snapshot.notice && <p className="secondary small" role="status">{snapshot.notice}</p>}
@@ -485,7 +489,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
               </div>
             </Collapsible.Panel></Collapsible.Root></section>
           <section className="settings-section" aria-labelledby="preview-title" aria-busy={checking}><div className="preview-heading"><h2 id="preview-title">{t('setup.section.preview')}</h2>
-              <div className="preview-actions">{checking && <span className="preview-checking" data-motion-text>{t('ui.arguments.checking')}</span>}
+              <div className="preview-actions">{showChecking && !validationDetails && <span className="preview-checking" data-motion-text>{t('ui.arguments.checking')}</span>}
                 <div className="preview-details" data-visible={!!validationDetails || undefined} inert={!validationDetails} aria-hidden={!validationDetails || undefined}>
                   <Button className="text-button" onClick={() => { if (validationDetails) showError(validationDetails) }}>
                     {t('ui.details')}<ChevronRight size={12} aria-hidden="true" />
@@ -494,7 +498,7 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
               </div>
             </div>
             <ArgumentPreview fieldRef={preview} label={t('setup.section.preview')} value={generatedArguments} text={previewText}
-              invalid={invalidInput} skeleton={checking && !previewValue} />
+              invalid={invalidInput} skeleton={showChecking && !previewValue} />
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
             <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>
@@ -515,17 +519,20 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
     </ScrollBox>
     <footer className="settings-footer">
       <ScrollBox className="status-scroll" label={t('ui.status')}><SetupStatus t={t} result={result} issue={notice}
-        warnings={preferenceWarnings} active={!busy && !loading && !loadError} loading={loading} invalid={invalidInput}
+        warnings={preferenceWarnings} active={!busy && !loading && !loadError} showSkeleton={firstRead && showLoading}
+        loadingText={loading ? 'setup.preview.loading' : showChecking ? 'ui.arguments.checking' : undefined} invalid={invalidInput}
         warnBeforeSave={!!options?.proxy && options.codexEnv} onResult={() => openDialog('result')} onIssue={showError}
         onShowInput={() => { preview.current?.focus({ preventScroll: true }); preview.current?.scrollIntoView({ block: 'nearest' }) }} /></ScrollBox>
       <div className="footer-actions"><Button ref={doneButton} className={`button ${saved ? 'primary-button' : 'secondary-button'}`} disabled={busy} onClick={() => closeRequest.current()}>{t(saved ? 'common.done' : 'common.close')}</Button>
         {dirty && <span className="sr-only" id="unsaved-status">{t('setup.status.unsaved')}</span>}
-        {loading ? <span className="skeleton-bar skeleton-save" aria-hidden="true" /> : !saved && !loadError &&
-          <Button ref={saveButton} className="button primary-button save-button" data-edited={dirty && !busy || undefined}
-            data-validating={!locked && checking && previewValue?.valid || undefined} aria-describedby={dirty ? 'unsaved-status' : undefined}
-            disabled={locked || !validation?.valid} onClick={() => void save()}>
-            {saving && <LoaderCircle size={16} className="spinner" />}{t(saving ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}
-          </Button>}</div>
+        {!saved && !loadError && <span className="save-slot" data-deploy-label={t('setup.action.deploy')}>
+          {firstRead ? <span data-skeleton-wait={!showLoading || undefined} className="skeleton-bar skeleton-save" aria-hidden="true" />
+            : <Button ref={saveButton} className="button primary-button save-button" aria-busy={saving || undefined} data-edited={dirty && !busy || undefined}
+              data-validating={!locked && checking && previewValue?.valid || undefined} aria-describedby={dirty ? 'unsaved-status' : undefined}
+              disabled={locked || !validation?.valid} onClick={() => void save()}>
+              {saving && <LoaderCircle size={16} className="spinner" aria-hidden="true" />}{t(saving ? 'setup.status.saving' : snapshot?.hasSettings ? 'setup.action.save' : 'setup.action.deploy')}
+            </Button>}
+        </span>}</div>
       <NoticeToasts manager={noticeManager} t={t} onOpen={item => { setSelectedNotice(item); openDialog('notice'); focusReturn.current = doneButton.current }} />
     </footer>
     <Modal open={dialogOpen} title={dialogTitle} variant={dialogVariant} focusReturn={focusReturn} initialFocus={discard ? cancelButton : undefined} onClose={() => { if (!activeOperation.current) setDialogOpen(false) }}

@@ -5,6 +5,7 @@ import { Button, Hint, HintPopup } from '../../components/controls'
 import { ScrollBox } from '../../components/ScrollBox'
 import type { translator } from '../../i18n'
 import type { ListedProgram, ProgramList, SetupService } from './contract'
+import { useDelayedLoading } from './SetupSkeleton'
 import { nativeIssue, type ErrorInfo } from './errors'
 
 type Translate = ReturnType<typeof translator>
@@ -102,6 +103,7 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
   const [list, setList] = useState<ProgramList | null>(null)
   const [issue, setIssue] = useState<ErrorInfo | null>(null)
   const [pending, setPending] = useState(false)
+  const showLoading = useDelayedLoading(active && pending && !list && !issue)
   const [request, refresh] = useReducer(n => n + 1, 0)
   const results = useRef<HTMLDivElement>(null)
   const previousLayout = useRef<ListLayout | null>(null)
@@ -147,6 +149,7 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
         <Button className="control-button program-add" disabled={locked} onClick={onAdd}><Plus size={15} />{t('setup.action.add')}</Button>
       </div>
     </div>
+    <span className="sr-only" aria-live="polite">{showLoading && t('ui.programs.loading')}</span>
     <div ref={results} className="program-results" aria-busy={pending}>
       {entries.length > 0 && <ScrollBox className="program-scroll" label={t('ui.programs')}>
         <ProgramHints><ul className="program-list">{entries.map(program => <li key={program.id} data-program-id={program.id}>
@@ -159,7 +162,7 @@ export function CompanionPrograms({ service, active, revision, locked, help, t, 
             </Button>} />
         </li>)}</ul></ProgramHints>
       </ScrollBox>}
-      {!list && !issue && <div className="program-placeholder" aria-hidden="true">{[0, 1].map(i => <div key={i}>
+      {!list && !issue && <div className="program-placeholder" data-skeleton-wait={!showLoading || undefined} aria-hidden="true">{[0, 1].map(i => <div key={i}>
         <span className="skeleton-bar program-skeleton-icon" /><span className="skeleton-bar skeleton-label" /></div>)}</div>}
       {list && !entries.length && !issue && !list.incomplete && <p className="program-empty"><Folder size={18} aria-hidden="true" /><span data-motion-text>{t('ui.programs.empty')}</span></p>}
       {issue ? <div className="program-message" role="status"><CircleAlert size={15} aria-hidden="true" /><span data-motion-text>{t('ui.programs.failed')}</span>
