@@ -335,6 +335,8 @@ async page => {
     const statusSwap = await checkStatusSwap(380);
     await checkStatusSwap(464);
     await checkPreviewShrink();
+    // Exercise a real change of text rows while the footer icons stay centered.
+    await size(420, 700); await settled();
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });
     const icons = [];
     try {
@@ -345,7 +347,7 @@ async page => {
       icons.push(await checkStatusIcon(page.locator('.status-input-link > svg'), 'ja-JP', '日本語', false));
       await port.fill(value);
       await page.waitForFunction(() => !document.querySelector('.save-button')?.disabled);
-    } finally { await ink.evaluate(el => el.remove()); }
+    } finally { await ink.evaluate(el => el.remove()); await size(600, 700); await settled(); }
     const saveFade = await checkSaveFade();
     await size(780, 1000); await settled(); await choose('zh-CN', '简体中文');
     const labels = [];
