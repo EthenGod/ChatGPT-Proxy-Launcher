@@ -407,9 +407,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const invalidInput = !!portError || previewValue?.valid === false
   const firstRead = loading && !snapshot && !loadError
   const checking = !!options && !validation && !portError && !busy && !loading && !closed
-  // The initial read can hand straight over to native validation in the same render.
-  const showLoading = useDelayedLoading(firstRead || checking)
-  const showChecking = checking && showLoading
+  const showLoading = useDelayedLoading(firstRead)
+  const showChecking = useDelayedLoading(checking)
   let previewText = ''
   if (portError) previewText = t(portError)
   else if (previewValue?.valid) previewText = previewValue.arguments || t('ui.arguments.empty')

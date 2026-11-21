@@ -77,6 +77,30 @@ describe('settings prototype behavior', () => {
       expect(screen.getByRole('button', { name: '保存更改' })).toBeEnabled()
     } finally { vi.useRealTimers() }
   })
+  it('gives the preview its own delay after a slow settings read', async () => {
+    const service = Object.assign(new MockSetupService('normal', 0), {
+      native: true, validate: () => new Promise<Validation>(resolve => {
+        window.setTimeout(() => resolve({ valid: true, arguments: 'ready', errors: {} }), 35)
+      }),
+    })
+    const snapshot = await service.load()
+    let finishRead!: (value: typeof snapshot) => void
+    vi.spyOn(service, 'load').mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    vi.useFakeTimers()
+    try {
+      mount(service)
+      const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+      await advance(580)
+      expect(document.querySelector('.setup-skeleton:not([data-skeleton-wait])')).toBeInTheDocument()
+      await act(async () => finishRead(snapshot))
+      const preview = screen.getByRole('region', { name: '启动参数预览' })
+      expect(preview).toHaveAttribute('aria-busy', 'true')
+      expect(preview.querySelector('.skeleton-argument, .preview-checking')).toBeNull()
+      await advance(36)
+      expect(preview).toHaveTextContent('ready')
+      expect(preview).toHaveAttribute('aria-busy', 'false')
+    } finally { vi.useRealTimers() }
+  })
   it('delays the initial skeleton and keeps the error visible until a retry succeeds', async () => {
     const service = new MockSetupService('normal', 0)
     const snapshot = await service.load()
