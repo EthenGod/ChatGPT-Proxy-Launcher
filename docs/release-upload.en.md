@@ -1,6 +1,6 @@
-[简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.ja.md)
+[简体中文](release-upload.md) | [English](release-upload.en.md) | [日本語](release-upload.ja.md)
 
-> This document may include machine-translated content. If anything differs, refer to the [Chinese original](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.md).
+> This document may include machine-translated content. If anything differs, refer to the [Chinese original](release-upload.md).
 
 # v1.2.2 Proxy support for cloud Codex conversations
 

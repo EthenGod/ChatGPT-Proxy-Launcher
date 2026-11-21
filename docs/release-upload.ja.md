@@ -1,6 +1,6 @@
-[简体中文](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.md) | [English](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.en.md) | [日本語](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.ja.md)
+[简体中文](release-upload.md) | [English](release-upload.en.md) | [日本語](release-upload.ja.md)
 
-> 機械翻訳を含む場合があります。内容が異なる場合は[中国語原版](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.2/docs/release-upload.md)を参照してください。
+> 機械翻訳を含む場合があります。内容が異なる場合は[中国語原版](release-upload.md)を参照してください。
 
 # v1.2.2 クラウドの Codex 会話でのプロキシ利用と起動引数のプレビュー
 

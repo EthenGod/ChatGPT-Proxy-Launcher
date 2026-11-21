@@ -7,7 +7,6 @@ $suffixes = @('', '.en', '.ja')
 $localeTags = @('zh-CN', 'en-US', 'ja-JP')
 $groups = @('README', 'docs/translating', 'docs/taskbar-repair', 'docs/release-upload', 'assets/README')
 $releaseTag = 'v' + (ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $ProjectRoot 'frontend/package.json')))).version
-$repository = "https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/$releaseTag/"
 $sources = @(& (Join-Path $ProjectRoot 'tools/release-sources.ps1') -ProjectRoot $ProjectRoot)
 $rootPrefix = $ProjectRoot.TrimEnd('\') + '\'
 
@@ -44,7 +43,6 @@ foreach ($group in $groups) {
         if ($navigation.Count -ne $suffixes.Count) { throw "Missing language links: $name" }
         for ($i = 0; $i -lt $suffixes.Count; ++$i) {
             $expected = $baseName + $suffixes[$i] + '.md'
-            if ($group -eq 'docs/release-upload') { $expected = $repository + $group + $suffixes[$i] + '.md' }
             if ($navigation[$i].Groups[1].Value -cne $expected) { throw "Incorrect language navigation: $name" }
         }
         foreach ($match in [regex]::Matches($text, '\]\(([^)\r\n]+)\)')) {
