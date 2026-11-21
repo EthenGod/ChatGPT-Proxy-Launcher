@@ -272,21 +272,32 @@ button svg { flex-shrink: 0; }
   .program-title { gap: 4px; }
   .program-badge { padding-inline: 4px; }
 }
-.settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
-.settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out, row-gap var(--motion-exit) ease-in-out; }
-.settings-footer:has(.status-presence:not([data-exiting])) { row-gap: 8px; }
+.settings-footer { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 16px; padding: 14px max(var(--page-inset), calc((100% - var(--settings-width)) / 2)); background: var(--gray-2); border-top: 1px solid var(--gray-6); }
+.settings-footer { transition: padding-block var(--motion-fast) ease-out, column-gap var(--motion-fast) ease-out; }
 .status-scroll { --status-inset: 8px; flex: 1 1 12rem; max-height: 90px; margin-inline-start: calc(0px - var(--status-inset)); }
 .footer-status { display: flex; flex-direction: column; align-items: stretch; font-size: 12px; line-height: 18px; color: var(--gray-11); }
-.status-presence { display: grid; grid-template-rows: minmax(0, 1fr); }
-.status-presence[data-exiting] { grid-template-rows: minmax(0, 0fr); opacity: 0; pointer-events: none; }
+.status-slot { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; }
+.status-presence { grid-area: 1 / 1; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+.status-presence:is([data-exiting], [data-waiting], [data-reserving]) { opacity: 0; }
+.status-presence[data-exiting] { pointer-events: none; }
+.status-presence[data-collapsing] { grid-template-rows: minmax(0, 0fr); }
 .status-clip { min-height: 0; overflow: clip; }
+.status-slot:last-child .status-clip::after { content: ''; display: block; height: calc((var(--control-height) - 24px) / 2); }
 .status-clip:focus-within { overflow: visible; }
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
-  .status-presence { transition: opacity var(--motion-fast) ease-out, grid-template-rows var(--motion-exit) ease-in-out; }
-  .status-presence[data-exiting] { transition: opacity var(--motion-exit) ease-in, grid-template-rows var(--motion-exit) ease-in-out; }
-  @starting-style { .status-presence { opacity: 0; grid-template-rows: minmax(0, 0fr); } }
+  .status-presence { will-change: opacity; transition: opacity var(--motion-fast) ease-out; }
+  .status-presence[data-exiting] { transition: opacity var(--motion-exit) ease-in; }
+  .status-slot[data-replacing] > [data-exiting] { transition-duration: calc(var(--motion-exit) / 2); }
+  .status-presence[data-collapsing] { transition: grid-template-rows var(--motion-fast) ease-in-out; }
+  .status-presence[data-reserving] { transition: grid-template-rows calc(var(--motion-exit) / 2) ease-in-out; }
+  @starting-style {
+    .status-presence { opacity: 0; }
+    .status-presence[data-reserving] { grid-template-rows: minmax(0, 0fr); }
+  }
 }
-.status-line { display: flex; align-items: flex-start; gap: 8px; padding-block: 2px; padding-inline-start: var(--status-inset); }
+.status-slot:focus-within > [data-exiting]:not([data-collapsing]) { transition: none; }
+.status-presence:focus-within { opacity: 1; transition: none; }
+.status-line { display: flex; align-items: flex-start; gap: 8px; padding-block: 3px; padding-inline-start: var(--status-inset); }
 .status-line > svg { flex: none; margin-top: 2px; }
 .status-line > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
 .status-line[data-tone=success] > svg { color: var(--green-11); }
