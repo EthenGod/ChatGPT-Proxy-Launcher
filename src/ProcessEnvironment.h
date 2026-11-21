@@ -6,24 +6,29 @@
 #include <string_view>
 
 namespace native {
+// Returned name characters must remain valid and unchanged until Environment returns.
 using EnvironmentName = std::wstring_view (*)(std::wstring_view);
 inline std::vector<wchar_t> Environment(const std::map<std::wstring, std::wstring>& values,
                                         EnvironmentName normalizeName = nullptr) {
     struct CaseLess {
-        bool operator()(const std::wstring& a, const std::wstring& b) const {
-            return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+        bool operator()(std::wstring_view a, std::wstring_view b) const {
+            return CompareStringOrdinal(a.data(), static_cast<int>(a.size()),
+                b.data(), static_cast<int>(b.size()), TRUE) == CSTR_LESS_THAN;
         }
     };
     LPWCH raw = GetEnvironmentStringsW();
     if (!raw) throw automation::IoError(GetLastError());
     struct Env { LPWCH p; ~Env() { FreeEnvironmentStringsW(p); } } env{raw};
-    std::map<std::wstring, std::wstring, CaseLess> items;
-    for (PCWSTR p = raw; *p; p += wcslen(p) + 1) {
+    // The environment snapshot and caller's overrides outlive these views.
+    std::map<std::wstring_view, std::wstring_view, CaseLess> items;
+    for (PCWSTR p = raw; *p;) {
         const std::wstring_view item(p);
+        p += item.size() + 1;
         const auto sep = item.find(L'=', 1); // Keep per-drive entries such as =C:=C:\dir.
         if (sep == item.npos) continue;
         const auto key = item.substr(0, sep);
-        items[std::wstring(normalizeName ? normalizeName(key) : key)] = item.substr(sep + 1);
+        // Inherited blocks are usually sorted. An out-of-order or duplicate key still uses ordinal lookup.
+        items.insert_or_assign(items.end(), normalizeName ? normalizeName(key) : key, item.substr(sep + 1));
     }
     for (const auto& v : values) items[v.first] = v.second;
     size_t size = 1;
