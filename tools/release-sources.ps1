@@ -148,6 +148,7 @@ $files = @(
     'frontend/src/components/NoticeToasts.tsx'
     'frontend/src/components/ScrollBox.tsx'
     'frontend/src/components/useAppearanceTransition.ts'
+    'frontend/src/features/setup/ArgumentPreview.tsx'
     'frontend/src/features/setup/CompanionPrograms.tsx'
     'frontend/src/features/setup/contract.ts'
     'frontend/src/features/setup/errors.ts'

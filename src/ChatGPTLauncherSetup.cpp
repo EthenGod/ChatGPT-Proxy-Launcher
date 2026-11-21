@@ -134,7 +134,7 @@ struct App {
     bool preferredDark = true;
     int selectedProtocol = Protocol;
     bool motionEnabled = false;
-    Motion cloudDisabled{}, previewDim{};
+    Motion cloudDisabled{};
     int scrollGrab = 0, wheelRemainder = 0;
     unsigned layoutPasses = 0;
     int scroll = 0, contentHeight = 0;
@@ -286,7 +286,6 @@ void App::Theme(int mode) {
         item.toggle.from = item.toggle.to = Checked(item.id) ? 1.0f : 0.0f;
     }
     cloudDisabled.Set(IsWindowEnabled(Get(CloudCodex)) ? 0.0f : 1.0f, false, 0);
-    previewDim = {};
     KillTimer(window, MotionTimer);
     Set(ThemeToggle, dark ? l10n::Text("setup.theme.light") : l10n::Text("setup.theme.dark"));
     EnableWindow(Get(ThemeToggle), !contrast && !busy);
@@ -803,16 +802,7 @@ void App::Refresh(bool edited) {
     const setup::Result args = setup::BuildArguments(options, arguments);
     const setup::Result path = setup::NormalizeDirectory(options.directory, directory);
     // Never present a partial command as the command that will actually be saved.
-    if (!args) arguments = l10n::Text("setup.preview.invalid");
-    if (Text(Preview) != arguments) {
-        const HWND preview = Get(Preview);
-        const ULONGLONG now = GetTickCount64();
-        if (edited && args && !arguments.empty() && motionEnabled && IsWindowVisible(preview)) {
-            // A burst of edits shares one fade. The native edit always holds the latest text.
-            if (!previewDim.Active(now) && SetTimer(window, MotionTimer, 16, nullptr)) previewDim = {0.65f, 0, now};
-        } else previewDim = {};
-        SetWindowTextW(preview, arguments.c_str());
-    }
+    Set(Preview, args ? arguments : l10n::Text("setup.preview.invalid"));
     const bool valid = args && path && !fatal;
     EnableWindow(Get(ApplyButton), valid && !busy && (!savedThisSession || dirty));
     if (!fatal) {
@@ -1158,7 +1148,6 @@ bool App::TickMotion() {
         if (hover || toggle) InvalidateRect(item.window, nullptr, FALSE);
     }
     if (tick(cloudDisabled)) InvalidateRect(Get(CloudCodex), nullptr, FALSE);
-    if (tick(previewDim)) InvalidateRect(Get(Preview), nullptr, FALSE);
     if (!active) KillTimer(window, MotionTimer);
     return active;
 }
@@ -1302,9 +1291,7 @@ void App::DrawControl(HWND control, HDC dc) {
 LRESULT ColorControl(App& app, HDC dc, HWND control) {
     const int id = GetDlgCtrlID(control);
     if (IsField(id)) {
-        const COLORREF text = IsWindowEnabled(control) ? app.colors.text : app.colors.secondary;
-        SetTextColor(dc, id == Preview && app.motionEnabled
-            ? Blend(text, app.colors.secondary, app.previewDim.Value(GetTickCount64())) : text);
+        SetTextColor(dc, IsWindowEnabled(control) ? app.colors.text : app.colors.secondary);
         SetBkColor(dc, app.FieldColor()); return reinterpret_cast<LRESULT>(app.field);
     }
     const bool surface = id == SilentHint || id == ProtocolLabel || id == HostLabel || id == PortLabel || id == DirectoryHint

@@ -693,7 +693,7 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(fontSizes.size() == 3);
     REQUIRE(app.Checked(Startup) && app.Checked(Silent) && app.savedTarget.empty());
     REQUIRE(app.Text(Preview) == L"--no-startup-window");
-    REQUIRE(app.Text(PreviewTitle) == L"启动参数预览" && app.previewDim.from == 0);
+    REQUIRE(app.Text(PreviewTitle) == L"启动参数预览");
     REQUIRE(app.Checked(CodexEnv) && !IsWindowVisible(app.Get(CodexEnv)) && !IsWindowVisible(app.Get(CodexEnvHelp)));
     REQUIRE(app.Checked(CloudCodex) && !IsWindowVisible(app.Get(CloudCodex)) && !IsWindowVisible(app.Get(CloudCodexHelp)));
     SendMessageW(app.Get(Proxy), BM_CLICK, 0, 0);
@@ -737,12 +737,11 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex) && app.Options().codexEnv);
     REQUIRE(IsWindowEnabled(app.Get(CloudCodexHelp)) && GetNextDlgTabItem(app.body, app.Get(CloudCodexHelp), FALSE) != app.Get(CloudCodex));
     REQUIRE(app.cloudDisabled.from == 0 && app.cloudDisabled.to == 1);
-    REQUIRE(app.Text(Preview).find(L"socks5://127.0.0.1:12345") != std::wstring::npos && app.previewDim.from > 0);
+    REQUIRE(app.Text(Preview).find(L"socks5://127.0.0.1:12345") != std::wstring::npos);
     const HWND preview = app.Get(Preview);
     SetFocus(preview); SendMessageW(preview, EM_SETSEL, 1, 9);
-    const auto previewStarted = app.previewDim.started;
     app.Refresh(true);
-    REQUIRE(app.previewDim.started == previewStarted && GetFocus() == preview && SendMessageW(preview, EM_GETSEL, 0, 0) == MAKELONG(1, 9));
+    REQUIRE(GetFocus() == preview && SendMessageW(preview, EM_GETSEL, 0, 0) == MAKELONG(1, 9));
     // Reverse an in-flight availability fade without waiting on a real clock.
     app.cloudDisabled.started = GetTickCount64() - 50;
     SendMessageW(app.Get(ProtocolHttps), BM_CLICK, 0, 0);
@@ -753,7 +752,7 @@ static int RunTests(PCWSTR folder) {
     const auto originalHost = app.Text(Host);
     app.Set(Host, L"例え.test");
     REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && IsWindowEnabled(app.Get(CloudCodexHelp)) && !app.Checked(CloudCodex));
-    REQUIRE(app.cloudDisabled.from == 1 && app.cloudDisabled.to == 1 && app.previewDim.from == app.previewDim.to);
+    REQUIRE(app.cloudDisabled.from == 1 && app.cloudDisabled.to == 1);
     app.Set(Host, L"xn--r8jz45g.test");
     REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex));
     app.Set(Host, originalHost);

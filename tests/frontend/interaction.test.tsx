@@ -227,6 +227,32 @@ describe('settings prototype behavior', () => {
     expect(save).not.toHaveAttribute('aria-describedby')
     expect(screen.getByRole('status')).toHaveTextContent('请先保存工作')
   })
+  it('retires a footer action immediately and reuses its row when an exit reverses', async () => {
+    mount(); await loaded()
+    const port = screen.getByRole<HTMLInputElement>('textbox', { name: '端口' })
+    const valid = port.value
+    port.focus()
+    fireEvent.change(port, { target: { value: '0' } })
+    const review = screen.getByRole('button', { name: '查看输入问题' })
+    const row = review.closest('.status-presence')!
+    let finish!: () => void
+    const finished = new Promise<void>(resolve => { finish = resolve })
+    Object.defineProperty(row, 'getAnimations', { value: () => [{ finished }] })
+
+    fireEvent.change(port, { target: { value: valid } })
+    expect(row).toHaveAttribute('inert')
+    expect(row).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByRole('button', { name: '查看输入问题' })).toBeNull()
+    fireEvent.click(review)
+    expect(port).toHaveFocus()
+
+    fireEvent.change(port, { target: { value: '0' } })
+    await act(async () => { finish() })
+    expect(screen.getByRole('button', { name: '查看输入问题' })).toBe(review)
+    expect(row).not.toHaveAttribute('inert')
+    fireEvent.change(port, { target: { value: valid } })
+    await waitFor(() => expect(row).not.toBeInTheDocument())
+  })
   it('keeps the quit reminder alongside a single warning when both preferences fail', async () => {
     const service = Object.assign(new MockSetupService('normal', 0), {
       setPreferences: vi.fn().mockRejectedValue(new Error('Preferences unavailable')),
@@ -270,42 +296,72 @@ describe('settings prototype behavior', () => {
     expect(cloud).toHaveAttribute('aria-checked', 'true')
     expect(cloud).not.toHaveAttribute('aria-disabled', 'true')
   })
-  it('keeps one selectable preview through unchanged validation and rapid argument changes', async () => {
+  it('fades from one decorative snapshot to the latest selectable arguments across a burst of changes', async () => {
     const started: string[] = []
     let finish!: () => void
     const finished = new Promise<void>(resolve => { finish = resolve })
     vi.spyOn(HTMLElement.prototype, 'getAnimations').mockImplementation(function (this: HTMLElement) {
-      if (!this.matches('.argument-preview[data-updated]')) return []
+      if (!this.matches('.argument-preview[data-swapping] > .argument-current')) return []
       started.push(this.textContent ?? '')
-      return [{ animationName: 'argument-update', finished } as unknown as CSSAnimation]
+      return [{ animationName: 'argument-enter', finished } as unknown as CSSAnimation]
     })
     mount(); await loaded()
     const region = screen.getByRole('region', { name: '启动参数预览' })
-    const preview = within(region).getByText(/--proxy-server=/)
+    const preview = region.querySelector('pre')!
+    const current = within(region).getByText(/--proxy-server=/)
+    const previous = preview.closest('.argument-scroll')!.querySelector('.argument-previous')!
+    expect(preview.closest('.scroll-viewport')).not.toContainElement(previous as HTMLElement)
     const port = screen.getByRole('textbox', { name: '端口' })
-    const selection = window.getSelection()!
-    const range = document.createRange()
-    range.selectNodeContents(preview)
-    preview.focus()
-    selection.removeAllRanges()
-    selection.addRange(range)
+    const original = current.textContent
     fireEvent.click(screen.getByRole('switch', { name: '应用于 Codex 环境变量' }))
     expect(started).toEqual([])
-    expect(selection.toString()).toBe(preview.textContent)
-    const textNode = preview.firstChild
+    const textNode = current.firstChild
     fireEvent.change(port, { target: { value: '12345' } })
-    expect(started).toHaveLength(1)
-    expect(started[0]).toContain(':12345')
+    expect(previous).toHaveAttribute('data-text', original)
+    expect(previous).toHaveAttribute('aria-hidden', 'true')
+    expect(previous).toHaveAttribute('inert')
+    expect(previous).toBeEmptyDOMElement()
     fireEvent.change(port, { target: { value: '23456' } })
+    expect(started).toEqual([expect.stringContaining(':12345')])
+    expect(previous).toHaveAttribute('data-text', original)
     expect(preview).toHaveTextContent(':23456')
-    expect(preview.firstChild).toBe(textNode)
-    expect(preview).toHaveFocus()
+    expect(preview.textContent).toBe(current.textContent)
+    expect(current.firstChild).toBe(textNode)
     await act(async () => finish())
-    expect(preview).not.toHaveAttribute('data-updated')
+    expect(preview).not.toHaveAttribute('data-swapping')
+    expect(previous).not.toHaveAttribute('data-text')
     fireEvent.change(port, { target: { value: '70000' } })
     fireEvent.change(port, { target: { value: '23456' } })
     expect(preview).toHaveTextContent(':23456')
     expect(started).toHaveLength(1)
+  })
+  it('reveals the current preview on focus and preserves a backward selection through a pending update', async () => {
+    let finish!: () => void
+    const finished = new Promise<void>(resolve => { finish = resolve })
+    vi.spyOn(HTMLElement.prototype, 'getAnimations').mockImplementation(function (this: HTMLElement) {
+      return this.matches('.argument-preview[data-swapping] > .argument-current')
+        ? [{ animationName: 'argument-enter', finished } as unknown as CSSAnimation] : []
+    })
+    mount(); await loaded()
+    const preview = document.getElementById('validation-message')!
+    const current = preview.querySelector('.argument-current')!
+    const port = screen.getByRole('textbox', { name: '端口' })
+    fireEvent.change(port, { target: { value: '12345' } })
+    expect(preview).toHaveAttribute('data-swapping')
+    preview.focus()
+    expect(preview).not.toHaveAttribute('data-swapping')
+    const selection = window.getSelection()!
+    const text = current.firstChild!
+    selection.setBaseAndExtent(text, current.textContent!.length, text, 0)
+    fireEvent.change(port, { target: { value: '80' } })
+    expect(current).toHaveTextContent(':80')
+    expect(preview).toHaveFocus()
+    expect(preview).not.toHaveAttribute('data-swapping')
+    expect(selection.toString()).toBe(current.textContent)
+    expect(selection.anchorOffset).toBe(current.textContent!.length)
+    expect(selection.focusOffset).toBe(0)
+    await act(async () => finish())
+    expect(preview.closest('.argument-scroll')!.querySelector('.argument-previous')).not.toHaveAttribute('data-text')
   })
   it.each([true, false])('retains cloud preference %s across bypass rules and internationalized proxy hosts', async checked => {
     const { user } = mount(); await loaded()

@@ -14,7 +14,8 @@ import type { SetupOptions, SetupSnapshot } from '../../platform/types'
 import { nativeIssue, type ConflictLocation, type ErrorInfo } from './errors'
 import { portErrorKey, sameOptions, supportsCloudCodex } from './options'
 import { useSetupValidation } from './useSetupValidation'
-import { ArgumentSkeleton, SetupSkeleton } from './SetupSkeleton'
+import { ArgumentPreview } from './ArgumentPreview'
+import { SetupSkeleton } from './SetupSkeleton'
 import { SetupStatus, type OperationIssue } from './SetupStatus'
 import type { ListedProgram, SaveResult, SetupService, WindowHost } from './contract'
 import { CompanionPrograms, ProgramDetails } from './CompanionPrograms'
@@ -97,7 +98,6 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   const saveButton = useRef<HTMLButtonElement | null>(null)
   const doneButton = useRef<HTMLButtonElement | null>(null)
   const preview = useRef<HTMLPreElement | null>(null)
-  const previousArguments = useRef<string | null>(null)
   const defaultDirectory = snapshot?.defaultDirectory ?? ''
   const samplePrograms = service.picker?.programs ?? []
   const resolved = resolveLanguage(language, service.native ? snapshot?.preferences.resolvedLanguage : undefined)
@@ -410,20 +410,6 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
   else if (previewValue?.valid) previewText = previewValue.arguments || t('ui.arguments.empty')
   else if (validation) previewText = validation.detail || t(Object.values(validation.errors)[0] ?? 'setup.preview.invalid')
   const generatedArguments = !invalidInput && previewValue?.valid ? previewValue.arguments : null
-  useLayoutEffect(() => {
-    const field = preview.current
-    if (!field) { previousArguments.current = null; return }
-    if (generatedArguments === null) return
-    const previous = previousArguments.current
-    previousArguments.current = generatedArguments
-    if (previous === null || previous === generatedArguments || field.hasAttribute('data-updated')) return
-    // Text is already current. A burst of edits shares one visual transition.
-    field.dataset.updated = ''
-    const clear = () => { delete field.dataset.updated }
-    const motion = field.getAnimations?.().find(item => 'animationName' in item && item.animationName === 'argument-update')
-    if (motion) void motion.finished.then(clear, clear)
-    else clear()
-  }, [generatedArguments])
   const fieldError = (key: keyof SetupOptions) => key === 'port' && portError ? t(portError)
     : validation?.errors[key] ? t(validation.errors[key]) : undefined
   const validationDetails = validation && !validation.valid && validation.nativeError ? validation : null
@@ -506,7 +492,8 @@ export function SetupPage({ service, host, scenarioControls, onLanguageChange, s
                 </div>
               </div>
             </div>
-            <ScrollBox className="argument-scroll" label={t('setup.section.preview')}><pre ref={preview} id="validation-message" tabIndex={-1} className={`argument-preview ${invalidInput ? 'invalid-preview' : ''}`} aria-labelledby="preview-title">{checking && !previewValue ? <ArgumentSkeleton /> : previewText}</pre></ScrollBox>
+            <ArgumentPreview fieldRef={preview} label={t('setup.section.preview')} value={generatedArguments} text={previewText}
+              invalid={invalidInput} skeleton={checking && !previewValue} />
           </section>
           <Collapsible.Root className="advanced-section" open={advanced} onOpenChange={setAdvanced}>
             <Collapsible.Trigger className="advanced-trigger" disabled={busy}><span data-motion-text>{t('setup.section.advanced')}</span><ChevronDown size={16} /></Collapsible.Trigger>
