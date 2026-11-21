@@ -41,8 +41,8 @@ static LPVOID WINAPI TestAllocate(HANDLE, DWORD, SIZE_T);
 static BOOL WINAPI TestFree(HANDLE, DWORD, LPVOID);
 static unsigned environmentReads = 0, environmentFrees = 0;
 static bool failEnvironment = false;
-static wchar_t inherited[] = L"z=last\0nOdE_uSe_EnV_pRoXy=0\0https_proxy=old\0HTTPS_PROXY=duplicate\0"
-    L"HTTP_PROXY=http://http.invalid:3128\0no_proxy=.internal.invalid\0=C:=C:\\fixture\0";
+static wchar_t inherited[] = L"z=last\0nOdE_uSe_EnV_pRoXy=0\0Https_Proxy=old\0HTTPS_PROXY=duplicate\0"
+    L"HTTP_PROXY=http://http.invalid:3128\0No_Proxy=.internal.invalid\0=C:=C:\\fixture\0";
 static LPWCH WINAPI TestEnvironment() {
     ++environmentReads;
     if (failEnvironment) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
@@ -278,8 +278,8 @@ static int CheckLookup() {
 static int CheckCloudDispatch(const std::wstring& outputDir) {
     const std::wstring args = L"\"--proxy-server=https://[::1]:9443\"\t --text=\"中文 空格\" \"\" -- --no-proxy-server";
     const std::wstring disabled = L"\"--launcher-no-cloud-proxy\"   " + args;
-    const std::vector<std::wstring> expected{L"=C:=C:\\fixture", L"https_proxy=https://[::1]:9443",
-        L"HTTP_PROXY=http://http.invalid:3128", L"nOdE_uSe_EnV_pRoXy=1", L"no_proxy=.internal.invalid", L"z=last"};
+    const std::vector<std::wstring> expected{L"=C:=C:\\fixture", L"HTTPS_PROXY=https://[::1]:9443",
+        L"HTTP_PROXY=http://http.invalid:3128", L"NODE_USE_ENV_PROXY=1", L"NO_PROXY=.internal.invalid", L"z=last"};
     testCompanion = true;
     for (auto command : {args, L"--launcher-chain --result \"" + outputDir + L"\\cloud.json\" -- " + args}) {
         createCalls = customEnvironmentCalls = environmentReads = environmentFrees = 0;
@@ -290,6 +290,12 @@ static int CheckCloudDispatch(const std::wstring& outputDir) {
         REQUIRE(environmentEntries == expected && environmentReads == 1 && environmentFrees == 1);
     }
     testCompanion = false;
+    std::wstring padded = L"\"\u3000--proxy-server=https://[::1]:9443 \" \"--proxy-bypass-list= \t\""
+        L" \"\u00a0--\u3000\" --proxy-bypass-list=example.invalid --no-proxy-server";
+    createCalls = customEnvironmentCalls = 0;
+    REQUIRE(wWinMain(nullptr, nullptr, padded.data(), 0) == 0);
+    REQUIRE(createCalls == 1 && customEnvironmentCalls == 1 && environmentEntries == expected);
+    REQUIRE(environmentCommand == L"\"" + environmentRecipient + L"\" " + padded);
     for (auto command : {disabled, L"--launcher-chain --result \"" + outputDir + L"\\no-cloud.json\" -- " + disabled}) {
         createCalls = customEnvironmentCalls = environmentReads = 0;
         REQUIRE(wWinMain(nullptr, nullptr, command.data(), 0) == 0);
@@ -310,6 +316,11 @@ static int CheckCloudDispatch(const std::wstring& outputDir) {
         L"--proxy-server=http://proxy.invalid:3128 --proxy-server=http://second.invalid:3128",
         L"--proxy-server=http://proxy.invalid:3128 \"-NO-PROXY-SERVER\"",
         L"--proxy-server=http://proxy.invalid:3128 /proxy-auto-detect",
+        L"--proxy-server=http://proxy.invalid:3128 --proxy-bypass-list=*",
+        L"--proxy-server=http://proxy.invalid:3128 --proxy-bypass-list=localhost;*.example.com",
+        L"--proxy-server=http://proxy.invalid:3128 \"/PrOxY-ByPaSs-LiSt=<local>\"",
+        L"--proxy-server=http://proxy.invalid:3128 \"\u3000--no-proxy-server \"",
+        L"--proxy-server=http://proxy.invalid:3128 \"\u00a0-Proxy-Server=http://other.invalid:3128\"",
         L"--proxy-server=http://proxy.invalid:3128 --proxy-pac-url=fixture", L"--proxy-server=http://host.0xff:80",
         L"--proxy-server=http://proxy.invalid:3128 --text=\"unfinished",
         L"\"--proxy-server=http://proxy.invalid:3128", L"--unrelated --proxy-server=http://proxy.invalid:3128",
@@ -453,6 +464,7 @@ static int CheckCloudChildren(PCWSTR executable) {
     for (PCWSTR command : {
         L"--proxy-server=http://proxy.invalid:3128 --test-cloud-enabled",
         L"--launcher-no-cloud-proxy --proxy-server=http://proxy.invalid:3128 --test-cloud-disabled",
+        L"--proxy-server=http://proxy.invalid:3128 --proxy-bypass-list=.internal.invalid --test-cloud-disabled",
         L"--proxy-server=socks5://proxy.invalid:1080 --test-cloud-disabled", L"--test-cloud-disabled"}) {
         chain::Invocation invocation;
         REQUIRE(invocation.Parse(command) == 0);
@@ -470,6 +482,9 @@ static int CheckCloudChildren(PCWSTR executable) {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && !wcscmp(argv[1], L"--test-cloud-disabled")) return HasFixtureEnvironment(false) ? 0 : 1;
+    if (argc == 4 && !wcscmp(argv[1], L"--proxy-server=http://proxy.invalid:3128") &&
+        !wcscmp(argv[2], L"--proxy-bypass-list=.internal.invalid") && !wcscmp(argv[3], L"--test-cloud-disabled"))
+        return HasFixtureEnvironment(false) ? 0 : 1;
     if (argc == 3 && (!wcscmp(argv[1], L"--proxy-server=http://proxy.invalid:3128") ||
         !wcscmp(argv[1], L"--proxy-server=socks5://proxy.invalid:1080"))) {
         if (!wcscmp(argv[2], L"--test-cloud-enabled")) return HasFixtureEnvironment(true) ? 0 : 1;

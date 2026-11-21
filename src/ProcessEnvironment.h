@@ -3,9 +3,12 @@
 #include "AutomationIO.h"
 #include <algorithm>
 #include <map>
+#include <string_view>
 
 namespace native {
-inline std::vector<wchar_t> Environment(const std::map<std::wstring, std::wstring>& values) {
+using EnvironmentName = std::wstring_view (*)(std::wstring_view);
+inline std::vector<wchar_t> Environment(const std::map<std::wstring, std::wstring>& values,
+                                        EnvironmentName normalizeName = nullptr) {
     struct CaseLess {
         bool operator()(const std::wstring& a, const std::wstring& b) const {
             return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
@@ -16,9 +19,11 @@ inline std::vector<wchar_t> Environment(const std::map<std::wstring, std::wstrin
     struct Env { LPWCH p; ~Env() { FreeEnvironmentStringsW(p); } } env{raw};
     std::map<std::wstring, std::wstring, CaseLess> items;
     for (PCWSTR p = raw; *p; p += wcslen(p) + 1) {
-        const std::wstring item(p);
+        const std::wstring_view item(p);
         const auto sep = item.find(L'=', 1); // Keep per-drive entries such as =C:=C:\dir.
-        if (sep != item.npos) items[item.substr(0, sep)] = item.substr(sep + 1);
+        if (sep == item.npos) continue;
+        const auto key = item.substr(0, sep);
+        items[std::wstring(normalizeName ? normalizeName(key) : key)] = item.substr(sep + 1);
     }
     for (const auto& v : values) items[v.first] = v.second;
     size_t size = 1;

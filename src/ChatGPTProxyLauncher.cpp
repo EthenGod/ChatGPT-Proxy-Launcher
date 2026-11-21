@@ -162,10 +162,19 @@ static DWORD StartApplication(PCWSTR executable, PCWSTR arguments, PCWSTR cwd = 
     return StartWithEnvironment(executable, arguments, cwd, show, nullptr);
 }
 
+static std::wstring_view NodeProxyName(std::wstring_view key) noexcept {
+    // Windows matches environment keys without case. Node Worker copies use case-sensitive keys.
+    if (key == L"no_proxy") return key;
+    for (const auto name : {L"NODE_USE_ENV_PROXY", L"HTTPS_PROXY", L"NO_PROXY"}) {
+        if (CompareStringOrdinal(key.data(), static_cast<int>(key.size()), name, -1, TRUE) == CSTR_EQUAL) return name;
+    }
+    return key;
+}
+
 static DWORD StartChat(PCWSTR executable, const chain::Invocation& invocation) {
     if (invocation.cloudProxy.empty()) return StartApplication(executable, invocation.forwarded);
     try {
-        auto environment = native::Environment({{L"HTTPS_PROXY", invocation.cloudProxy}, {L"NODE_USE_ENV_PROXY", L"1"}});
+        auto environment = native::Environment({{L"HTTPS_PROXY", invocation.cloudProxy}, {L"NODE_USE_ENV_PROXY", L"1"}}, NodeProxyName);
         return StartWithEnvironment(executable, invocation.forwarded, nullptr, -1, environment.data());
     } catch (const automation::IoError& error) { return error.code; }
       catch (const std::bad_alloc&) { return ERROR_NOT_ENOUGH_MEMORY; }

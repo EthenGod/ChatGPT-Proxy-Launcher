@@ -8,7 +8,7 @@
     "setup.action.refresh": "刷新",
     "setup.error.webviewstart": "无法打开配置器界面。请检查 Microsoft Edge WebView2 运行时后重试。",
     "help.codex": "推荐开启\n配置 .env 后，可无需开启系统代理使用 Codex 对话（即使未使用本工具启动）。注意：.env 不作用于 Chat。将向 .env 写入下面的协议、地址和端口。\n这可能能够解决 Codex 的“重新连接 (5/5)”：\nCodex 默认优先使用 WebSocket，这在理想环境下很不错，但 Codex 的 WebSocket 似乎没有正常走系统代理。尝试重新连接未果后，会回退到传统连接。通过配置 .env 文件，可以让 Codex 的 WebSocket 走代理。\nWebSocket 对代理不是很友好，所以“重新连接 (5/5)”也有小概率是单纯由于代理不稳定。\n保存后会尝试退出整个 ChatGPT 桌面应用，请先保存工作。重新打开后 Codex 使用新配置。",
-    "help.cloudcodex": "让云端 Codex 对话使用已配置的代理。不修改系统代理。",
+    "help.cloudcodex": "让云端 Codex 对话使用所选的 HTTP 或 HTTPS 代理。系统代理保持原样。\n如果启动参数指定了要绕过的地址，Node 进程沿用原有的代理环境变量。国际化代理域名请用 Punycode 填写。",
     "help.protocol": "不要更改，除非你知道自己在做什么",
     "help.port": "后台保持打开平时用的代理软件，点击空白的端口输入框时会尝试自动填入检测到的端口，注意手动核对是否正确。\n如果识别错误或识别失败，打开代理软件的设置，找到端口设置或类似设置，把那串数字填回这里。",
     "setup.quit.closed": "已保存 .env，并已退出 ChatGPT。请重新打开 ChatGPT。",

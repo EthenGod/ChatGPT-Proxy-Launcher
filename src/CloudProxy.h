@@ -9,6 +9,19 @@ namespace cloudproxy {
 inline constexpr wchar_t OffSwitch[] = L"--launcher-no-cloud-proxy";
 inline constexpr std::wstring_view ServerPrefix = L"--proxy-server=";
 
+// Chromium trims Unicode White_Space from each decoded Windows argument.
+inline bool ArgumentSpace(wchar_t c) noexcept {
+    return (c >= L'\t' && c <= L'\r') || c == L' ' || c == 0x85 || c == 0xa0 ||
+        c == 0x1680 || (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x2029 ||
+        c == 0x202f || c == 0x205f || c == 0x3000;
+}
+
+inline std::wstring_view TrimArgument(std::wstring_view arg) noexcept {
+    while (!arg.empty() && ArgumentSpace(arg.front())) arg.remove_prefix(1);
+    while (!arg.empty() && ArgumentSpace(arg.back())) arg.remove_suffix(1);
+    return arg;
+}
+
 inline bool IpAddress(std::wstring_view host, int family) noexcept {
     wchar_t literal[INET6_ADDRSTRLEN]{};
     if (host.empty() || host.size() >= _countof(literal) || host.find(L'\0') != host.npos) return false;
@@ -61,11 +74,16 @@ inline bool ConflictingSwitch(std::wstring_view arg) noexcept {
     if (arg.substr(0, 2) == L"--") arg.remove_prefix(2);
     else if (!arg.empty() && (arg.front() == L'-' || arg.front() == L'/')) arg.remove_prefix(1);
     else return false;
-    const auto key = arg.substr(0, arg.find(L'='));
+    const auto equals = arg.find(L'=');
+    const auto key = arg.substr(0, equals);
+    const auto matches = [&](PCWSTR name) {
+        return CompareStringOrdinal(key.data(), static_cast<int>(key.size()), name, -1, TRUE) == CSTR_EQUAL;
+    };
+    // Chromium bypass rules and Node NO_PROXY do not share a matching language.
+    if (matches(L"proxy-bypass-list")) return equals != arg.npos && equals + 1 < arg.size();
     for (const auto name : {L"proxy-server", L"no-proxy-server", L"proxy-pac-url",
                             L"proxy-auto-detect", OffSwitch + 2}) {
-        if (CompareStringOrdinal(key.data(), static_cast<int>(key.size()), name, -1, TRUE) == CSTR_EQUAL)
-            return true;
+        if (matches(name)) return true;
     }
     return false;
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
+#include "CloudProxy.h"
 #include "Localization.h"
 #include "SetupCommandLine.h"
 #include "SetupNative.h"
@@ -181,7 +182,6 @@ struct App {
         if (!loading) ResizeCaption(id);
     }
     bool Checked(int id) const { return SendMessageW(Get(id), BM_GETCHECK, 0, 0) == BST_CHECKED; }
-    bool CloudProxyAvailable() const { return Checked(Proxy) && (Checked(Protocol) || Checked(ProtocolHttps)); }
     void Check(int id, bool value) { SendMessageW(Get(id), BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0); }
     void Theme(int mode = -1);
     int CaptionWidth(int id, int font) const;
@@ -787,7 +787,10 @@ void App::Refresh(bool edited) {
     EnableWindow(Get(Port), options.proxy && !busy);
     EnableWindow(Get(CodexEnv), options.proxy && !busy);
     EnableWindow(Get(CodexEnvHelp), options.proxy && !busy);
-    EnableWindow(Get(CloudCodex), CloudProxyAvailable() && !busy);
+    const bool cloudAvailable = options.proxy && (options.protocol == L"http" || options.protocol == L"https")
+        && cloudproxy::TrimArgument(options.bypass).empty()
+        && std::all_of(options.host.begin(), options.host.end(), [](wchar_t c) { return c <= 0x7f; });
+    EnableWindow(Get(CloudCodex), cloudAvailable && !busy);
     EnableWindow(Get(CloudCodexHelp), options.proxy && !busy);
     EnableWindow(Get(ProtocolHelp), !busy);
     EnableWindow(Get(HostHelp), !busy);

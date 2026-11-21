@@ -425,6 +425,7 @@ static bool StatusAndPlaceholderFit(App& app) {
 static int LanguageTests(App& app, PCWSTR folder) {
     const auto originalDpi = app.dpi;
     app.Check(Proxy, true); app.Check(CodexEnv, true); app.Set(Port, L"12345");
+    app.Set(Bypass, L"*.example.test");
     app.Set(Extra, L"--label=\"中文 日本語 spaces\""); app.Refresh(true);
     const auto arguments = app.Text(Preview), directory = app.Text(Directory);
     const auto revision = app.editRevision;
@@ -452,11 +453,13 @@ static int LanguageTests(App& app, PCWSTR folder) {
         }
         const auto cloudHelp = app.Get(CloudCodexHelp);
         REQUIRE(app.Text(CloudCodexHelp) == l10n::Text("setup.help.cloudcodex"));
+        REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && IsWindowEnabled(cloudHelp));
         const auto dialogs = reminderCalls;
         SetFocus(cloudHelp);
         SendMessageW(cloudHelp, WM_KEYDOWN, VK_SPACE, 0);
         SendMessageW(cloudHelp, WM_KEYUP, VK_SPACE, 0);
         REQUIRE(reminderCalls == dialogs + 1 && lastDialog == l10n::Text("help.cloudcodex"));
+        REQUIRE(lastDialog.find(L"Node") != lastDialog.npos && lastDialog.find(L"Punycode") != lastDialog.npos);
         SendMessageW(cloudHelp, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(app.S(12), app.S(12)));
         SendMessageW(cloudHelp, WM_LBUTTONUP, 0, MAKELPARAM(app.S(12), app.S(12)));
         REQUIRE(reminderCalls == dialogs + 2 && app.editRevision == revision);
@@ -699,7 +702,7 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(GetNextDlgTabItem(app.body, app.Get(CodexEnv), FALSE) == app.Get(CloudCodexHelp));
     REQUIRE(GetNextDlgTabItem(app.body, app.Get(CloudCodexHelp), FALSE) == app.Get(CloudCodex));
     REQUIRE(app.Text(CodexEnv) == L"应用于 Codex 环境变量" && app.Text(CloudCodex) == L"修复云端 Codex 对话无法连接");
-    REQUIRE(!wcscmp(HelpText(CloudCodexHelp), L"让云端 Codex 对话使用已配置的代理。不修改系统代理。"));
+    REQUIRE(wcsstr(HelpText(CloudCodexHelp), L"绕过") && wcsstr(HelpText(CloudCodexHelp), L"Punycode"));
     REQUIRE(SendMessageW(app.tooltip, TTM_GETTOOLCOUNT, 0, 0) == 5);
     wchar_t helpText[2048]{};
     TOOLINFOW help{TTTOOLINFOW_V2_SIZE}; help.hwnd = app.body;
@@ -733,7 +736,18 @@ static int RunTests(PCWSTR folder) {
     REQUIRE(IsWindowEnabled(app.Get(CloudCodexHelp)) && GetNextDlgTabItem(app.body, app.Get(CloudCodexHelp), FALSE) != app.Get(CloudCodex));
     SendMessageW(app.Get(ProtocolHttps), BM_CLICK, 0, 0);
     REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex));
+    const auto originalHost = app.Text(Host);
+    app.Set(Host, L"例え.test");
+    REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && IsWindowEnabled(app.Get(CloudCodexHelp)) && !app.Checked(CloudCodex));
+    app.Set(Host, L"xn--r8jz45g.test");
+    REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && !app.Checked(CloudCodex));
+    app.Set(Host, originalHost);
     SendMessageW(app.Get(CloudCodex), BM_CLICK, 0, 0);
+    app.Set(Bypass, L"*.example.test");
+    REQUIRE(!IsWindowEnabled(app.Get(CloudCodex)) && app.Checked(CloudCodex) && IsWindowEnabled(app.Get(CodexEnv)));
+    app.Set(Bypass, L" \t\u3000");
+    REQUIRE(IsWindowEnabled(app.Get(CloudCodex)) && app.Checked(CloudCodex));
+    app.Set(Bypass, L"");
     SendMessageW(app.Get(ProtocolSocks), BM_CLICK, 0, 0);
     REQUIRE(app.Options().cloudCodex && !IsWindowEnabled(app.Get(CloudCodex)));
     SendMessageW(app.Get(Protocol), BM_CLICK, 0, 0);

@@ -42,15 +42,22 @@ bool MayStartWith(PCWSTR cursor, std::wstring_view prefix) {
 
 int ReadDefaultProxy(Invocation& invocation, PCWSTR cursor) {
     // The setup form (including earlier versions) puts its selected proxy first.
-    if (invocation.mode == Invocation::Mode::Check || !MayStartWith(cursor, cloudproxy::ServerPrefix)) return 0;
+    if (invocation.mode == Invocation::Mode::Check) return 0;
+    PCWSTR prefix = cursor;
+    while (*prefix == L'"' || cloudproxy::ArgumentSpace(*prefix)) ++prefix;
+    if (!MayStartWith(prefix, cloudproxy::ServerPrefix)) return 0;
     try {
         std::wstring first;
-        if (!Token(cursor, first) || first.compare(0, cloudproxy::ServerPrefix.size(), cloudproxy::ServerPrefix) != 0) return 0;
-        const auto endpoint = std::wstring_view(first).substr(cloudproxy::ServerPrefix.size());
+        if (!Token(cursor, first)) return 0;
+        const auto server = cloudproxy::TrimArgument(first);
+        if (server.substr(0, cloudproxy::ServerPrefix.size()) != cloudproxy::ServerPrefix) return 0;
+        const auto endpoint = server.substr(cloudproxy::ServerPrefix.size());
         if (!cloudproxy::ValidEndpoint(endpoint)) return 0;
         std::wstring token;
-        while (Token(cursor, token) && token != L"--") {
-            if (cloudproxy::ConflictingSwitch(token)) return 0;
+        while (Token(cursor, token)) {
+            const auto arg = cloudproxy::TrimArgument(token);
+            if (arg == L"--") break;
+            if (cloudproxy::ConflictingSwitch(arg)) return 0;
         }
         invocation.cloudProxy = endpoint;
     } catch (const automation::Invalid&) {

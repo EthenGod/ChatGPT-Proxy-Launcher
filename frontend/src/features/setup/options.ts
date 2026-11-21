@@ -7,6 +7,7 @@ export function portErrorKey(port: string): MessageKey | undefined {
 }
 export function supportsCloudCodex(options: SetupOptions) {
   return options.proxy && (options.protocol === 'http' || options.protocol === 'https')
+    && !/\P{White_Space}/u.test(options.bypass) && !/\P{ASCII}/u.test(options.host)
 }
 export function sameOptions(left: SetupOptions, right: SetupOptions) {
   return (Object.keys(left) as Array<keyof SetupOptions>).every(key => left[key] === right[key])
