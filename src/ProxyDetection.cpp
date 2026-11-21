@@ -14,7 +14,6 @@
 #include <wrl/wrappers/corewrappers.h>
 #include "ProxyDetection.h"
 #include <algorithm>
-#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -111,7 +110,6 @@ std::string_view TrimView(std::string_view value) {
     if (first == std::string::npos) return {};
     return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
 }
-std::string Trim(std::string value) { return std::string(TrimView(value)); }
 unsigned PortNumber(std::string_view text) {
     if (text.empty() || text.size() > 5) return 0;
     unsigned port = 0;
@@ -312,23 +310,24 @@ unsigned SystemHttpPort(const std::wstring& server) {
     if (server.size() > 4096) return 0;
     std::string ascii;
     for (wchar_t c : server) { if (c > 127) return 0; ascii += static_cast<char>(c); }
-    std::string endpoint;
-    if (ascii.find('=') == std::string::npos) endpoint = Trim(ascii);
+    std::string_view endpoint;
+    std::string_view entries(ascii);
+    if (entries.find('=') == entries.npos) endpoint = TrimView(entries);
     else {
-        std::istringstream entries(ascii);
-        std::string entry;
         bool found = false;
-        while (std::getline(entries, entry, ';')) {
-            entry = Trim(entry);
+        while (!entries.empty()) {
+            const auto end = entries.find(';');
+            const auto entry = TrimView(entries.substr(0, end));
+            entries.remove_prefix(end == entries.npos ? entries.size() : end + 1);
             if (entry.compare(0, 5, "http=") == 0) {
                 if (found) return 0;
-                found = true; endpoint = Trim(entry.substr(5));
+                found = true; endpoint = TrimView(entry.substr(5));
             }
         }
     }
     const auto colon = endpoint.find(':');
     if (colon == std::string::npos) return 0;
-    const std::string host = endpoint.substr(0, colon);
+    const std::string host(endpoint.substr(0, colon));
     if (host != "127.0.0.1" && _stricmp(host.c_str(), "localhost")) return 0;
     return PortNumber(endpoint.substr(colon + 1));
 }

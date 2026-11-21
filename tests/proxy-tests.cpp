@@ -119,6 +119,8 @@ int main(int argc, char** argv) {
     REQUIRE(!UnderDirectory(L"C:\\CFW\\clash.exe", L""));
     REQUIRE(SystemHttpPort(L"127.0.0.1:12345") == 12345);
     REQUIRE(SystemHttpPort(L"http=localhost:12345;https=127.0.0.1:23456") == 12345);
+    REQUIRE(SystemHttpPort(L";; https=localhost:23456;  http= LOCALHOST:12345  ;;") == 12345);
+    REQUIRE(!SystemHttpPort(L"http= ;socks=localhost:23456; http=localhost:12345"));
     REQUIRE(!SystemHttpPort(L"https=127.0.0.1:23456;socks=127.0.0.1:34567"));
     REQUIRE(!SystemHttpPort(L"http=127.0.0.1:12345;http=127.0.0.1:23456"));
     REQUIRE(!SystemHttpPort(L"proxy.example.com:12345") && !SystemHttpPort(L"127.0.0.1:65536"));
