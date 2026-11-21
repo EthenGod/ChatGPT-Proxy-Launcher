@@ -284,6 +284,33 @@ async page => {
     if (!result.visible || result.lost > 1 || result.shrink < 20) throw Error('Preview lost a visible line: ' + JSON.stringify(result));
   }
 
+  async function checkFooterResize() {
+    await choose('en-US', 'English'); await size(844, 700); await settled();
+    // Both widths keep the same vertical padding. Only the tip changes height.
+    for (const width of [600, 844]) {
+      const recorder = await page.evaluateHandle(() => {
+        const footer = document.querySelector('.settings-footer'), heights = [];
+        let frame;
+        function sample() {
+          heights.push(footer.getBoundingClientRect().height);
+          frame = requestAnimationFrame(sample);
+        }
+        sample();
+        return () => { cancelAnimationFrame(frame); return heights; };
+      });
+      try {
+        await size(width, 700); await settled();
+        const heights = await recorder.evaluate(stop => stop());
+        const low = Math.min(heights[0], heights.at(-1)), high = Math.max(heights[0], heights.at(-1));
+        if (high - low < 4 || !heights.some(h => h > low + .25 && h < high - .25) ||
+            Math.min(...heights) < low - 1 || Math.max(...heights) > high + 1) {
+          throw Error('Footer did not stay between its one- and two-line heights: ' + JSON.stringify({ width, low, high, heights }));
+        }
+      } finally { await recorder.dispose(); }
+    }
+    await choose('zh-CN', '简体中文');
+  }
+
   // Keep the port focused and measure both axes throughout the layout change.
   const recordReflow = async (width, reduced) => {
     const port = page.locator('#proxy-port');
@@ -335,6 +362,7 @@ async page => {
     const statusSwap = await checkStatusSwap(380);
     await checkStatusSwap(464);
     await checkPreviewShrink();
+    await checkFooterResize();
     // Exercise a real change of text rows while the footer icons stay centered.
     await size(420, 700); await settled();
     const ink = await page.addStyleTag({ content: '.footer-status svg { color: #ff00ee !important; }' });

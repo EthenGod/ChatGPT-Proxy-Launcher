@@ -33,7 +33,7 @@ export function observeTextReflow(label: HTMLElement | null) {
   layer.setAttribute('aria-hidden', 'true')
   layer.inert = true
   let previous: Glyph[] = [], painted: Glyph[] = []
-  let lastText = '', previousWidth = 0, previousHeight = 0, frame = 0
+  let lastText = '', previousWidth = 0, previousScrollHeight = 0, frame = 0
   let finishAt = 0
   let resize: Animation | undefined
   const stopDrawing = () => {
@@ -57,7 +57,7 @@ export function observeTextReflow(label: HTMLElement | null) {
       previous = []
       return
     }
-    const { width, height } = entry.contentRect
+    const { width } = entry.contentRect
     const text = node.data
     const bounds = label.getBoundingClientRect()
     const local = glyphPositions(node, range, bounds)
@@ -72,8 +72,10 @@ export function observeTextReflow(label: HTMLElement | null) {
     if (!sameText) stopDrawing()
     const rewrapped = sameText && previous.length === next.length && width !== previousWidth &&
       next.some((g, i) => Math.abs((g.y - next[0]!.y) - (previous[i]!.y - previous[0]!.y)) > 1)
-    const heightChange = previousHeight - height
-    previous = next; previousWidth = width; previousHeight = height; lastText = text
+    // The status row has a minimum height. Losing a text line can shrink the footer by less than a line.
+    const scrollHeight = scroll?.getBoundingClientRect().height ?? 0
+    const heightChange = previousScrollHeight - scrollHeight
+    previous = next; previousWidth = width; previousScrollHeight = scrollHeight; lastText = text
     // During an interrupted slide, even a resize that keeps the same breaks moves its destination.
     if (document.documentElement.hasAttribute('data-appearance-transition') ||
         selected() || label.closest('[inert], [data-swapping]')) { clear(); return }
