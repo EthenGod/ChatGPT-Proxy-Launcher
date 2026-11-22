@@ -27,7 +27,8 @@ static bool focusFails = false, focusIgnored = false, restartAfterQuit = false, 
 static bool lateWorker = false, focusLost = false, exitOnFocus = false;
 static int heldKey = 0;
 static UINT inputResult = 4, cleanupKeys = 0;
-static DWORD quitDelay = 0;
+static DWORD quitDelay = 0, restoreDelay = 0;
+static HWND pendingRestore = nullptr;
 static size_t cursor = 0;
 static ULONGLONG clockTicks = 0;
 static bool safeAccess = true, enumFails = false, identityFails = false;
@@ -137,6 +138,7 @@ static BOOL WINAPI Show(HWND handle, int command) {
     auto w = Window(handle);
     safeAccess = safeAccess && w && w->name == L"Chrome_WidgetWin_1" && command == SW_RESTORE;
     if (!w) return FALSE;
+    if (restoreDelay) { pendingRestore = handle; return TRUE; }
     w->visible = true; w->iconic = false; return TRUE;
 }
 static unsigned foregroundReads = 0;
@@ -147,7 +149,7 @@ static HWND WINAPI Foreground() {
 }
 static BOOL WINAPI Focus(HWND handle) {
     if (exitOnFocus) { Find(H(Window(handle)->pid))->alive = false; return FALSE; }
-    if (focusFails) return FALSE;
+    if (focusFails || !Visible(handle) || Iconic(handle)) return FALSE;
     if (!focusIgnored) foreground = handle;
     return TRUE;
 }
@@ -193,6 +195,10 @@ static DWORD WINAPI Wait(HANDLE handle, DWORD timeout) {
 static ULONGLONG WINAPI Clock() { return clockTicks; }
 static void WINAPI Pause(DWORD milliseconds) {
     clockTicks += milliseconds;
+    if (pendingRestore && clockTicks >= restoreDelay) {
+        Window(pendingRestore)->visible = true; Window(pendingRestore)->iconic = false;
+        pendingRestore = nullptr;
+    }
     for (auto& p : processes) if (p.exitAt && clockTicks >= p.exitAt) p.alive = false;
 }
 #define GetCurrentProcessId CurrentId
@@ -244,7 +250,7 @@ static void Reset() {
         {W(22), 2, L"Chrome_WidgetWin_0", false}, {W(23), 2, L"crashpad_SessionEndWatcher", false}};
     foreground = W(999); focusFails = focusIgnored = restartAfterQuit = timesFail = false;
     lateWorker = focusLost = exitOnFocus = false; foregroundReads = 0;
-    heldKey = 0; inputResult = 4; cleanupKeys = 0; quitDelay = 0;
+    heldKey = 0; inputResult = 4; cleanupKeys = 0; quitDelay = restoreDelay = 0; pendingRestore = nullptr;
     safeAccess = true; enumFails = identityFails = false; acquired = released = 0;
     registered = foreignPublisher = resourcePackage = false; registeredError = ERROR_SUCCESS; registeredCalls = 0;
 }
@@ -281,6 +287,21 @@ int main() {
     Reset(); windows[0].visible = false; windows[0].iconic = true;
     REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && windows[0].visible && !windows[0].iconic);
     REQUIRE(safeAccess && acquired == released);
+    Reset(); foreground = W(20); focusFails = true;
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && quitRequests == std::vector<DWORD>{2});
+    REQUIRE(clockTicks == 0 && safeAccess && acquired == released);
+    Reset(); windows[0].visible = false; restoreDelay = 150;
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && quitRequests == std::vector<DWORD>{2});
+    REQUIRE(clockTicks == 150 && safeAccess && acquired == released);
+    Reset(); windows[0].visible = false; restoreDelay = 150; processes[0].exits = false;
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::NeedsManualExit && quitRequests.size() == 1);
+    REQUIRE(clockTicks == 10000 && safeAccess && acquired == released);
+    Reset(); windows[0].visible = false; restoreDelay = 60000;
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::NeedsManualExit && quitRequests.empty());
+    REQUIRE(clockTicks == 500 && safeAccess && acquired == released);
+    Reset(); windows.erase(windows.begin());
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::NeedsManualExit && quitRequests.empty());
+    REQUIRE(clockTicks == 0 && safeAccess && acquired == released);
     for (int mode = 0; mode < 8; ++mode) {
         Reset();
         if (mode == 0) focusFails = true;
