@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
 #include "CodexClose.h"
+#include "TrayQuit.h"
 #include <appmodel.h>
 #include <tlhelp32.h>
 #include <algorithm>
@@ -197,19 +198,28 @@ bool KeysReleased() {
         if (GetAsyncKeyState(key) & 0x8000) return false;
     return true;
 }
-bool RequestQuit(const Process& process) {
+bool RequestQuit(const Process& process, ULONGLONG exitDeadline) {
     const HWND window = process.window;
     if (WaitForSingleObject(process.handle, 0) == WAIT_OBJECT_0) return true;
     if (!MainWindow(window, process.id) || !IsWindowEnabled(window) || !KeysReleased()) return false;
+    const ULONGLONG readyDeadline = (std::min)(exitDeadline, GetTickCount64() + 500);
     if (!IsWindowVisible(window) || IsIconic(window)) {
         if (!ShowWindowAsync(window, SW_RESTORE)) return false;
+        // The restore request is queued. A tray-hidden window cannot take focus yet.
+        while (!IsWindowVisible(window) || IsIconic(window)) {
+            if (GetTickCount64() >= readyDeadline || !MainWindow(window, process.id)
+                || WaitForSingleObject(process.handle, 0) != WAIT_TIMEOUT) return false;
+            Sleep(25);
+        }
     }
-    if (!SetForegroundWindow(window)) return false;
-    const ULONGLONG deadline = GetTickCount64() + 500;
-    while (GetForegroundWindow() != window && GetTickCount64() < deadline) Sleep(25);
+    if (!MainWindow(window, process.id) || !IsWindowEnabled(window) || !KeysReleased()
+        || WaitForSingleObject(process.handle, 0) != WAIT_TIMEOUT) return false;
+    if (GetForegroundWindow() != window && !SetForegroundWindow(window)) return false;
+    while (GetForegroundWindow() != window && GetTickCount64() < readyDeadline) Sleep(25);
     // Send the native Quit shortcut in one batch after foreground and identity checks.
     // Do not post WM_CLOSE to any window, including Chromium and tray infrastructure.
-    if (!MainWindow(window, process.id) || !KeysReleased()
+    if (!MainWindow(window, process.id) || !IsWindowVisible(window) || IsIconic(window)
+        || !IsWindowEnabled(window) || !KeysReleased()
         || WaitForSingleObject(process.handle, 0) != WAIT_TIMEOUT) return false;
     INPUT keys[4]{};
     const WORD codes[] = {VK_CONTROL, 'Q', 'Q', VK_CONTROL};
@@ -238,14 +248,22 @@ ChatGPTCloseResult TryCloseChatGPT() {
     if (targets.uncertain) return ChatGPTCloseResult::NeedsManualExit;
     if (targets.processes.empty()) return ChatGPTCloseResult::NotRunning;
     if (!EnumWindows(ChooseWindow, reinterpret_cast<LPARAM>(&targets))) return ChatGPTCloseResult::NeedsManualExit;
+    const ULONGLONG deadline = GetTickCount64() + 10000;
     unsigned requested = 0;
-    for (const auto& process : targets.processes) if (process.window) {
-        if (!RequestQuit(process) && WaitForSingleObject(process.handle, 0) != WAIT_OBJECT_0)
-            return ChatGPTCloseResult::NeedsManualExit;
+    for (const auto& process : targets.processes) {
+        if (!process.desktop) continue;
+        const Process* parent = Find(targets, process.parent);
+        if (parent && parent->desktop && parent->created <= process.created) continue;
+        if (GetTickCount64() >= deadline) return ChatGPTCloseResult::NeedsManualExit;
+        if (WaitForSingleObject(process.handle, 0) == WAIT_TIMEOUT
+            && !tray_quit::Request(process.id, process.handle, deadline)) {
+            const bool sent = process.window && GetTickCount64() < deadline && RequestQuit(process, deadline);
+            if (!sent && WaitForSingleObject(process.handle, 0) != WAIT_OBJECT_0)
+                return ChatGPTCloseResult::NeedsManualExit;
+        }
         ++requested;
     }
     if (!requested) return ChatGPTCloseResult::NeedsManualExit;
-    const ULONGLONG deadline = GetTickCount64() + 10000;
     for (;;) {
         bool pending = false;
         for (const auto& process : targets.processes) {
@@ -258,8 +276,9 @@ ChatGPTCloseResult TryCloseChatGPT() {
             Targets remaining; Discover(remaining, session, user, apps, &targets);
             return !remaining.uncertain && remaining.processes.empty() ? ChatGPTCloseResult::Closed : ChatGPTCloseResult::NeedsManualExit;
         }
-        if (GetTickCount64() >= deadline) return ChatGPTCloseResult::NeedsManualExit;
-        Sleep(100);
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline) return ChatGPTCloseResult::NeedsManualExit;
+        Sleep(static_cast<DWORD>((std::min)(deadline - now, 100ULL)));
     }
 }
 }
