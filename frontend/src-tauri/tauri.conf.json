@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ChatGPT Launcher",
   "mainBinaryName": "ChatGPTLauncherSetup",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "identifier": "io.github.ethengod.chatgpt-launcher-setup",
   "build": {
     "beforeDevCommand": "npm run dev",

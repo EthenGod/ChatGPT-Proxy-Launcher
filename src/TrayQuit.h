@@ -27,7 +27,7 @@ struct Attempt {
         return stage == Stage::Searching && GetTickCount64() < deadline && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
     }
 };
-inline std::atomic_bool busy{false};
+inline std::shared_ptr<Attempt> activeAttempt;
 
 inline HWND ShellTray() {
     HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
@@ -129,7 +129,12 @@ inline bool Request(DWORD pid, HANDLE process, ULONGLONG exitDeadline, void (*se
     const auto now = GetTickCount64();
     attempt->deadline = (std::min)(exitDeadline, now + 1200);
     if (attempt->deadline <= now || !DuplicateHandle(GetCurrentProcess(), process, GetCurrentProcess(),
-        &attempt->process, SYNCHRONIZE, FALSE, 0) || busy.exchange(true)) return false;
+        &attempt->process, SYNCHRONIZE, FALSE, 0)) return false;
+    std::shared_ptr<Attempt> existing;
+    if (!std::atomic_compare_exchange_strong(&activeAttempt, &existing, attempt)) {
+        const Stage stage = existing->stage.load();
+        return existing->pid == pid && stage != Stage::Cancelled && stage != Stage::Unavailable;
+    }
     try {
         std::thread worker([attempt, search] {
             const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -137,7 +142,7 @@ inline bool Request(DWORD pid, HANDLE process, ULONGLONG exitDeadline, void (*se
                 try { search(*attempt); } catch (...) { /* Provider unavailable. */ }
                 CoUninitialize();
             }
-            busy = false;
+            std::atomic_store(&activeAttempt, std::shared_ptr<Attempt>{});
         });
         const auto started = GetTickCount64();
         const DWORD wait = started < attempt->deadline ? static_cast<DWORD>(attempt->deadline - started) : 0;
@@ -147,7 +152,7 @@ inline bool Request(DWORD pid, HANDLE process, ULONGLONG exitDeadline, void (*se
             attempt->stage.compare_exchange_strong(expected, Stage::Cancelled);
             worker.detach();
         }
-    } catch (const std::system_error&) { busy = false; return false; }
+    } catch (const std::system_error&) { std::atomic_store(&activeAttempt, std::shared_ptr<Attempt>{}); return false; }
     // Invoke may already be in progress when a provider stops responding. Observe process exit
     // instead of delivering a second quit command. A timed-out search cannot invoke later.
     const Stage stage = attempt->stage.load();

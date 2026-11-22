@@ -225,8 +225,8 @@ static bool TestSlowTrayProvider() {
     });
     const ULONGLONG elapsed = GetTickCount64() - start;
     const ULONGLONG limit = start + 2000;
-    while (busy && GetTickCount64() < limit) Sleep(10);
-    if (sent || elapsed >= 350 || busy || lateInvoke) return false;
+    while (std::atomic_load(&activeAttempt) && GetTickCount64() < limit) Sleep(10);
+    if (sent || elapsed >= 350 || std::atomic_load(&activeAttempt) || lateInvoke) return false;
     // If the timeout occurs inside Invoke, the caller must not send another quit command.
     const bool pending = Request(GetCurrentProcessId(), GetCurrentProcess(), GetTickCount64() + 200, [](Attempt& attempt) {
         Stage expected = Stage::Searching;
@@ -234,9 +234,11 @@ static bool TestSlowTrayProvider() {
         Sleep(500);
         attempt.stage = Stage::Sent;
     });
+    const bool duplicatePending = Request(GetCurrentProcessId(), GetCurrentProcess(), GetTickCount64() + 200,
+        [](Attempt&) {});
     const ULONGLONG finish = GetTickCount64() + 2000;
-    while (busy && GetTickCount64() < finish) Sleep(10);
-    return pending && !busy;
+    while (std::atomic_load(&activeAttempt) && GetTickCount64() < finish) Sleep(10);
+    return pending && duplicatePending && !std::atomic_load(&activeAttempt);
 }
 #define tray_quit fake_tray_quit
 #define GetCurrentProcessId CurrentId

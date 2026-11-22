@@ -2,24 +2,23 @@
 
 > This document may include machine-translated content. If anything differs, refer to the [Chinese original](release-upload.md).
 
-# v1.2.5 Clearer messages after saving
+# v1.2.6 More reliable exit from the Windows tray
 
-[![Quick start: step-by-step guide](https://img.shields.io/badge/First_time-Quick_start-11775B?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.5/README.en.md#quick-start) [![Download the Windows x64 configurator](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.5/ChatGPTLauncherSetup.exe)
+[![Quick start: step-by-step guide](https://img.shields.io/badge/First_time-Quick_start-11775B?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.6/README.en.md#quick-start) [![Download the Windows x64 configurator](https://img.shields.io/badge/Windows%20x64-Download%20ChatGPTLauncherSetup.exe-2563EB?style=for-the-badge)](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.6/ChatGPTLauncherSetup.exe)
 
-**New to the launcher? Start with the [Quick start guide](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.5/README.en.md#quick-start).** The one-line PowerShell command downloads and opens the latest stable configurator by default. The guide also covers manual downloads and first-time setup.
+**New to the launcher? Start with the [Quick start guide](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/blob/v1.2.6/README.en.md#quick-start).** The one-line PowerShell command downloads and opens the latest stable configurator by default. The guide also covers manual downloads and first-time setup.
 
-**Upgrading from an earlier version?** Open the new configurator and choose **Save changes** to update your launcher. [Download the v1.2.5 configurator](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.5/ChatGPTLauncherSetup.exe)
+**Upgrading from an earlier version?** Open the new configurator and choose **Save changes** to update your launcher. [Download the v1.2.6 configurator](https://github.com/EthenGod/ChatGPT-Proxy-Launcher/releases/download/v1.2.6/ChatGPTLauncherSetup.exe)
 
 If **Apply to Codex environment variables** is on, save your work in ChatGPT and Codex first. The configurator will try to quit ChatGPT when you save the settings.
 
 ## ✨ What's new
 
-- The save confirmation has more space between its title and message.
+- After the downloader opens the configurator, PowerShell tells you where to continue.
 
 ## 🛠️ Fixes
 
-- After saving, the status message and the details button stay vertically centered when the message wraps.
-- Help buttons stay centered beside long English and Japanese setting labels when they wrap.
+- When saving requires ChatGPT to quit, setup tries Exit in its tray menu first. If the menu is unavailable, setup tries Ctrl+Q. If it cannot confirm that ChatGPT has quit, it prompts you to quit manually.
 
 ## ⚠️ Known issues
 
