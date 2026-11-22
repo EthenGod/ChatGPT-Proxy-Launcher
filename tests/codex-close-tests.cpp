@@ -3,6 +3,7 @@
 #include <appmodel.h>
 #include <tlhelp32.h>
 #include <stdio.h>
+#include "../src/TrayQuit.h"
 
 // All discovery, input, focus and waits are replaced. No real application can be closed.
 struct FakeProcess {
@@ -119,7 +120,7 @@ static FakeWindow* Window(HWND handle) {
     for (auto& window : windows) if (window.handle == handle) return &window;
     return nullptr;
 }
-static BOOL WINAPI Windows(WNDENUMPROC callback, LPARAM data) {
+static BOOL WINAPI FakeEnumWindows(WNDENUMPROC callback, LPARAM data) {
     if (enumFails) return FALSE;
     for (const auto& window : windows) callback(window.handle, data);
     return TRUE;
@@ -201,6 +202,43 @@ static void WINAPI Pause(DWORD milliseconds) {
     }
     for (auto& p : processes) if (p.exitAt && clockTicks >= p.exitAt) p.alive = false;
 }
+namespace setup::fake_tray_quit {
+static unsigned calls = 0;
+static bool available = false;
+static bool Request(DWORD pid, HANDLE handle, ULONGLONG deadline) {
+    ++calls;
+    auto p = Find(handle);
+    safeAccess = safeAccess && p && p->pid == pid && clockTicks < deadline;
+    if (available && p->exits) p->alive = false;
+    return available;
+}
+}
+static bool TestSlowTrayProvider() {
+    using namespace setup::tray_quit;
+    // Use our own process handle and a stalled provider. No Explorer or application UI is accessed.
+    static std::atomic_bool lateInvoke{false};
+    const ULONGLONG start = GetTickCount64();
+    const bool sent = Request(GetCurrentProcessId(), GetCurrentProcess(), start + 100, [](Attempt& attempt) {
+        Sleep(400);
+        Stage expected = Stage::Searching;
+        lateInvoke = attempt.stage.compare_exchange_strong(expected, Stage::Invoking);
+    });
+    const ULONGLONG elapsed = GetTickCount64() - start;
+    const ULONGLONG limit = start + 2000;
+    while (busy && GetTickCount64() < limit) Sleep(10);
+    if (sent || elapsed >= 350 || busy || lateInvoke) return false;
+    // If the timeout occurs inside Invoke, the caller must not send another quit command.
+    const bool pending = Request(GetCurrentProcessId(), GetCurrentProcess(), GetTickCount64() + 200, [](Attempt& attempt) {
+        Stage expected = Stage::Searching;
+        if (!attempt.stage.compare_exchange_strong(expected, Stage::Invoking)) return;
+        Sleep(500);
+        attempt.stage = Stage::Sent;
+    });
+    const ULONGLONG finish = GetTickCount64() + 2000;
+    while (busy && GetTickCount64() < finish) Sleep(10);
+    return pending && !busy;
+}
+#define tray_quit fake_tray_quit
 #define GetCurrentProcessId CurrentId
 #define GetCurrentProcess CurrentProcess
 #define ProcessIdToSessionId Session
@@ -218,7 +256,7 @@ static void WINAPI Pause(DWORD milliseconds) {
 #define GetPackagesByPackageFamily Packages
 #define PackageIdFromFullName PackageId
 #define QueryFullProcessImageNameW ImagePath
-#define EnumWindows Windows
+#define EnumWindows FakeEnumWindows
 #define GetWindowThreadProcessId WindowProcess
 #define GetWindow Owner
 #define GetWindowLongPtrW Style
@@ -245,6 +283,7 @@ static void WINAPI Pause(DWORD milliseconds) {
 #define REQUIRE(condition) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 20; } } while (0)
 static HWND W(UINT_PTR value) { return reinterpret_cast<HWND>(value); }
 static void Reset() {
+    setup::fake_tray_quit::calls = 0; setup::fake_tray_quit::available = false;
     processes = {FakeProcess{}}; quitRequests.clear(); clockTicks = 0;
     windows = {{W(20), 2}, {W(21), 2, L"OwlElectron_NotifyIconHostWindow", false},
         {W(22), 2, L"Chrome_WidgetWin_0", false}, {W(23), 2, L"crashpad_SessionEndWatcher", false}};
@@ -261,6 +300,7 @@ static void AddWorker(DWORD id, bool desktop, bool exits = true) {
 }
 int main() {
     using setup::ChatGPTCloseResult; using setup::TryCloseChatGPT;
+    REQUIRE(TestSlowTrayProvider());
     Reset(); AddWorker(3, true); AddWorker(4, false);
     AddWorker(5, false); processes.back().parent = 0; quitDelay = 500;
     REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && quitRequests == std::vector<DWORD>{2});
@@ -287,9 +327,15 @@ int main() {
     Reset(); windows[0].visible = false; windows[0].iconic = true;
     REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && windows[0].visible && !windows[0].iconic);
     REQUIRE(safeAccess && acquired == released);
+    Reset(); setup::fake_tray_quit::available = true; windows.erase(windows.begin());
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && quitRequests.empty());
+    REQUIRE(setup::fake_tray_quit::calls == 1 && safeAccess && acquired == released);
+    Reset(); setup::fake_tray_quit::available = true; processes[0].exits = false;
+    REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::NeedsManualExit && quitRequests.empty());
+    REQUIRE(clockTicks == 10000 && setup::fake_tray_quit::calls == 1 && acquired == released);
     Reset(); foreground = W(20); focusFails = true;
     REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && quitRequests == std::vector<DWORD>{2});
-    REQUIRE(clockTicks == 0 && safeAccess && acquired == released);
+    REQUIRE(clockTicks == 0 && setup::fake_tray_quit::calls == 1 && safeAccess && acquired == released);
     Reset(); windows[0].visible = false; restoreDelay = 150;
     REQUIRE(TryCloseChatGPT() == ChatGPTCloseResult::Closed && quitRequests == std::vector<DWORD>{2});
     REQUIRE(clockTicks == 150 && safeAccess && acquired == released);

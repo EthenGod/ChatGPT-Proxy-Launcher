@@ -78,6 +78,7 @@ $files = @(
     'src/CloudProxy.h'
     'src/CodexClose.cpp'
     'src/CodexClose.h'
+    'src/TrayQuit.h'
     'src/CodexEnv.cpp'
     'src/CodexEnv.h'
     'src/CompanionManifest.cpp'

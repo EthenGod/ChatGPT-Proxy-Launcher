@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "SetupCore.h"
 #include "CodexClose.h"
+#include "TrayQuit.h"
 #include <appmodel.h>
 #include <tlhelp32.h>
 #include <algorithm>
@@ -249,10 +250,17 @@ ChatGPTCloseResult TryCloseChatGPT() {
     if (!EnumWindows(ChooseWindow, reinterpret_cast<LPARAM>(&targets))) return ChatGPTCloseResult::NeedsManualExit;
     const ULONGLONG deadline = GetTickCount64() + 10000;
     unsigned requested = 0;
-    for (const auto& process : targets.processes) if (process.window) {
+    for (const auto& process : targets.processes) {
+        if (!process.desktop) continue;
+        const Process* parent = Find(targets, process.parent);
+        if (parent && parent->desktop && parent->created <= process.created) continue;
         if (GetTickCount64() >= deadline) return ChatGPTCloseResult::NeedsManualExit;
-        if (!RequestQuit(process, deadline) && WaitForSingleObject(process.handle, 0) != WAIT_OBJECT_0)
-            return ChatGPTCloseResult::NeedsManualExit;
+        if (WaitForSingleObject(process.handle, 0) == WAIT_TIMEOUT
+            && !tray_quit::Request(process.id, process.handle, deadline)) {
+            const bool sent = process.window && GetTickCount64() < deadline && RequestQuit(process, deadline);
+            if (!sent && WaitForSingleObject(process.handle, 0) != WAIT_OBJECT_0)
+                return ChatGPTCloseResult::NeedsManualExit;
+        }
         ++requested;
     }
     if (!requested) return ChatGPTCloseResult::NeedsManualExit;
