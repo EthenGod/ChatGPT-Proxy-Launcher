@@ -1,6 +1,7 @@
 # 项目协作约定
 
 ## 项目与命令
+- 查找仓库目录和关键源码入口，见[项目地图](docs/developer-guide.md#项目地图)。
 - 这是 Windows x64 原生 C++ ChatGPT 启动器，不是 OpenAI 官方产品。
 - `src/ChatGPTProxyLauncher.cpp` 是正式源码；`README.md` 说明使用方法，英语和日语对应 `README.en.md`、`README.ja.md`。
 - 默认图形配置工具入口为 `frontend/src-tauri/src/main.rs`。`frontend/src-tauri/src/jobs.rs` 管理原生任务排队和关闭许可。旧原生界面为 `src/ChatGPTLauncherSetup.cpp`，部署文件操作在 `src/SetupCore.cpp`。构建时内嵌同次生成的启动器。

@@ -163,16 +163,16 @@ GUI 和后台共用现有文件提交核心，没有复制两套部署规则。
 
 | 模块 | 责任 |
 | --- | --- |
-| `SetupCommandLine` | 命令入口、请求解析、结果序列化，不依赖窗口 |
-| `SetupCore` | 共用预检、文件提交、所有权检查和回滚；两个入口使用同一用户写锁 |
-| `AutomationJson` / `AutomationIO` | 有界 JSON、路径检查、参数编码、结果文件及用户锁 |
-| `AutomationContract` | 公共协议版本、能力表、限制及状态分类 |
-| `DeploymentDiscovery` | 两个 EXE 共用的发现信息生成、只读查询和版本校验 |
-| `CompanionRegistry` | 注册、用户覆盖配置及同名保护 |
-| `CompanionManifest` | 清单校验、路径解析、版本及依赖检查 |
-| `CompanionProtocol` | 纯回执解析；完整校验后才返回，不操作进程 |
-| `CompanionRunner` | 有限时长的调度、启动确认、重试和结果汇总 |
-| `LauncherAutomation` | 发现查询、显式链式入口及限时失败提示 |
+| [SetupCommandLine](../src/SetupCommandLine.cpp) | 命令入口、请求解析、结果序列化，不依赖窗口 |
+| [SetupCore](../src/SetupCore.cpp) | 共用预检、文件提交、所有权检查和回滚；两个入口使用同一用户写锁 |
+| [AutomationJson](../src/AutomationJson.cpp) / [AutomationIO](../src/AutomationIO.cpp) | 有界 JSON、路径检查、参数编码、结果文件及用户锁 |
+| [AutomationContract](../src/AutomationContract.h) | 公共协议版本、能力表、限制及状态分类 |
+| [DeploymentDiscovery](../src/DeploymentDiscovery.cpp) | 两个 EXE 共用的发现信息生成、只读查询和版本校验 |
+| [CompanionRegistry](../src/CompanionRegistry.cpp) | 注册、用户覆盖配置及同名保护 |
+| [CompanionManifest](../src/CompanionManifest.cpp) | 清单校验、路径解析、版本及依赖检查 |
+| [CompanionProtocol](../src/CompanionProtocol.cpp) | 纯回执解析；完整校验后才返回，不操作进程 |
+| [CompanionRunner](../src/CompanionRunner.cpp) | 有限时长的调度、启动确认、重试和结果汇总 |
+| [LauncherAutomation](../src/LauncherAutomation.cpp) | 发现查询、显式链式入口及限时失败提示 |
 
 JSON 解析器统一检查大小、重复键、编码、深度和整数精度。Schema 用于开发期检查；路径、所有权和字段关系仍由原生代码校验。
 

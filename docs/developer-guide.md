@@ -118,8 +118,49 @@ Send-CglReply -Context $context -Status ready
 
 ## 修改本项目时看哪里
 
-模块分工见[实现位置](automation-design.md#5-模块)。公共版本、能力和限制统一维护在 `src/AutomationContract.h`。
+仓库目录和程序入口见下方的[项目地图](#项目地图)。后台接口的公共版本、能力和限制统一维护在 [AutomationContract.h](../src/AutomationContract.h)。
 
 接口变更同步 [Schema](schemas/)、[示例](examples/)和文档。新增公共字段不能直接写入 v1。扩展私有设置优先放 `config`。接口校验与已知边界见[维护记录](automation-maintenance.md)。
 
 新增源码、测试或文档时，更新 `tools/release-sources.ps1`。文档引用的本地文件也要随源码 ZIP 交付。编译、静态分析、完整测试和实际窗口验收的顺序见[开发命令](ui-refactor.md#开发命令)。
+
+## 项目地图
+
+目录树从仓库根目录起算，列出 Git 跟踪的目录。目录增删或移动时，用 `git ls-tree -dr --name-only HEAD` 核对已提交的结构。单个目录的完整文件清单可用 `git ls-files -- src/` 查看，把 `src/` 换成要查的目录即可。
+
+```text
+.
+├── assets/                 Windows 程序图标及来源说明
+├── docs/                   接入指南、设计与维护记录
+│   ├── examples/           部署请求、扩展清单和回执脚本示例
+│   └── schemas/            后台部署和扩展协议的 JSON Schema
+├── frontend/               配置器的前端工程和桌面构建脚本
+│   ├── .cargo/             Windows x64 MSVC 的 Rust 编译选项
+│   ├── src/                React / TypeScript 页面
+│   │   ├── assets/         附加程序示例图标
+│   │   ├── components/     共用控件、滚动和外观过渡
+│   │   ├── features/
+│   │   │   └── setup/      设置页、参数预览和附加程序列表
+│   │   ├── i18n/           前端语言选择与文本回退
+│   │   ├── platform/       桌面窗口接口、原生服务和模拟服务
+│   │   └── styles/         设置页布局和主题样式
+│   └── src-tauri/          Rust 桌面外壳、Tauri 配置和构建脚本
+│       ├── capabilities/   主窗口权限
+│       └── src/            配置器入口、任务队列和原生调用
+├── locales/                语言登记表、翻译文本和校验规则
+├── src/                    C++ 启动器、部署核心、兼容界面和 Windows 资源
+├── tests/                  原生测试、隔离窗口检查及测试脚本
+│   ├── fixtures/           供测试使用的设置快照
+│   ├── frontend/           前端组件和接口测试
+│   └── rust/               Rust 桥接契约和内嵌资源测试
+└── tools/                  原生构建、翻译生成和源码包清单
+```
+
+| 要改的部分 | 从哪里读起 |
+| --- | --- |
+| 启动 ChatGPT | [ChatGPTProxyLauncher.cpp](../src/ChatGPTProxyLauncher.cpp) 查找应用、处理启动参数并创建进程。普通附加程序由 [StartupApps.cpp](../src/StartupApps.cpp) 读取，注册扩展的调度见[后台接口模块表](automation-design.md#5-模块)。 |
+| 修改设置页 | [main.tsx](../frontend/src/main.tsx) 接入原生服务，[prototype.tsx](../frontend/src/prototype.tsx) 接入内存模拟服务。两者渲染同一个 [SetupPage.tsx](../frontend/src/features/setup/SetupPage.tsx)。 |
+| 修改配置器的原生行为 | [main.rs](../frontend/src-tauri/src/main.rs) 分流后台命令、兼容界面和默认窗口。[ChatGPTLauncherSetup.cpp](../src/ChatGPTLauncherSetup.cpp) 实现兼容界面。默认窗口通过 [Rust 桥接层](../frontend/src-tauri/src/bridge.rs) 调用 [C ABI](../src/SetupBridge.h)。 |
+| 修改部署和保存 | [SetupCommandLine.cpp](../src/SetupCommandLine.cpp) 解析后台请求。后台和图形界面共用 [SetupCore.cpp](../src/SetupCore.cpp) 的预检、写入和回滚逻辑。 |
+| 修改下载、构建或打包流程 | [setup.ps1](../setup.ps1) 下载并调用配置器。[build.cmd](../build.cmd) 调用 [desktop.ps1](../frontend/desktop.ps1) 构建程序。[release.cmd](../release.cmd) 是生成本地发布附件的入口。 |
+| 运行检查 | [test-build.cmd](../tests/test-build.cmd) 运行隔离回归，[analyze.cmd](../tests/analyze.cmd) 运行静态分析。单独核对文档链接和示例用 [documentation-tests.ps1](../tests/documentation-tests.ps1)。 |
